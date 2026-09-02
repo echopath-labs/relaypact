@@ -252,6 +252,32 @@ export async function validateArchitecture(rootInput) {
     }
   }
 
+  const cursorAdapterPath = path.join(root, "packages", "adapter-codex-cursor", "src", "run-delegation.mjs");
+  const cursorAdapterSource = await readFile(cursorAdapterPath, "utf8").catch(() => "");
+  if (!cursorAdapterSource.includes('from "../../host-codex/src/direct-actions.mjs"')) {
+    errors.push("The codex-cursor adapter must route terminal governance through host-codex direct actions.");
+  }
+  for (const hostAction of [
+    "abandonAndCleanupFailedDirectTask",
+    "archiveAndCleanupDirectTask",
+    "finalizeDirectTerminalDecision",
+    "recordDirectTerminalDecision",
+    "validateDirectArchiveRoot"
+  ]) {
+    if (cursorAdapterSource.includes(hostAction)) {
+      errors.push(`The codex-cursor adapter bypasses host-codex terminal governance with ${hostAction}.`);
+    }
+  }
+
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const doctorSource = await readFile(doctorPath, "utf8").catch(() => "");
+  if (/^import\s+.*executor-cursor/mu.test(doctorSource)) {
+    errors.push("Default doctor must not statically load the optional Cursor executor.");
+  }
+  if (!doctorSource.includes('await import("../../executor-cursor/src/executor.mjs")')) {
+    errors.push("Cursor doctor must load the Cursor executor only inside the selected diagnostic route.");
+  }
+
   for (const legacy of ["src", "contracts", "hosts", "executors", "adapters"]) {
     try {
       await readdir(path.join(root, legacy));

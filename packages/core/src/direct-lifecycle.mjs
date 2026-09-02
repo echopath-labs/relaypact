@@ -22,7 +22,6 @@ const STATES = new Set([
   "prepared", "running", "awaiting_review", "correction_requested",
   "accepted", "rejected", "abandoned", "failed"
 ]);
-const TERMINAL = new Set(["accepted", "rejected", "abandoned", "failed"]);
 const EXECUTION_MODES = new Set(["read_only", "write"]);
 const STATE_KEYS = new Set([
   "schemaVersion", "taskId", "routeId", "executorHarness", "lifecycleState",
@@ -503,7 +502,7 @@ export async function authorizeDirectCorrection(prepared, prompt) {
   };
 }
 
-export async function recordDirectTerminalDecision(prepared, action, actor) {
+function directTerminalDecision(action, actor) {
   const decisions = {
     accept: { lifecycleState: "accepted", acceptance: "accepted" },
     reject: { lifecycleState: "rejected", acceptance: "rejected" },
@@ -512,13 +511,10 @@ export async function recordDirectTerminalDecision(prepared, action, actor) {
   const decision = decisions[action];
   if (!decision) throw new DelegationError("invalid_host_action", "Host action must be accept, reject, or abandon.");
   if (!nonempty(actor)) throw new DelegationError("host_actor_required", "A host or human decision-maker identity is required.");
-  const state = await store(prepared.statePath).read();
-  const review = validateReview(await readJson(reviewPath(prepared.taskRoot, state.correctionSequence)), state);
-  await assertReviewBasis(state);
-  if (action === "accept" && review.executionResult.hostAcceptance.eligible !== true) {
-    throw new DelegationError("acceptance_ineligible", "Host acceptance is refused because current evidence is not eligible.");
-  }
-  const terminal = await transition(prepared.statePath, "awaiting_review", decision.lifecycleState);
+  return decision;
+}
+
+function bindDirectTerminalReview(review, terminal, decision, actor) {
   const executionResult = {
     ...review.executionResult,
     hostAcceptance: {
@@ -533,15 +529,12 @@ export async function recordDirectTerminalDecision(prepared, action, actor) {
     executionResult
   };
   return {
-    state: terminal,
-    review: {
-      ...unsigned,
-      reviewIdentity: {
-        schemaVersion: "1.0.0",
-        stateRevision: terminal.stateRevision,
-        resultIdentity: terminal.resultIdentity,
-        fingerprint: sha256(canonicalize(unsigned))
-      }
+    ...unsigned,
+    reviewIdentity: {
+      schemaVersion: "1.0.0",
+      stateRevision: terminal.stateRevision,
+      resultIdentity: terminal.resultIdentity,
+      fingerprint: sha256(canonicalize(unsigned))
     }
   };
 }
@@ -616,40 +609,65 @@ export async function abandonAndCleanupFailedDirectTask(prepared, actor, archive
   return { state: terminal, receipt, archive: { archivePath, receiptPath } };
 }
 
-export async function archiveAndCleanupDirectTask(prepared, decided, archiveRootInput) {
+export async function finalizeDirectTerminalDecision(prepared, action, actor, archiveRootInput, options = {}) {
+  const decision = directTerminalDecision(action, actor);
   const archiveRoot = await validateDirectArchiveRoot(prepared, archiveRootInput);
-  const state = await store(prepared.statePath).read();
-  if (!TERMINAL.has(state.lifecycleState) || state.lifecycleState !== decided.state.lifecycleState) {
-    throw new DelegationError("cleanup_refused", "Only the matching terminal direct delegation can be archived and cleaned.");
-  }
-  const identity = decided.review?.reviewIdentity;
-  const expectedFingerprint = sha256(canonicalize(reviewIdentityInput(decided.review ?? {})));
-  const expectedAcceptance = {
-    accepted: "accepted",
-    rejected: "rejected",
-    abandoned: "abandoned"
-  }[state.lifecycleState];
-  if (
-    decided.review?.lifecycleState !== state.lifecycleState || identity?.stateRevision !== state.stateRevision ||
-    identity?.resultIdentity !== state.resultIdentity || identity?.fingerprint !== expectedFingerprint ||
-    decided.review?.executionResult?.hostAcceptance?.status !== expectedAcceptance ||
-    !nonempty(decided.review?.executionResult?.hostAcceptance?.decidedBy)
-  ) {
-    throw new DelegationError("stale_review", "Terminal direct-worktree review no longer matches lifecycle state.");
-  }
-  const archivePath = path.join(archiveRoot, `review-${randomUUID()}`);
-  await mkdir(archivePath, { mode: 0o700 });
-  const reviewFile = path.join(archivePath, "host-review.json");
-  await writeJson(reviewFile, decided.review);
-  const [archiveInfo, persisted] = await Promise.all([lstat(archivePath), readJson(reviewFile)]);
-  if (!archiveInfo.isDirectory() || archiveInfo.isSymbolicLink() || canonicalize(persisted) !== canonicalize(decided.review)) {
-    throw new DelegationError("archive_verification_failed", "Archived direct-worktree review changed before cleanup.");
-  }
-  const taskInfo = await lstat(prepared.taskRoot).catch(() => null);
-  if (!taskInfo?.isDirectory() || taskInfo.isSymbolicLink() || taskInfo.dev !== state.taskRootDev || taskInfo.ino !== state.taskRootIno) {
-    throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before cleanup.");
-  }
-  await rm(prepared.taskRoot, { recursive: true, force: true });
-  await store(prepared.statePath).removeIntegrityAnchor();
-  return { archivePath, reviewPath: reviewFile };
+  return store(prepared.statePath).withLock(async ({ read, persist }) => {
+    const state = await read();
+    if (state.lifecycleState !== "awaiting_review") {
+      throw new DelegationError("invalid_lifecycle_transition", `Cannot finalize direct delegation while it is ${state.lifecycleState}.`);
+    }
+    const review = validateReview(await readJson(reviewPath(prepared.taskRoot, state.correctionSequence)), state);
+    await assertReviewBasis(state);
+    if (action === "accept" && review.executionResult.hostAcceptance.eligible !== true) {
+      throw new DelegationError("acceptance_ineligible", "Host acceptance is refused because current evidence is not eligible.");
+    }
+    const taskInfo = await lstat(prepared.taskRoot).catch(() => null);
+    if (
+      !taskInfo?.isDirectory() || taskInfo.isSymbolicLink() ||
+      taskInfo.dev !== state.taskRootDev || taskInfo.ino !== state.taskRootIno
+    ) {
+      throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before terminal archival.");
+    }
+    const terminalCandidate = {
+      ...state,
+      lifecycleState: decision.lifecycleState,
+      stateRevision: state.stateRevision + 1
+    };
+    const terminalReview = bindDirectTerminalReview(review, terminalCandidate, decision, actor);
+    const archivePath = path.join(archiveRoot, `review-${randomUUID()}`);
+    const reviewFile = path.join(archivePath, "host-review.json");
+    let terminal;
+    try {
+      await mkdir(archivePath, { mode: 0o700 });
+      await writeJson(reviewFile, terminalReview);
+      const [archiveInfo, persisted] = await Promise.all([lstat(archivePath), readJson(reviewFile)]);
+      if (
+        !archiveInfo.isDirectory() || archiveInfo.isSymbolicLink() ||
+        canonicalize(persisted) !== canonicalize(terminalReview)
+      ) {
+        throw new DelegationError("archive_verification_failed", "Archived direct-worktree review changed before terminal decision.");
+      }
+      await options.beforeFinalBasisCheck?.();
+      await assertReviewBasis(state);
+      terminal = await persist(terminalCandidate, { expectedRevision: state.stateRevision });
+    } catch (error) {
+      if (!terminal) await rm(archivePath, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+    const finalTaskInfo = await lstat(prepared.taskRoot).catch(() => null);
+    if (
+      !finalTaskInfo?.isDirectory() || finalTaskInfo.isSymbolicLink() ||
+      finalTaskInfo.dev !== taskInfo.dev || finalTaskInfo.ino !== taskInfo.ino
+    ) {
+      throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before terminal cleanup.");
+    }
+    await rm(prepared.taskRoot, { recursive: true, force: true });
+    await store(prepared.statePath).removeIntegrityAnchor();
+    return {
+      state: terminal,
+      review: terminalReview,
+      archive: { archivePath, reviewPath: reviewFile }
+    };
+  });
 }

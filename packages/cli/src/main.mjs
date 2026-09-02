@@ -204,10 +204,13 @@ export async function runCli(argv, io = process, runtime = {}) {
     let result;
     if (options.command === "support") result = await supportSummary();
     else if (options.command === "doctor") {
-      const { runCursorDoctor, runDoctor } = await import("./doctor.mjs");
-      result = options.route === "codex-cursor"
-        ? await runCursorDoctor({ ...runtime.doctor, executorCommand: options.executor })
-        : await runDoctor(runtime.doctor);
+      if (options.route === "codex-cursor") {
+        const { runCursorDoctor } = await import("./doctor.mjs");
+        result = await runCursorDoctor({ ...runtime.doctor, executorCommand: options.executor });
+      } else {
+        const { runDoctor } = await import("./doctor.mjs");
+        result = await runDoctor(runtime.doctor);
+      }
     }
     else if (options.command === "run-pi") result = await runPi(options);
     else if (options.command === "run-cursor") result = await runCursor(options);

@@ -403,8 +403,10 @@ Use `--executor /absolute/path/to/cursor-agent` when discovery should be bound
 to one installation. RelayPact verifies version, required non-interactive and
 structured-output flags (including read-only `--mode` support), and authentication
 before execution. It resolves the executable to an absolute real path and binds
-its content fingerprint before retaining any resumable session. It minimizes
-the child environment, invokes Cursor without a shell, captures bounded
+the launcher plus any shebang interpreter and fixed launch prefix before
+retaining any resumable session. Shebang launchers run through the resolved
+absolute interpreter instead of resolving it again from a mutable `PATH`. It
+minimizes the child environment, invokes Cursor without a shell, captures bounded
 structured events, independently checks Git/filesystem scope and host
 validation, and returns completion with host acceptance still pending.
 

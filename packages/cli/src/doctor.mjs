@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { runProcess } from "../../core/src/process.mjs";
 import { MINIMUM_CODEX_VERSION, parseCodexVersion } from "../../executor-codex/src/compatibility.mjs";
-import { discoverCursorCli } from "../../executor-cursor/src/executor.mjs";
 
 const MINIMUM_NODE_MAJOR = 20;
 const EXPECTED_MARKETPLACE = "relaypact-local";
@@ -203,6 +202,7 @@ export async function runDoctor(options = {}) {
 }
 
 export async function runCursorDoctor(options = {}) {
+  const { discoverCursorCli } = await import("../../executor-cursor/src/executor.mjs");
   const nodeVersion = options.nodeVersion ?? process.versions.node;
   const nodeMajor = Number.parseInt(nodeVersion.split(".")[0], 10);
   const checks = [];

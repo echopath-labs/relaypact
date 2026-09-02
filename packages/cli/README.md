@@ -6,7 +6,9 @@ default `doctor` checks the local Node.js, Git, Codex CLI, `codex exec`, package
 Skill, marketplace, and plugin surface without reading credentials, contacting
 a provider, or starting a worker. `doctor --route codex-cursor` explicitly
 checks Cursor CLI version, required flags, and local authentication without
-invoking a model or retaining account output.
+invoking a model or retaining account output. The optional Cursor executor is
+dynamically loaded only for that selected diagnostic route; default `doctor`
+does not load it.
 `run-codex`, `correct-codex`, and `decide-codex` load the public-preview
 Codex-to-Codex route. The terminal decision archives evidence but never applies
 the candidate patch to the source repository.

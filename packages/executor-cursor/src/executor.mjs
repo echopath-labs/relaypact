@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
+import { access, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import { runProcess } from "../../core/src/process.mjs";
@@ -43,9 +43,9 @@ function residualRisks(values = []) {
   ])];
 }
 
-async function probe(run, command, args, environment) {
+async function probe(run, identity, args, environment) {
   try {
-    const result = await run(command, args, {
+    const result = await run(identity.launchCommand, [...identity.launchPrefix, ...args], {
       env: environment,
       timeoutMs: PROBE_TIMEOUT_MS,
       maxCaptureBytes: PROBE_CAPTURE_BYTES
@@ -94,18 +94,94 @@ async function fileFingerprint(file) {
   });
 }
 
+async function shebangTokens(file) {
+  const handle = await open(file, "r");
+  try {
+    const buffer = Buffer.alloc(4096);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const firstLine = buffer.subarray(0, bytesRead).toString("utf8").split(/\r?\n/u, 1)[0];
+    if (!firstLine.startsWith("#!")) return [];
+    const tokens = firstLine.slice(2).trim().split(/\s+/u).filter(Boolean);
+    return tokens.length > 0 ? tokens : null;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function resolveExecutableFile(candidate) {
+  await access(candidate, fsConstants.X_OK);
+  const resolved = await realpath(candidate);
+  const info = await stat(resolved);
+  if (!info.isFile()) return null;
+  await access(resolved, fsConstants.X_OK);
+  return { command: resolved, fingerprint: await fileFingerprint(resolved) };
+}
+
+async function resolveInterpreter(tokens, environment, baseDirectory) {
+  if (!Array.isArray(tokens) || tokens.length === 0) return null;
+  const [interpreter, ...arguments_] = tokens;
+  if (!path.isAbsolute(interpreter)) return null;
+  if (path.basename(interpreter) === "env") {
+    if (arguments_.length !== 1 || arguments_[0].startsWith("-")) return null;
+    for (const candidate of commandCandidates(arguments_[0], environment, baseDirectory)) {
+      try {
+        const resolved = await resolveExecutableFile(candidate);
+        if (resolved && (await shebangTokens(resolved.command))?.length === 0) return resolved;
+      } catch {
+        // Try the next explicit PATH candidate.
+      }
+    }
+    return null;
+  }
+  if (arguments_.length > 1) return null;
+  const resolved = await resolveExecutableFile(interpreter).catch(() => null);
+  if (!resolved || (await shebangTokens(resolved.command))?.length !== 0) return null;
+  return { ...resolved, arguments: arguments_ };
+}
+
+function launchFingerprint(launcher, launchCommand, launchCommandFingerprint, launchPrefix) {
+  const value = JSON.stringify({
+    launcher: { command: launcher.command, fingerprint: launcher.fingerprint },
+    invocation: { command: launchCommand, fingerprint: launchCommandFingerprint, prefix: launchPrefix }
+  });
+  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
+function sameExecutableIdentity(left, right) {
+  return Boolean(left && right &&
+    left.command === right.command &&
+    left.fingerprint === right.fingerprint &&
+    left.launchCommand === right.launchCommand &&
+    JSON.stringify(left.launchPrefix) === JSON.stringify(right.launchPrefix));
+}
+
 export async function resolveCursorExecutable(command, options = {}) {
   if (typeof command !== "string" || command.trim().length === 0 || command.includes("\0")) return null;
   const environment = safeEnvironment(options.environment ?? process.env);
   const baseDirectory = path.resolve(options.commandBaseDirectory ?? process.cwd());
   for (const candidate of commandCandidates(command, environment, baseDirectory)) {
     try {
-      await access(candidate, fsConstants.X_OK);
-      const resolved = await realpath(candidate);
-      const info = await stat(resolved);
-      if (!info.isFile()) continue;
-      await access(resolved, fsConstants.X_OK);
-      return { command: resolved, fingerprint: await fileFingerprint(resolved) };
+      const launcher = await resolveExecutableFile(candidate);
+      if (!launcher) continue;
+      const shebang = await shebangTokens(launcher.command);
+      if (shebang === null) continue;
+      if (shebang.length === 0) {
+        return {
+          command: launcher.command,
+          launchCommand: launcher.command,
+          launchPrefix: [],
+          fingerprint: launchFingerprint(launcher, launcher.command, launcher.fingerprint, [])
+        };
+      }
+      const interpreter = await resolveInterpreter(shebang, environment, baseDirectory);
+      if (!interpreter) continue;
+      const launchPrefix = [...(interpreter.arguments ?? []), launcher.command];
+      return {
+        command: launcher.command,
+        launchCommand: interpreter.command,
+        launchPrefix,
+        fingerprint: launchFingerprint(launcher, interpreter.command, interpreter.fingerprint, launchPrefix)
+      };
     } catch {
       // Try the next explicit PATH candidate without exposing filesystem details.
     }
@@ -124,41 +200,45 @@ export async function discoverCursorCli(options = {}) {
     : ["cursor-agent", "agent"]);
 
   for (const candidate of candidates) {
-    const identity = typeof candidate === "string"
-      ? await resolveExecutable(candidate, {
-        environment,
-        commandBaseDirectory: options.commandBaseDirectory
-      })
-      : candidate;
+    const resolvedIdentity = await resolveExecutable(
+      typeof candidate === "string" ? candidate : candidate?.command,
+      { environment, commandBaseDirectory: options.commandBaseDirectory }
+    );
+    const identity = typeof candidate === "string" || sameExecutableIdentity(candidate, resolvedIdentity)
+      ? resolvedIdentity
+      : null;
     if (
       !identity || typeof identity.command !== "string" || !path.isAbsolute(identity.command) ||
+      typeof identity.launchCommand !== "string" || !path.isAbsolute(identity.launchCommand) ||
+      !Array.isArray(identity.launchPrefix) || identity.launchPrefix.some((item) => typeof item !== "string") ||
       !/^sha256:[a-f0-9]{64}$/u.test(identity.fingerprint)
     ) continue;
     const command = identity.command;
-    const versionProbe = await probe(run, command, ["--version"], environment);
+    const versionProbe = await probe(run, identity, ["--version"], environment);
     if (versionProbe.state !== "complete" || versionProbe.exitCode !== 0 || versionProbe.signal) continue;
     const version = parseVersion(versionProbe.output);
     if (!version) continue;
 
-    const helpProbe = await probe(run, command, ["--help"], environment);
+    const helpProbe = await probe(run, identity, ["--help"], environment);
     if (
       helpProbe.state !== "complete" || helpProbe.exitCode !== 0 || helpProbe.signal ||
       !supportsRequiredFlags(helpProbe.output)
     ) continue;
 
-    const authProbe = await probe(run, command, ["status"], environment);
+    const authProbe = await probe(run, identity, ["status"], environment);
     const authenticated = authProbe.state === "complete" && authProbe.exitCode === 0 && !authProbe.signal;
     const verifiedIdentity = await resolveExecutable(command, {
       environment,
       commandBaseDirectory: options.commandBaseDirectory
     });
     if (
-      !verifiedIdentity || verifiedIdentity.command !== identity.command ||
-      verifiedIdentity.fingerprint !== identity.fingerprint
+      !sameExecutableIdentity(verifiedIdentity, identity)
     ) continue;
     return {
       state: authenticated ? "ready" : "blocked",
       command,
+      launchCommand: verifiedIdentity.launchCommand,
+      launchPrefix: verifiedIdentity.launchPrefix,
       executableFingerprint: verifiedIdentity.fingerprint,
       version,
       authenticated,
@@ -364,8 +444,8 @@ export async function runExecutor(envelope, options = {}) {
   let processResult;
   try {
     processResult = await run(
-      readiness.command,
-      buildCursorArgs(envelope, options.workingDirectory, options),
+      readiness.launchCommand ?? readiness.command,
+      [...(readiness.launchPrefix ?? []), ...buildCursorArgs(envelope, options.workingDirectory, options)],
       {
         cwd: options.workingDirectory,
         env: safeEnvironment(options.environment ?? process.env),

@@ -1,17 +1,14 @@
 import { runLocalDelegation } from "../../core/src/local-delegation.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import {
-  archiveAndCleanupDirectTask,
-  abandonAndCleanupFailedDirectTask,
   authorizeDirectCorrection,
   beginDirectDelegation,
   failDirectDelegation,
   loadDirectDelegation,
   prepareDirectDelegation,
-  recordDirectDelegationResult,
-  recordDirectTerminalDecision,
-  validateDirectArchiveRoot
+  recordDirectDelegationResult
 } from "../../core/src/direct-lifecycle.mjs";
+import { decideDirectDelegation } from "../../host-codex/src/direct-actions.mjs";
 import {
   cursorPrivateSession,
   discoverCursorCli,
@@ -133,25 +130,5 @@ export async function correctDelegation(taskRoot, prompt, options = {}) {
 
 export async function decideDelegation(taskRoot, action, actor, archiveRoot) {
   const prepared = await loadDirectDelegation(taskRoot, ROUTE);
-  await validateDirectArchiveRoot(prepared, archiveRoot);
-  if (prepared.state.lifecycleState === "failed") {
-    if (action !== "abandon") {
-      throw new DelegationError("invalid_host_action", "A failed Cursor task can only be explicitly abandoned.");
-    }
-    const abandoned = await abandonAndCleanupFailedDirectTask(prepared, actor, archiveRoot);
-    return {
-      action,
-      lifecycleState: abandoned.state.lifecycleState,
-      acceptance: { status: "abandoned", eligible: false, decidedBy: actor },
-      archive: abandoned.archive
-    };
-  }
-  const decided = await recordDirectTerminalDecision(prepared, action, actor);
-  const archive = await archiveAndCleanupDirectTask(prepared, decided, archiveRoot);
-  return {
-    action,
-    lifecycleState: decided.state.lifecycleState,
-    acceptance: decided.review.executionResult.hostAcceptance,
-    archive
-  };
+  return decideDirectDelegation(prepared, action, actor, archiveRoot);
 }

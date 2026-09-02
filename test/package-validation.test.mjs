@@ -270,6 +270,38 @@ test("architecture validation rejects cross-harness Cursor executor imports", as
   await rm(root, { recursive: true });
 });
 
+test("architecture validation rejects Cursor terminal governance outside host-codex", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const adapterPath = path.join(root, "packages", "adapter-codex-cursor", "src", "run-delegation.mjs");
+  const adapter = (await readFile(adapterPath, "utf8"))
+    .replace('from "../../host-codex/src/direct-actions.mjs"', 'from "../../core/src/direct-lifecycle.mjs"');
+  await writeFile(adapterPath, adapter);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("must route terminal governance through host-codex")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation rejects eager Cursor loading in default doctor", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const doctor = (await readFile(doctorPath, "utf8"))
+    .replace('const { discoverCursorCli } = await import("../../executor-cursor/src/executor.mjs");', "")
+    .replace(
+      'import { MINIMUM_CODEX_VERSION, parseCodexVersion } from "../../executor-codex/src/compatibility.mjs";',
+      'import { MINIMUM_CODEX_VERSION, parseCodexVersion } from "../../executor-codex/src/compatibility.mjs";\nimport { discoverCursorCli } from "../../executor-cursor/src/executor.mjs";'
+    );
+  await writeFile(doctorPath, doctor);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("must not statically load the optional Cursor executor")));
+  await rm(root, { recursive: true });
+});
+
 test("architecture validation rejects prerequisite and live-smoke drift", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
   await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });

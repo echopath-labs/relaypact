@@ -90,6 +90,7 @@
     "packages/host-codex/README.md",
     "packages/host-codex/package.json",
     "packages/host-codex/src/actions.mjs",
+    "packages/host-codex/src/direct-actions.mjs",
     "packages/host-codex/src/review.mjs",
     "plugin.json",
     "public-files.json",

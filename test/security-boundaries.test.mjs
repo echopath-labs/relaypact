@@ -135,6 +135,37 @@ test("signed state reclaims a lock when the PID belongs to a different process i
   await assert.rejects(lstat(lockPath), (error) => error.code === "ENOENT");
 });
 
+test("signed state age-bounds a live lock when process identity is unavailable", async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const statePath = path.join(taskRoot, "state.json");
+  const stateStore = createSignedStateStore(statePath, () => {}, {
+    processIdentity: async () => null
+  });
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  await stateStore.withLock(async () => {});
+
+  const integrityRoot = path.join(root, ".relaypact-integrity");
+  const keyName = (await readdir(integrityRoot)).find((name) => name.endsWith(".key"));
+  const lockPath = path.join(integrityRoot, "locks", keyName.replace(/\.key$/u, ".lock"));
+  await writeFile(lockPath, `${JSON.stringify({
+    pid: process.pid,
+    processIdentity: null,
+    acquiredAt: new Date().toISOString()
+  })}\n`, { mode: 0o600 });
+
+  await assert.rejects(
+    stateStore.withLock(async () => {}),
+    (error) => error.code === "task_state_busy"
+  );
+  const stale = new Date(Date.now() - 16 * 60_000);
+  await utimes(lockPath, stale, stale);
+  const observed = await stateStore.withLock(async ({ read }) => read());
+  assert.equal(observed.stateRevision, 0);
+  await assert.rejects(lstat(lockPath), (error) => error.code === "ENOENT");
+});
+
 async function processIsExecuting(pid) {
   try {
     process.kill(pid, 0);

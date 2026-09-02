@@ -32,8 +32,9 @@ Cursor's one-shot command remains pending-only. Its optional private state-root
 mode adds signed persistent review, protected same-session correction, and an
 explicit archived terminal decision without changing Cursor's model settings or
 applying source changes. Persistent correction preserves the original read-only
-or write authority and verifies the bound absolute Cursor executable identity
-before resuming; a failed task can be explicitly abandoned and privately cleaned.
+or write authority and verifies the bound absolute Cursor launcher plus any
+resolved shebang interpreter before resuming; a failed task can be explicitly
+abandoned and privately cleaned.
 
 This preview is human-reviewed and is not intended for unattended or
 production-critical use. Validated prerequisites are Node.js 20 or later, Git,

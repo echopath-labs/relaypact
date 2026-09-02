@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -21,6 +21,7 @@ import {
   authorizeDirectCorrection,
   beginDirectDelegation,
   failDirectDelegation,
+  finalizeDirectTerminalDecision,
   loadDirectDelegation,
   prepareDirectDelegation,
   recordDirectDelegationResult
@@ -186,6 +187,8 @@ test("Cursor readiness refuses a CLI that lacks read-only mode support", async (
     executorCommand: "selected-cursor",
     resolveExecutable: async () => ({
       command: "/resolved/selected-cursor",
+      launchCommand: "/resolved/node",
+      launchPrefix: ["/resolved/selected-cursor"],
       fingerprint: `sha256:${"0".repeat(64)}`
     }),
     async runProcess(_command, args) {
@@ -202,7 +205,10 @@ test("Cursor readiness refuses a CLI that lacks read-only mode support", async (
     }
   });
   assert.equal(readiness.state, "blocked");
-  assert.deepEqual(calls, [["--version"], ["--help"]]);
+  assert.deepEqual(calls, [
+    ["/resolved/selected-cursor", "--version"],
+    ["/resolved/selected-cursor", "--help"]
+  ]);
 });
 
 test("Cursor session identity is private, digestible, and explicitly resumable", async () => {
@@ -452,6 +458,39 @@ test("Cursor terminal decision refuses candidate drift after persistent review",
   }
 });
 
+test("Cursor terminal decision remains pending when evidence changes during archival", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-terminal-race-state-"));
+  const archiveRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-terminal-race-archive-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    const prepared = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    await assert.rejects(
+      finalizeDirectTerminalDecision(prepared, "accept", "cursor-host-1", archiveRoot, {
+        beforeFinalBasisCheck: () => writeFile(path.join(root, "allowed.txt"), "changed during terminal archival\n")
+      }),
+      (error) => error.code === "stale_review"
+    );
+    const pending = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    assert.equal(pending.state.lifecycleState, "awaiting_review");
+    assert.deepEqual(await readdir(archiveRoot), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+    await rm(archiveRoot, { recursive: true, force: true });
+  }
+});
+
 test("Cursor correction authorization enters running in one signed revision", async () => {
   const root = await createGitRepository();
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-atomic-correction-"));
@@ -592,6 +631,44 @@ test("Cursor correction refuses executable content drift before lifecycle mutati
     await writeFile(mutableCursor, `${await readFile(mutableCursor, "utf8")}\n// executable identity changed\n`);
     await assert.rejects(
       correctDelegation(first.taskRoot, "Do not disclose the session to a changed executable."),
+      (error) => error.code === "cursor_executor_mismatch"
+    );
+    const loaded = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    assert.equal(loaded.state.lifecycleState, "awaiting_review");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor correction refuses shebang interpreter drift before session disclosure", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-interpreter-drift-"));
+  const stateRoot = path.join(privateRoot, "state");
+  const trustedBin = path.join(privateRoot, "trusted-bin");
+  const replacementBin = path.join(privateRoot, "replacement-bin");
+  const mutableCursor = path.join(privateRoot, "cursor-agent");
+  await Promise.all([mkdir(stateRoot), mkdir(trustedBin), mkdir(replacementBin)]);
+  await Promise.all([
+    copyFile(fakeCursor, mutableCursor),
+    symlink(process.execPath, path.join(trustedBin, "node")),
+    symlink("/bin/sh", path.join(replacementBin, "node"))
+  ]);
+  await chmod(mutableCursor, 0o755);
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: mutableCursor,
+      environment: { ...process.env, PATH: trustedBin },
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    await assert.rejects(
+      correctDelegation(first.taskRoot, "Do not disclose the session through a changed interpreter.", {
+        environment: { ...process.env, PATH: replacementBin }
+      }),
       (error) => error.code === "cursor_executor_mismatch"
     );
     const loaded = await loadDirectDelegation(first.taskRoot, {

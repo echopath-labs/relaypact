@@ -103,11 +103,13 @@ export function createSignedStateStore(statePath, validateState, options = {}) {
       try {
         process.kill(owner.pid, 0);
         const observedIdentity = await processIdentity(owner.pid).catch(() => null);
-        if (
-          typeof owner.processIdentity !== "string" || owner.processIdentity.length === 0 ||
-          typeof observedIdentity !== "string" || observedIdentity.length === 0 ||
-          owner.processIdentity === observedIdentity
-        ) return false;
+        const ownerHasIdentity = typeof owner.processIdentity === "string" && owner.processIdentity.length > 0;
+        const observedHasIdentity = typeof observedIdentity === "string" && observedIdentity.length > 0;
+        if (ownerHasIdentity && observedHasIdentity) {
+          if (owner.processIdentity === observedIdentity) return false;
+        } else if (Date.now() - info.mtimeMs < STALE_LOCK_MS) {
+          return false;
+        }
       } catch (error) {
         if (error?.code !== "ESRCH") return false;
       }

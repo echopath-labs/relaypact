@@ -30,8 +30,8 @@ fallback。
 Cursor 的一次性命令仍只返回 pending；可选的私有 state-root 模式增加签名持久审查、
 受保护的同 session correction，以及显式归档的终态决策。它不会修改 Cursor 模型设置，
 也不会应用源码变更。持久 correction 会保留原始只读或写入权限，并在恢复 session 前
-校验绑定的 Cursor 绝对路径与可执行文件身份；失败任务可由 Host 显式 abandon 并清理
-私有状态。
+校验绑定的 Cursor 绝对启动路径，以及存在时已解析的 shebang 解释器身份；失败任务可由
+Host 显式 abandon 并清理私有状态。
 
 这是由人类审查的预览版，不适合无人值守或生产关键任务。已验证前置条件包括
 Node.js 20 或更高版本、Git、Codex CLI 0.147.0 或更高版本，并且

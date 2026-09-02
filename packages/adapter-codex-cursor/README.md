@@ -14,3 +14,9 @@ accept/reject/abandon decision before deleting task-private state. A task that
 fails before a current review exists can only be explicitly abandoned; RelayPact
 archives a bounded failure receipt before cleanup. It never applies, commits,
 pushes, publishes, or deploys the candidate.
+
+Terminal decisions enter through the declared `host-codex` package. The adapter
+does not independently authorize acceptance, rejection, abandonment, or archive
+cleanup. Host finalization prepares and verifies the archive, rechecks the
+candidate basis, and only then commits terminal signed state; concurrent drift
+leaves the task pending and removes the uncommitted archive.
