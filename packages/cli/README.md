@@ -20,4 +20,9 @@ same signed executor command and
 `decide-cursor` records and archives one explicit terminal decision. None of
 these commands selects or configures Cursor's model.
 
+For persistent `run-cursor` and `correct-cursor`, completed or blocked
+execution returns exit code `0`; failed, rejected, or malformed execution
+returns exit code `1`. The JSON review is still authoritative, and a successful
+process exit never implies host acceptance.
+
 The CLI never falls back from one execution harness to another.

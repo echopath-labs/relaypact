@@ -66,6 +66,8 @@ Persistent review requires both private lifecycle identities:
 ```text
 node <skill-directory>/scripts/relaypact.mjs run-cursor
   --envelope <task-envelope.json>
+  [--read-only]
+  [--executor <cursor-path>]
   --state-root <private-state-root>
   --host-instance <coordinating-instance-id>
 
@@ -84,3 +86,7 @@ Cursor correction resumes only the protected original session and never adds a
 model flag. It also reuses the exact executor command bound to the original
 session; an explicit mismatched override is refused. Terminal decision rechecks the signed direct-worktree review basis,
 archives no raw session handle, and leaves source changes untouched.
+For `run-cursor` and `correct-cursor`, completed or blocked execution returns
+exit code `0`; failed, rejected, or malformed execution returns exit code `1`.
+The JSON review remains the authoritative result and host acceptance stays
+pending until an explicit terminal decision.
