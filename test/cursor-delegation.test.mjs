@@ -17,6 +17,14 @@ import {
   discoverCursorCli,
   runExecutor
 } from "../packages/executor-cursor/src/executor.mjs";
+import {
+  authorizeDirectCorrection,
+  beginDirectDelegation,
+  failDirectDelegation,
+  loadDirectDelegation,
+  prepareDirectDelegation,
+  recordDirectDelegationResult
+} from "../packages/core/src/direct-lifecycle.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
 const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor-agent.mjs", import.meta.url));
@@ -328,6 +336,62 @@ test("Cursor terminal decision refuses candidate drift after persistent review",
     await rm(root, { recursive: true, force: true });
     await rm(stateRoot, { recursive: true, force: true });
     await rm(archiveRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor correction authorization enters running in one signed revision", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-atomic-correction-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-atomic-correction" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    const loaded = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    const authorized = await authorizeDirectCorrection(loaded, "Apply one bounded correction.");
+    assert.equal(authorized.state.lifecycleState, "running");
+    assert.equal(authorized.state.correctionSequence, loaded.state.correctionSequence + 1);
+    assert.equal(authorized.state.stateRevision, loaded.state.stateRevision + 1);
+    assert.equal(authorized.resumeSessionId, loaded.state.sessionHandle);
+    assert.equal((await failDirectDelegation(authorized)).lifecycleState, "failed");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("review evidence persistence failure cannot publish awaiting_review state", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-review-atomicity-"));
+  try {
+    const envelope = makeEnvelope(root, { taskId: "cursor-review-atomicity" });
+    let prepared = await prepareDirectDelegation({
+      envelope,
+      stateRoot,
+      hostInstanceId: "cursor-host-1",
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    prepared = await beginDirectDelegation(prepared);
+    const result = await runDelegation(envelope, { executorCommand: fakeCursor });
+    await mkdir(path.join(prepared.taskRoot, "evidence", "review-0.json"));
+    await assert.rejects(
+      recordDirectDelegationResult(prepared, result),
+      (error) => error.code === "task_state_unavailable"
+    );
+    const loaded = await loadDirectDelegation(prepared.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    assert.equal(loaded.state.lifecycleState, "running");
+    assert.equal((await failDirectDelegation(loaded)).lifecycleState, "failed");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
   }
 });
 

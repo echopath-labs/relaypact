@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { chmod, lstat, mkdir, readFile, realpath, symlink, utimes, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { chmod, lstat, mkdir, readFile, readdir, realpath, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import test from "node:test";
@@ -28,6 +28,7 @@ import { changedFilesystemPaths, snapshotFilesystem, snapshotGitControls } from 
 import { getStatusPaths, snapshotGitIndex } from "../packages/core/src/git.mjs";
 import { evaluatePathScope } from "../packages/contracts/src/path-policy.mjs";
 import { runProcess } from "../packages/core/src/process.mjs";
+import { createSignedStateStore } from "../packages/core/src/signed-state.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
@@ -62,6 +63,51 @@ test("process capture reports truncation and hard timeout settlement", async () 
   assert.equal(timeout.timedOut, true);
   assert.equal(timeout.hardKilled, true);
   assert.ok(performance.now() - started < 2500);
+});
+
+test("signed state recovers a lock whose owning process has exited", async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const statePath = path.join(taskRoot, "state.json");
+  const stateStore = createSignedStateStore(statePath, () => {});
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  await stateStore.withLock(async () => {});
+
+  const integrityRoot = path.join(root, ".relaypact-integrity");
+  const keyName = (await readdir(integrityRoot)).find((name) => name.endsWith(".key"));
+  const lockPath = path.join(integrityRoot, "locks", keyName.replace(/\.key$/u, ".lock"));
+  const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  const deadPid = child.pid;
+  await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  await writeFile(lockPath, `${JSON.stringify({ pid: deadPid, acquiredAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+
+  const observed = await stateStore.withLock(async ({ read }) => read());
+  assert.equal(observed.stateRevision, 0);
+  await assert.rejects(lstat(lockPath), (error) => error.code === "ENOENT");
+});
+
+test("signed state never reclaims a lock owned by a live process", async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const statePath = path.join(taskRoot, "state.json");
+  const stateStore = createSignedStateStore(statePath, () => {});
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  await stateStore.withLock(async () => {});
+
+  const integrityRoot = path.join(root, ".relaypact-integrity");
+  const keyName = (await readdir(integrityRoot)).find((name) => name.endsWith(".key"));
+  const lockPath = path.join(integrityRoot, "locks", keyName.replace(/\.key$/u, ".lock"));
+  await writeFile(lockPath, `${JSON.stringify({ pid: process.pid, acquiredAt: new Date(0).toISOString() })}\n`, { mode: 0o600 });
+
+  await assert.rejects(
+    stateStore.withLock(async () => {}),
+    (error) => error.code === "task_state_busy"
+  );
 });
 
 test("process runner terminates same-group descendants after the leader exits", async () => {

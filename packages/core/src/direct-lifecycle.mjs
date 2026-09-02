@@ -135,6 +135,18 @@ async function readJson(file) {
   return value;
 }
 
+async function writeReviewJson(file, value) {
+  try {
+    await writeJson(file, value);
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    const existing = await readJson(file);
+    if (canonicalize(existing) !== canonicalize(value)) {
+      throw new DelegationError("review_identity_mismatch", "Existing direct-worktree review evidence does not match the current result.");
+    }
+  }
+}
+
 function reviewPath(taskRoot, sequence) {
   return path.join(taskRoot, "evidence", `review-${sequence}.json`);
 }
@@ -328,6 +340,7 @@ export async function recordDirectDelegationResult(prepared, executionResult, se
       : executionResult.residualRisks
   };
   const resultIdentity = sha256(canonicalize(normalizedResult));
+  const evidencePath = reviewPath(prepared.taskRoot, lifecycleState.correctionSequence);
   const { state, review } = await store(prepared.statePath).withLock(async ({ read, persist }) => {
     const current = await read();
     if (current.lifecycleState !== "running") {
@@ -345,21 +358,26 @@ export async function recordDirectDelegationResult(prepared, executionResult, se
       stateRevision: current.stateRevision + 1
     };
     const candidateReview = bindReview(unsignedState, normalizedResult);
+    await writeReviewJson(evidencePath, candidateReview);
     const persisted = await persist({
       ...unsignedState,
       reviewFingerprint: candidateReview.reviewIdentity.fingerprint
     }, { expectedRevision: current.stateRevision });
     return { state: persisted, review: bindReview(persisted, normalizedResult) };
   });
-  const evidencePath = reviewPath(prepared.taskRoot, state.correctionSequence);
-  await writeJson(evidencePath, review);
   return { state, review, evidence: { reviewPath: evidencePath } };
 }
 
 export async function failDirectDelegation(prepared) {
-  const state = await store(prepared.statePath).read();
-  if (state.lifecycleState === "running") return transition(prepared.statePath, "running", "failed");
-  return state;
+  return store(prepared.statePath).withLock(async ({ read, persist }) => {
+    const state = await read();
+    if (!new Set(["running", "correction_requested"]).has(state.lifecycleState)) return state;
+    return persist({
+      ...state,
+      lifecycleState: "failed",
+      stateRevision: state.stateRevision + 1
+    }, { expectedRevision: state.stateRevision });
+  });
 }
 
 export async function loadDirectDelegation(taskRootInput, { routeId, executorHarness } = {}) {
@@ -411,20 +429,32 @@ export async function authorizeDirectCorrection(prepared, prompt) {
   if (prepared.state.correctionSequence >= MAX_CORRECTIONS) {
     throw new DelegationError("correction_sequence_exhausted", "Correction sequence limit has been reached.");
   }
-  const requested = await transition(prepared.statePath, "awaiting_review", "correction_requested", {
-    correctionSequence: prepared.state.correctionSequence + 1,
-    reviewFingerprint: null,
-    reviewFilesystemFingerprint: null,
-    reviewGitControlFingerprint: null,
-    reviewGitIndexFingerprint: null
+  const state = await store(prepared.statePath).withLock(async ({ read, persist }) => {
+    const current = await read();
+    if (
+      current.lifecycleState !== "awaiting_review" ||
+      current.stateRevision !== prepared.state.stateRevision ||
+      current.reviewFingerprint !== prepared.state.reviewFingerprint
+    ) {
+      throw new DelegationError("invalid_lifecycle_transition", `Cannot authorize correction while direct delegation is ${current.lifecycleState}.`);
+    }
+    return persist({
+      ...current,
+      lifecycleState: "running",
+      correctionSequence: current.correctionSequence + 1,
+      reviewFingerprint: null,
+      reviewFilesystemFingerprint: null,
+      reviewGitControlFingerprint: null,
+      reviewGitIndexFingerprint: null,
+      stateRevision: current.stateRevision + 1
+    }, { expectedRevision: current.stateRevision });
   });
-  const state = await transition(prepared.statePath, "correction_requested", "running");
   return {
     ...prepared,
     state,
     priorReview: review,
     correctionPrompt: prompt,
-    resumeSessionId: requested.sessionHandle,
+    resumeSessionId: state.sessionHandle,
     envelope: {
       ...prepared.envelope,
       repository: {

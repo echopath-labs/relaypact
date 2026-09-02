@@ -3,6 +3,8 @@ import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node
 import path from "node:path";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 
+const STALE_LOCK_MS = 15 * 60_000;
+
 export function canonicalize(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
   if (value && typeof value === "object") {
@@ -54,6 +56,31 @@ function stateMac(state, key) {
 }
 
 export function createSignedStateStore(statePath, validateState) {
+  async function reclaimStaleLock(lockPath) {
+    const info = await lstat(lockPath).catch(() => null);
+    if (!info || !info.isFile() || info.isSymbolicLink() || info.size > 4096) return false;
+    let owner = null;
+    try {
+      owner = JSON.parse(await readFile(lockPath, "utf8"));
+    } catch {
+      // A malformed private lock is reclaimable only after a conservative age bound.
+    }
+    if (Number.isSafeInteger(owner?.pid) && owner.pid > 0) {
+      try {
+        process.kill(owner.pid, 0);
+        return false;
+      } catch (error) {
+        if (error?.code !== "ESRCH") return false;
+      }
+    } else if (Date.now() - info.mtimeMs < STALE_LOCK_MS) {
+      return false;
+    }
+    const current = await lstat(lockPath).catch(() => null);
+    if (!current || current.dev !== info.dev || current.ino !== info.ino) return false;
+    await rm(lockPath, { force: true });
+    return true;
+  }
+
   async function readUnlocked() {
     let state;
     try {
@@ -100,7 +127,12 @@ export function createSignedStateStore(statePath, validateState) {
     let handle;
     let lockIdentity;
     try {
-      handle = await open(lockPath, "wx", 0o600);
+      try {
+        handle = await open(lockPath, "wx", 0o600);
+      } catch (error) {
+        if (error?.code !== "EEXIST" || !await reclaimStaleLock(lockPath)) throw error;
+        handle = await open(lockPath, "wx", 0o600);
+      }
       lockIdentity = await handle.stat();
       try {
         await handle.writeFile(`${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`);
