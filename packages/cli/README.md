@@ -16,9 +16,13 @@ sanitized metadata without loading an executor.
 one-shot form remains pending-only. Supplying `--state-root` and
 `--host-instance` together enables harness-neutral persistent review;
 `correct-cursor` resumes only the protected original Cursor session through the
-same signed executor command and
+same signed absolute executable identity and original read/write authority, and
 `decide-cursor` records and archives one explicit terminal decision. None of
 these commands selects or configures Cursor's model.
+
+If persistent execution enters `failed` before it has a current review, only
+`decide-cursor --action abandon` is permitted. It archives a bounded failure
+receipt and removes task-private state without changing candidate source files.
 
 For persistent `run-cursor` and `correct-cursor`, completed or blocked
 execution returns exit code `0`; failed, rejected, or malformed execution

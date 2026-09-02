@@ -2,6 +2,7 @@ import { runLocalDelegation } from "../../core/src/local-delegation.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import {
   archiveAndCleanupDirectTask,
+  abandonAndCleanupFailedDirectTask,
   authorizeDirectCorrection,
   beginDirectDelegation,
   failDirectDelegation,
@@ -11,7 +12,12 @@ import {
   recordDirectTerminalDecision,
   validateDirectArchiveRoot
 } from "../../core/src/direct-lifecycle.mjs";
-import { cursorPrivateSession, runExecutor } from "../../executor-cursor/src/executor.mjs";
+import {
+  cursorPrivateSession,
+  discoverCursorCli,
+  resolveCursorExecutable,
+  runExecutor
+} from "../../executor-cursor/src/executor.mjs";
 
 const ROUTE = Object.freeze({ routeId: "codex-cursor", executorHarness: "cursor" });
 
@@ -32,6 +38,7 @@ export async function runDelegation(input, options = {}) {
     envelope: input,
     stateRoot: options.stateRoot,
     hostInstanceId: options.hostInstanceId,
+    executionMode: options.readOnly === true ? "read_only" : "write",
     ...ROUTE
   });
   prepared = await beginDirectDelegation(prepared);
@@ -71,28 +78,46 @@ async function runCursorAttempt(input, options = {}) {
 
 export async function correctDelegation(taskRoot, prompt, options = {}) {
   let prepared = await loadDirectDelegation(taskRoot, ROUTE);
-  if (options.executorCommand && options.executorCommand !== prepared.state.executorCommand) {
+  const identity = await resolveCursorExecutable(
+    options.executorCommand ?? prepared.state.executorCommand,
+    {
+      environment: options.environment,
+      commandBaseDirectory: options.commandBaseDirectory
+    }
+  );
+  if (
+    !identity || identity.command !== prepared.state.executorCommand ||
+    identity.fingerprint !== prepared.state.executorFingerprint
+  ) {
     throw new DelegationError("cursor_executor_mismatch", "Cursor correction must reuse the executor command bound to the original session.");
   }
+  const readiness = await discoverCursorCli({
+    ...options,
+    executorIdentity: identity
+  });
   prepared = await authorizeDirectCorrection(prepared, prompt);
   try {
     const attempt = await runCursorAttempt(prepared.envelope, {
       ...options,
       executorCommand: prepared.executorCommand,
+      readiness,
+      readOnly: prepared.executionMode === "read_only",
       resumeSessionId: prepared.resumeSessionId,
       correctionPrompt: prepared.correctionPrompt
     });
     const nextSession = cursorPrivateSession(attempt.executor);
     if (
       (nextSession.handle && nextSession.handle !== prepared.resumeSessionId) ||
-      (nextSession.executorCommand && nextSession.executorCommand !== prepared.executorCommand)
+      (nextSession.executorCommand && nextSession.executorCommand !== prepared.executorCommand) ||
+      (nextSession.executorFingerprint && nextSession.executorFingerprint !== prepared.executorFingerprint)
     ) {
       throw new DelegationError("cursor_session_mismatch", "Cursor correction returned a different session identity.");
     }
     const recorded = await recordDirectDelegationResult(prepared, attempt.result, {
       handle: nextSession.handle ?? prepared.resumeSessionId,
       digest: nextSession.digest ?? prepared.state.sessionDigest,
-      executorCommand: nextSession.executorCommand ?? prepared.executorCommand
+      executorCommand: nextSession.executorCommand ?? prepared.executorCommand,
+      executorFingerprint: nextSession.executorFingerprint ?? prepared.executorFingerprint
     });
     return {
       taskRoot: prepared.taskRoot,
@@ -109,6 +134,18 @@ export async function correctDelegation(taskRoot, prompt, options = {}) {
 export async function decideDelegation(taskRoot, action, actor, archiveRoot) {
   const prepared = await loadDirectDelegation(taskRoot, ROUTE);
   await validateDirectArchiveRoot(prepared, archiveRoot);
+  if (prepared.state.lifecycleState === "failed") {
+    if (action !== "abandon") {
+      throw new DelegationError("invalid_host_action", "A failed Cursor task can only be explicitly abandoned.");
+    }
+    const abandoned = await abandonAndCleanupFailedDirectTask(prepared, actor, archiveRoot);
+    return {
+      action,
+      lifecycleState: abandoned.state.lifecycleState,
+      acceptance: { status: "abandoned", eligible: false, decidedBy: actor },
+      archive: abandoned.archive
+    };
+  }
   const decided = await recordDirectTerminalDecision(prepared, action, actor);
   const archive = await archiveAndCleanupDirectTask(prepared, decided, archiveRoot);
   return {

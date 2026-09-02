@@ -59,6 +59,7 @@ function parseArgs(argv) {
   if (command === "run-pi" && !options.envelope) throw new Error(usage());
   if (command === "run-cursor" && !options.envelope) throw new Error(usage());
   if (command === "run-cursor" && Boolean(options.stateRoot) !== Boolean(options.hostInstanceId)) throw new Error(usage());
+  if (command !== "run-cursor" && options.readOnly) throw new Error(usage());
   if (command === "correct-cursor" && (!options.taskRoot || !options.prompt)) throw new Error(usage());
   if (
     command === "decide-cursor" &&

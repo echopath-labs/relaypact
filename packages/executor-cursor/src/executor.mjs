@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { constants as fsConstants, createReadStream } from "node:fs";
+import { access, realpath, stat } from "node:fs/promises";
+import path from "node:path";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import { runProcess } from "../../core/src/process.mjs";
 import { conciseOutput } from "../../core/src/redact.mjs";
@@ -11,7 +14,7 @@ const EXECUTION_CAPTURE_BYTES = 8 * 1024 * 1024;
 const HARNESS_OWNED_AUTH_RISK = "Cursor authentication and model configuration remain harness-owned; RelayPact cannot inventory their credential values for exact-value evidence scanning.";
 const SAFE_ENVIRONMENT_NAMES = [
   "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL",
-  "SSL_CERT_FILE", "SSL_CERT_DIR", "XDG_CONFIG_HOME"
+  "SSL_CERT_FILE", "SSL_CERT_DIR", "XDG_CONFIG_HOME", "PATHEXT"
 ];
 
 function safeEnvironment(source) {
@@ -67,18 +70,71 @@ function parseVersion(output) {
 }
 
 function supportsRequiredFlags(output) {
-  return ["--print", "--output-format", "--workspace", "--sandbox", "--resume", "--force"]
+  return ["--print", "--output-format", "--workspace", "--sandbox", "--resume", "--force", "--mode"]
     .every((flag) => output.includes(flag));
+}
+
+function commandCandidates(command, environment, baseDirectory) {
+  if (path.isAbsolute(command)) return [command];
+  if (command.includes("/") || command.includes("\\")) return [path.resolve(baseDirectory, command)];
+  const directories = String(environment.PATH ?? "").split(path.delimiter).filter(Boolean);
+  const extensions = process.platform === "win32"
+    ? String(environment.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean)
+    : [""];
+  return directories.flatMap((directory) => extensions.map((extension) => path.join(directory, `${command}${extension}`)));
+}
+
+async function fileFingerprint(file) {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(file);
+    stream.on("error", reject);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(`sha256:${hash.digest("hex")}`));
+  });
+}
+
+export async function resolveCursorExecutable(command, options = {}) {
+  if (typeof command !== "string" || command.trim().length === 0 || command.includes("\0")) return null;
+  const environment = safeEnvironment(options.environment ?? process.env);
+  const baseDirectory = path.resolve(options.commandBaseDirectory ?? process.cwd());
+  for (const candidate of commandCandidates(command, environment, baseDirectory)) {
+    try {
+      await access(candidate, fsConstants.X_OK);
+      const resolved = await realpath(candidate);
+      const info = await stat(resolved);
+      if (!info.isFile()) continue;
+      await access(resolved, fsConstants.X_OK);
+      return { command: resolved, fingerprint: await fileFingerprint(resolved) };
+    } catch {
+      // Try the next explicit PATH candidate without exposing filesystem details.
+    }
+  }
+  return null;
 }
 
 export async function discoverCursorCli(options = {}) {
   const run = options.runProcess ?? runProcess;
+  const resolveExecutable = options.resolveExecutable ?? resolveCursorExecutable;
   const environment = safeEnvironment(options.environment ?? process.env);
-  const candidates = options.executorCommand
+  const candidates = options.executorIdentity
+    ? [options.executorIdentity]
+    : (options.executorCommand
     ? [options.executorCommand]
-    : ["cursor-agent", "agent"];
+    : ["cursor-agent", "agent"]);
 
-  for (const command of candidates) {
+  for (const candidate of candidates) {
+    const identity = typeof candidate === "string"
+      ? await resolveExecutable(candidate, {
+        environment,
+        commandBaseDirectory: options.commandBaseDirectory
+      })
+      : candidate;
+    if (
+      !identity || typeof identity.command !== "string" || !path.isAbsolute(identity.command) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(identity.fingerprint)
+    ) continue;
+    const command = identity.command;
     const versionProbe = await probe(run, command, ["--version"], environment);
     if (versionProbe.state !== "complete" || versionProbe.exitCode !== 0 || versionProbe.signal) continue;
     const version = parseVersion(versionProbe.output);
@@ -92,9 +148,18 @@ export async function discoverCursorCli(options = {}) {
 
     const authProbe = await probe(run, command, ["status"], environment);
     const authenticated = authProbe.state === "complete" && authProbe.exitCode === 0 && !authProbe.signal;
+    const verifiedIdentity = await resolveExecutable(command, {
+      environment,
+      commandBaseDirectory: options.commandBaseDirectory
+    });
+    if (
+      !verifiedIdentity || verifiedIdentity.command !== identity.command ||
+      verifiedIdentity.fingerprint !== identity.fingerprint
+    ) continue;
     return {
       state: authenticated ? "ready" : "blocked",
       command,
+      executableFingerprint: verifiedIdentity.fingerprint,
       version,
       authenticated,
       structuredOutput: true,
@@ -261,14 +326,15 @@ function sessionIdFrom(events, terminal) {
   return null;
 }
 
-function attachSession(result, sessionId, executorCommand) {
+function attachSession(result, sessionId, executorCommand, executorFingerprint) {
   if (!sessionId) return result;
   Object.defineProperty(result, CURSOR_SESSION, {
     enumerable: false,
     value: {
       sessionId,
       digest: `sha256:${createHash("sha256").update(sessionId).digest("hex")}`,
-      executorCommand
+      executorCommand,
+      executorFingerprint
     }
   });
   return result;
@@ -347,7 +413,7 @@ export async function runExecutor(envelope, options = {}) {
       residualRisks: residualRisks(),
       ...metadata,
       modelObservation: observation
-    }, sessionIdFrom(parsed.events, parsed.terminal), readiness.command);
+    }, sessionIdFrom(parsed.events, parsed.terminal), readiness.command, readiness.executableFingerprint);
   }
 
   const payload = parseTerminalPayload(parsed.terminal.result);
@@ -358,7 +424,7 @@ export async function runExecutor(envelope, options = {}) {
       residualRisks: residualRisks(),
       ...metadata,
       modelObservation: observation
-    }, sessionIdFrom(parsed.events, parsed.terminal), readiness.command);
+    }, sessionIdFrom(parsed.events, parsed.terminal), readiness.command, readiness.executableFingerprint);
   }
 
   return attachSession({
@@ -369,7 +435,7 @@ export async function runExecutor(envelope, options = {}) {
       : []),
     ...metadata,
     modelObservation: observation
-  }, sessionIdFrom(parsed.events, parsed.terminal), readiness.command);
+  }, sessionIdFrom(parsed.events, parsed.terminal), readiness.command, readiness.executableFingerprint);
 }
 
 export function assertCursorResumeSession(result) {
@@ -381,6 +447,11 @@ export function assertCursorResumeSession(result) {
 export function cursorPrivateSession(result) {
   const evidence = result?.[CURSOR_SESSION];
   return evidence
-    ? { handle: evidence.sessionId, digest: evidence.digest, executorCommand: evidence.executorCommand }
-    : { handle: null, digest: null, executorCommand: null };
+    ? {
+      handle: evidence.sessionId,
+      digest: evidence.digest,
+      executorCommand: evidence.executorCommand,
+      executorFingerprint: evidence.executorFingerprint
+    }
+    : { handle: null, digest: null, executorCommand: null, executorFingerprint: null };
 }

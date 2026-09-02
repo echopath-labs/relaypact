@@ -110,6 +110,52 @@ test("signed state never reclaims a lock owned by a live process", async () => {
   );
 });
 
+test("signed state reclaims a lock when the PID belongs to a different process identity", async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const statePath = path.join(taskRoot, "state.json");
+  const stateStore = createSignedStateStore(statePath, () => {}, {
+    processIdentity: async () => "process-start:new-owner"
+  });
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  await stateStore.withLock(async () => {});
+
+  const integrityRoot = path.join(root, ".relaypact-integrity");
+  const keyName = (await readdir(integrityRoot)).find((name) => name.endsWith(".key"));
+  const lockPath = path.join(integrityRoot, "locks", keyName.replace(/\.key$/u, ".lock"));
+  await writeFile(lockPath, `${JSON.stringify({
+    pid: process.pid,
+    processIdentity: "process-start:old-owner",
+    acquiredAt: new Date().toISOString()
+  })}\n`, { mode: 0o600 });
+
+  const observed = await stateStore.withLock(async ({ read }) => read());
+  assert.equal(observed.stateRevision, 0);
+  await assert.rejects(lstat(lockPath), (error) => error.code === "ENOENT");
+});
+
+async function processIsExecuting(pid) {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+  if (process.platform === "linux") {
+    try {
+      const value = await readFile(`/proc/${pid}/stat`, "utf8");
+      const commandEnd = value.lastIndexOf(")");
+      const state = commandEnd >= 0 ? value.slice(commandEnd + 1).trim().split(/\s+/u)[0] : null;
+      if (state === "Z") return false;
+    } catch (error) {
+      if (error?.code === "ENOENT") return false;
+      throw error;
+    }
+  }
+  return true;
+}
+
 test("process runner terminates same-group descendants after the leader exits", async () => {
   const source = [
     "const { spawn } = require('node:child_process');",
@@ -124,13 +170,8 @@ test("process runner terminates same-group descendants after the leader exits", 
     const pid = Number(result.stdout);
     let alive = true;
     for (let attempt = 0; attempt < 30 && alive; attempt += 1) {
-      try {
-        process.kill(pid, 0);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      } catch (error) {
-        if (error?.code === "ESRCH") alive = false;
-        else throw error;
-      }
+      alive = await processIsExecuting(pid);
+      if (alive) await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert.equal(alive, false);
   }

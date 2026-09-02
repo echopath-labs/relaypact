@@ -1,9 +1,42 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { execFile } from "node:child_process";
 import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 
 const STALE_LOCK_MS = 15 * 60_000;
+const execFileAsync = promisify(execFile);
+
+async function defaultProcessIdentity(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  if (process.platform === "linux") {
+    try {
+      const value = await readFile(`/proc/${pid}/stat`, "utf8");
+      const commandEnd = value.lastIndexOf(")");
+      const fields = commandEnd >= 0 ? value.slice(commandEnd + 1).trim().split(/\s+/u) : [];
+      const startTicks = fields[19];
+      return startTicks ? `linux-start-ticks:${startTicks}` : null;
+    } catch {
+      return null;
+    }
+  }
+  if (new Set(["darwin", "freebsd", "openbsd"]).has(process.platform)) {
+    try {
+      const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(pid)], {
+        encoding: "utf8",
+        timeout: 1_000,
+        maxBuffer: 4_096,
+        env: { PATH: process.env.PATH, LC_ALL: "C" }
+      });
+      const started = stdout.trim();
+      return started ? `${process.platform}-start:${started}` : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 export function canonicalize(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
@@ -55,7 +88,8 @@ function stateMac(state, key) {
   return `hmac-sha256:${createHmac("sha256", key).update(canonicalize(unsignedState(state))).digest("hex")}`;
 }
 
-export function createSignedStateStore(statePath, validateState) {
+export function createSignedStateStore(statePath, validateState, options = {}) {
+  const processIdentity = options.processIdentity ?? defaultProcessIdentity;
   async function reclaimStaleLock(lockPath) {
     const info = await lstat(lockPath).catch(() => null);
     if (!info || !info.isFile() || info.isSymbolicLink() || info.size > 4096) return false;
@@ -68,7 +102,12 @@ export function createSignedStateStore(statePath, validateState) {
     if (Number.isSafeInteger(owner?.pid) && owner.pid > 0) {
       try {
         process.kill(owner.pid, 0);
-        return false;
+        const observedIdentity = await processIdentity(owner.pid).catch(() => null);
+        if (
+          typeof owner.processIdentity !== "string" || owner.processIdentity.length === 0 ||
+          typeof observedIdentity !== "string" || observedIdentity.length === 0 ||
+          owner.processIdentity === observedIdentity
+        ) return false;
       } catch (error) {
         if (error?.code !== "ESRCH") return false;
       }
@@ -135,7 +174,11 @@ export function createSignedStateStore(statePath, validateState) {
       }
       lockIdentity = await handle.stat();
       try {
-        await handle.writeFile(`${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`);
+        await handle.writeFile(`${JSON.stringify({
+          pid: process.pid,
+          processIdentity: await processIdentity(process.pid).catch(() => null),
+          acquiredAt: new Date().toISOString()
+        })}\n`);
       } catch (error) {
         await handle.close().catch(() => {});
         await rm(lockPath, { force: true }).catch(() => {});

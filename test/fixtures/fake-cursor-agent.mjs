@@ -15,7 +15,8 @@ if (process.argv.includes("--help")) {
     "--workspace <path>",
     "--sandbox <mode>",
     "--resume <session>",
-    "--force"
+    "--force",
+    "--mode <mode>"
   ].join("\n"));
   process.exit(0);
 }

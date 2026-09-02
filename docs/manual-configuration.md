@@ -401,10 +401,12 @@ Add `--read-only` to use Cursor plan mode without RelayPact granting `--force`.
 
 Use `--executor /absolute/path/to/cursor-agent` when discovery should be bound
 to one installation. RelayPact verifies version, required non-interactive and
-structured-output flags, and authentication before execution. It minimizes the
-child environment, invokes Cursor without a shell, captures bounded structured
-events, independently checks Git/filesystem scope and host validation, and
-returns completion with host acceptance still pending.
+structured-output flags (including read-only `--mode` support), and authentication
+before execution. It resolves the executable to an absolute real path and binds
+its content fingerprint before retaining any resumable session. It minimizes
+the child environment, invokes Cursor without a shell, captures bounded
+structured events, independently checks Git/filesystem scope and host
+validation, and returns completion with host acceptance still pending.
 
 Cursor chooses its own configured model. RelayPact never supplies a model flag,
 changes Cursor settings, or falls back to another harness. `modelObservation`
@@ -437,11 +439,15 @@ node ./bin/relaypact.mjs decide-cursor \
 
 The state and archive roots must be pre-existing real directories outside the
 target repository. Correction refuses changed review evidence, new scope, new
-authority, or a missing original Cursor session. A terminal action rechecks the
-current filesystem, Git controls, index, branch, and HEAD against the signed
-review basis. Acceptance additionally requires eligible pending evidence.
-Archiving excludes the raw Cursor session handle and cleanup deletes only the
-private task state; source changes remain untouched.
+authority, executable path or fingerprint drift, or a missing original Cursor
+session. A run started with `--read-only` remains read-only during every
+correction. A terminal action rechecks the current filesystem, Git controls,
+index, branch, and HEAD against the signed review basis. Acceptance additionally
+requires eligible pending evidence. If execution fails before a current review
+exists, use only `decide-cursor --action abandon` to archive a bounded failure
+receipt and clean task-private state. Archiving excludes the raw Cursor session
+handle and cleanup deletes only the private task state; source changes remain
+untouched.
 
 ## Experimental Codex-to-Pi command
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -177,7 +177,32 @@ test("an unavailable selected Cursor executable fails closed without harness fal
     }
   });
   assert.equal(readiness.state, "blocked");
-  assert.deepEqual(calls, ["selected-cursor"]);
+  assert.deepEqual(calls, []);
+});
+
+test("Cursor readiness refuses a CLI that lacks read-only mode support", async () => {
+  const calls = [];
+  const readiness = await discoverCursorCli({
+    executorCommand: "selected-cursor",
+    resolveExecutable: async () => ({
+      command: "/resolved/selected-cursor",
+      fingerprint: `sha256:${"0".repeat(64)}`
+    }),
+    async runProcess(_command, args) {
+      calls.push(args);
+      if (args.includes("--version")) {
+        return { exitCode: 0, signal: null, stdout: "cursor-agent 2026.08.31-test", stderr: "" };
+      }
+      return {
+        exitCode: 0,
+        signal: null,
+        stdout: "--print --output-format --workspace --sandbox --resume --force",
+        stderr: ""
+      };
+    }
+  });
+  assert.equal(readiness.state, "blocked");
+  assert.deepEqual(calls, [["--version"], ["--help"]]);
 });
 
 test("Cursor session identity is private, digestible, and explicitly resumable", async () => {
@@ -215,6 +240,42 @@ test("Cursor execution responds to host cancellation", async () => {
   assert.equal(result.reportedStatus, "failed");
   assert.equal(result.cancelled, true);
   assert.match(result.summary, /cancelled/i);
+});
+
+test("Host cancellation reaches validation and prevents later validation launches", async () => {
+  const root = await createGitRepository();
+  const controller = new AbortController();
+  let calls = 0;
+  const result = await runDelegation(makeEnvelope(root, {
+    taskId: "cursor-success",
+    validation: [
+      { id: "cancelled", argv: [process.execPath, "-e", "process.exit(0)"] },
+      { id: "must-not-start", argv: [process.execPath, "-e", "process.exit(0)"] }
+    ]
+  }), {
+    executorCommand: fakeCursor,
+    signal: controller.signal,
+    async validationProcess(_command, _args, options) {
+      calls += 1;
+      assert.equal(options.signal, controller.signal);
+      controller.abort();
+      return {
+        exitCode: null,
+        signal: "SIGTERM",
+        stdout: "",
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        timedOut: false,
+        cancelled: true
+      };
+    }
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(result.validations.map(({ id, status, reason }) => ({ id, status, reason })), [
+    { id: "cancelled", status: "failed", reason: "cancelled" },
+    { id: "must-not-start", status: "not_run", reason: "cancelled" }
+  ]);
 });
 
 test("Cursor readiness is privacy-safe and does not invoke a model", async () => {
@@ -300,6 +361,32 @@ test("persistent Cursor CLI returns non-zero for a failed execution result", asy
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("persistent Cursor correction preserves the original read-only authority", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-read-only-state-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-read-only" }), {
+      executorCommand: fakeCursor,
+      readOnly: true,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    const loaded = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    assert.equal(loaded.state.executionMode, "read_only");
+
+    const corrected = await correctDelegation(first.taskRoot, "Inspect again without granting write authority.");
+    assert.equal(corrected.review.executionResult.status, "completed");
+    assert.equal(corrected.review.correctionSequence, 1);
+    assert.deepEqual(corrected.review.executionResult.changedPaths, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
   }
 });
 
@@ -488,6 +575,70 @@ test("Cursor correction refuses a changed executor session identity", async () =
   }
 });
 
+test("Cursor correction refuses executable content drift before lifecycle mutation", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-binary-drift-"));
+  const stateRoot = path.join(privateRoot, "state");
+  const mutableCursor = path.join(privateRoot, "cursor-agent");
+  await mkdir(stateRoot);
+  await copyFile(fakeCursor, mutableCursor);
+  await chmod(mutableCursor, 0o755);
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: mutableCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    await writeFile(mutableCursor, `${await readFile(mutableCursor, "utf8")}\n// executable identity changed\n`);
+    await assert.rejects(
+      correctDelegation(first.taskRoot, "Do not disclose the session to a changed executable."),
+      (error) => error.code === "cursor_executor_mismatch"
+    );
+    const loaded = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    assert.equal(loaded.state.lifecycleState, "awaiting_review");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("failed persistent Cursor task can be explicitly abandoned and archived", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-failed-cleanup-"));
+  const stateRoot = path.join(privateRoot, "state");
+  const archiveRoot = path.join(privateRoot, "archive");
+  await Promise.all([mkdir(stateRoot), mkdir(archiveRoot)]);
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-session-drift" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    await assert.rejects(
+      correctDelegation(first.taskRoot, "Trigger the bounded session mismatch."),
+      (error) => error.code === "cursor_session_mismatch"
+    );
+    const failed = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    assert.equal(failed.state.lifecycleState, "failed");
+
+    const abandoned = await decideDelegation(first.taskRoot, "abandon", "cursor-host-1", archiveRoot);
+    assert.equal(abandoned.lifecycleState, "abandoned");
+    assert.equal(abandoned.acceptance.status, "abandoned");
+    assert.doesNotMatch(await readFile(abandoned.archive.receiptPath, "utf8"), /fixture-cursor-session/u);
+    await assert.rejects(access(first.taskRoot), (error) => error.code === "ENOENT");
+    assert.equal(await readFile(path.join(root, "allowed.txt"), "utf8"), "corrected cursor lifecycle edit\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
 test("Cursor correction refuses an executor command that differs from signed state", async () => {
   const root = await createGitRepository();
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-executor-drift-"));
@@ -507,6 +658,7 @@ test("Cursor correction refuses an executor command that differs from signed sta
     });
     assert.equal(loaded.state.lifecycleState, "awaiting_review");
     assert.equal(loaded.state.executorCommand, fakeCursor);
+    assert.match(loaded.state.executorFingerprint, /^sha256:[a-f0-9]{64}$/u);
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(stateRoot, { recursive: true, force: true });

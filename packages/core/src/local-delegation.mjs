@@ -40,13 +40,19 @@ async function runValidations(commands, workingDirectory, options = {}) {
   });
   const runner = options.validationProcess ?? runProcess;
   try {
-    for (const command of commands) {
+    for (let index = 0; index < commands.length; index += 1) {
+      const command = commands[index];
+      if (options.signal?.aborted) {
+        results.push(...skippedValidations(commands.slice(index), "cancelled", sensitiveValues));
+        break;
+      }
       let processResult;
       try {
         processResult = await runner(command.argv[0], command.argv.slice(1), {
           cwd: workingDirectory,
           env: isolated.env,
-          timeoutMs: command.timeoutMs ?? 120_000
+          timeoutMs: command.timeoutMs ?? 120_000,
+          signal: options.signal
         });
       } catch (error) {
         results.push({
