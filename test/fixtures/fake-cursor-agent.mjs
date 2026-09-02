@@ -1,5 +1,5 @@
-#!/usr/bin/env node
-import { writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 if (process.argv.includes("--version")) {
@@ -61,6 +61,17 @@ if (scenario === "hang") {
   const isolated = process.env.HOST_SECRET === undefined && typeof process.env.HOME === "string";
   if (isolated) write("allowed.txt", "delegated cursor edit\n");
   event({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ status: isolated ? "completed" : "failed", summary: isolated ? "Environment minimized." : "Ambient environment exposed." }) });
+} else if (scenario === "path-tool") {
+  const available = spawnSync("cursor-user-tool", [], { encoding: "utf8" }).stdout === "available";
+  if (available) write("allowed.txt", "delegated cursor edit\n");
+  event({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ status: available ? "completed" : "failed", summary: available ? "Task tool PATH preserved." : "Task tool PATH unavailable." }) });
+} else if (scenario === "launch-profile") {
+  const capabilities = JSON.parse(readFileSync(new URL("./runtime-capabilities.json", import.meta.url), "utf8"));
+  const bounded = process.env.CURSOR_INVOKED_AS === "cursor-agent" &&
+    path.basename(process.argv0) === "cursor-agent" &&
+    process.execArgv.includes("--use-system-ca") === capabilities.systemCa;
+  if (bounded) write("allowed.txt", "delegated cursor edit\n");
+  event({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ status: bounded ? "completed" : "failed", summary: bounded ? "Direct launch profile preserved." : "Direct launch profile drifted." }) });
 } else if (scenario === "read-only") {
   const bounded = process.argv.includes("--mode") && process.argv.includes("plan") && !process.argv.includes("--force");
   event({ type: "result", subtype: "success", is_error: false, result: `README inspected without mutation.\n${JSON.stringify({ status: bounded ? "completed" : "failed", summary: bounded ? "Read-only mode preserved." : "Read-only mode was not preserved." })}` });
@@ -74,24 +85,18 @@ if (scenario === "hang") {
   event(value);
 } else if (scenario === "malformed") {
   event({ type: "result", subtype: "success", is_error: false, result: "not structured" });
+} else if (scenario === "formatted-result") {
+  event({ type: "result", subtype: "success", is_error: false, result: "Review complete.\n```json\n{\n  \"status\": \"completed\",\n  \"summary\": \"Formatted structured result.\"\n}\n```" });
+} else if (scenario === "conflicting-formatted-result") {
+  event({ type: "result", subtype: "success", is_error: false, result: "{\"status\":\"completed\",\"summary\":\"First.\"}\n{\"status\":\"failed\",\"summary\":\"Second.\"}" });
 } else if (scenario === "resume") {
   const resumed = process.argv.includes("--resume=fixture-cursor-session");
   if (resumed) write("allowed.txt", "resumed cursor edit\n");
-  event({
-    type: "result",
-    subtype: "success",
-    is_error: false,
-    result: JSON.stringify({ status: resumed ? "completed" : "failed", summary: resumed ? "Resumed." : "Resume missing." })
-  });
+  event({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ status: resumed ? "completed" : "failed", summary: resumed ? "Resumed." : "Resume missing." }) });
 } else if (scenario === "lifecycle" || scenario === "session-drift") {
   const correction = prompt.includes("authorized correction") && process.argv.includes("--resume=fixture-cursor-session");
   write("allowed.txt", correction ? "corrected cursor lifecycle edit\n" : "initial cursor lifecycle edit\n");
-  event({
-    type: "result",
-    subtype: "success",
-    is_error: false,
-    result: JSON.stringify({ status: "completed", summary: correction ? "Correction completed." : "Initial lifecycle execution completed." })
-  });
+  event({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ status: "completed", summary: correction ? "Correction completed." : "Initial lifecycle execution completed." }) });
 } else {
   write("allowed.txt", "delegated cursor edit\n");
   event({ type: "result", subtype: "success", is_error: false, result: JSON.stringify({ status: "completed", summary: "Bounded Cursor edit completed." }) });

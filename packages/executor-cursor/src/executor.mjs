@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants, createWriteStream } from "node:fs";
-import { access, chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -17,6 +17,11 @@ const MAX_CURSOR_BUNDLE_FILES = 1_024;
 const MAX_CURSOR_BUNDLE_BYTES = 512 * 1024 * 1024;
 const MAX_CURSOR_BUNDLE_DEPTH = 16;
 const SUPPORTED_SHELL_INTERPRETERS = new Set(["bash", "dash", "ksh", "sh", "zsh"]);
+const CURSOR_BUNDLE_RUNTIME_COMMAND = "node";
+const CURSOR_BUNDLE_RUNTIME_ENTRY = "index.js";
+const CURSOR_DIRECT_BOOTSTRAP_ID = "cursor-private-bundle-runtime-v1";
+const CURSOR_DIRECT_BOOTSTRAP_FINGERPRINT = `sha256:${createHash("sha256").update(CURSOR_DIRECT_BOOTSTRAP_ID).digest("hex")}`;
+const CURSOR_RUNTIME_ARGUMENT_CACHE = new Map();
 const HARNESS_OWNED_AUTH_RISK = "Cursor authentication and model configuration remain harness-owned; RelayPact cannot inventory their credential values for exact-value evidence scanning.";
 const SAFE_ENVIRONMENT_NAMES = [
   "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL",
@@ -27,6 +32,13 @@ function safeEnvironment(source) {
   return Object.fromEntries(SAFE_ENVIRONMENT_NAMES.flatMap((name) => (
     source[name] === undefined ? [] : [[name, source[name]]]
   )));
+}
+
+function cursorEnvironment(source, command) {
+  return {
+    ...safeEnvironment(source),
+    CURSOR_INVOKED_AS: path.basename(command)
+  };
 }
 
 function processMetadata(result = {}) {
@@ -53,6 +65,7 @@ async function probe(run, identity, args, environment) {
   try {
     const result = await run(identity.launchCommand, [...identity.launchPrefix, ...args], {
       env: environment,
+      argv0: identity.argv0,
       timeoutMs: PROBE_TIMEOUT_MS,
       maxCaptureBytes: PROBE_CAPTURE_BYTES
     });
@@ -201,7 +214,74 @@ async function inspectCursorBundle(root) {
   for (const file of files) {
     entries.push({ ...file, fingerprint: await fileFingerprint(file.source) });
   }
-  return { files, fingerprint: cursorBundleFingerprint(entries) };
+  const runtimeCommand = entries.find((entry) => entry.relativePath === CURSOR_BUNDLE_RUNTIME_COMMAND);
+  const runtimeEntry = entries.find((entry) => entry.relativePath === CURSOR_BUNDLE_RUNTIME_ENTRY);
+  if (
+    !runtimeCommand?.executable || !runtimeEntry ||
+    (await shebangTokens(runtimeCommand.source))?.length !== 0
+  ) {
+    throw new DelegationError("cursor_executor_mismatch", "Cursor installation bundle does not contain the supported native runtime and entrypoint.");
+  }
+  return {
+    files,
+    entries,
+    fingerprint: cursorBundleFingerprint(entries),
+    runtime: {
+      command: runtimeCommand.source,
+      commandFingerprint: runtimeCommand.fingerprint,
+      entry: runtimeEntry.source,
+      entryFingerprint: runtimeEntry.fingerprint
+    }
+  };
+}
+
+async function fingerprintMatchedContent(file, expectedFingerprint, maxBytes) {
+  const handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > maxBytes) {
+      throw new DelegationError("cursor_executor_mismatch", "Cursor launcher is not a bounded regular file.");
+    }
+    const content = await handle.readFile();
+    const fingerprint = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+    if (fingerprint !== expectedFingerprint) {
+      throw new DelegationError("cursor_executor_mismatch", "Cursor launcher changed while its runtime policy was resolved.");
+    }
+    return content.toString("utf8");
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+async function cursorRuntimeArguments(launcher, launcherFingerprint, runtime, environment) {
+  const content = await fingerprintMatchedContent(launcher, launcherFingerprint, 64 * 1024);
+  const cacheKey = `${launcherFingerprint}:${runtime.commandFingerprint}`;
+  const cached = CURSOR_RUNTIME_ARGUMENT_CACHE.get(cacheKey);
+  if (cached) return [...cached];
+  if (!content.includes('"$NODE_BIN" --use-system-ca --version')) {
+    CURSOR_RUNTIME_ARGUMENT_CACHE.set(cacheKey, []);
+    return [];
+  }
+
+  const probeRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-runtime-probe-"));
+  await chmod(probeRoot, 0o700);
+  try {
+    const probeRuntime = path.join(probeRoot, CURSOR_BUNDLE_RUNTIME_COMMAND);
+    await copyVerifiedExecutable(runtime.command, probeRuntime, runtime.commandFingerprint);
+    const result = await runProcess(probeRuntime, ["--use-system-ca", "--version"], {
+      env: safeEnvironment(environment),
+      timeoutMs: PROBE_TIMEOUT_MS,
+      maxCaptureBytes: PROBE_CAPTURE_BYTES
+    });
+    const selected = result.exitCode === 0 && !result.signal && !result.timedOut &&
+      !result.cancelled && !result.stdoutTruncated && !result.stderrTruncated
+      ? ["--use-system-ca"]
+      : [];
+    CURSOR_RUNTIME_ARGUMENT_CACHE.set(cacheKey, selected);
+    return [...selected];
+  } finally {
+    await rm(probeRoot, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 async function copyCursorBundle(root, targetRoot, expectedFingerprint) {
@@ -222,6 +302,7 @@ async function copyCursorBundle(root, targetRoot, expectedFingerprint) {
   if (observedFingerprint !== expectedFingerprint) {
     throw new DelegationError("cursor_executor_mismatch", "Cursor installation bundle changed before its private launch snapshot was created.");
   }
+  return entries;
 }
 
 async function resolveInterpreter(tokens, environment, baseDirectory) {
@@ -254,11 +335,13 @@ async function resolveInterpreter(tokens, environment, baseDirectory) {
   return { ...resolved, arguments: arguments_ };
 }
 
-function launchFingerprint(launcher, launchCommand, launchCommandFingerprint, launchPrefix, bundleFingerprint = null) {
+function launchFingerprint(launcher, launchCommand, launchCommandFingerprint, launchPrefix, bundleFingerprint = null, runtime = null) {
   const value = JSON.stringify({
     launcher: { command: launcher.command, fingerprint: launcher.fingerprint },
     invocation: { command: launchCommand, fingerprint: launchCommandFingerprint, prefix: launchPrefix },
-    bundleFingerprint
+    bundleFingerprint,
+    runtime,
+    bootstrapFingerprint: runtime ? CURSOR_DIRECT_BOOTSTRAP_FINGERPRINT : null
   });
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
@@ -272,6 +355,12 @@ function sameExecutableIdentity(left, right) {
     left.launchCommandFingerprint === right.launchCommandFingerprint &&
     left.bundleRoot === right.bundleRoot &&
     left.bundleFingerprint === right.bundleFingerprint &&
+    left.runtimeCommand === right.runtimeCommand &&
+    left.runtimeCommandFingerprint === right.runtimeCommandFingerprint &&
+    left.runtimeEntry === right.runtimeEntry &&
+    left.runtimeEntryFingerprint === right.runtimeEntryFingerprint &&
+    JSON.stringify(left.runtimeArguments) === JSON.stringify(right.runtimeArguments) &&
+    left.bootstrapFingerprint === right.bootstrapFingerprint &&
     JSON.stringify(left.launchPrefix) === JSON.stringify(right.launchPrefix));
 }
 
@@ -280,12 +369,17 @@ async function copyVerifiedFile(source, target, mode) {
   try {
     const info = await handle.stat();
     if (!info.isFile()) throw new Error("Snapshot source is not a regular file.");
-    const hash = createHash("sha256");
-    const input = handle.createReadStream({ autoClose: false });
-    input.on("data", (chunk) => hash.update(chunk));
-    await pipeline(input, createWriteStream(target, { flags: "wx", mode }));
+    if (process.platform === "darwin" || process.platform === "linux") {
+      const descriptorPath = process.platform === "darwin" ? `/dev/fd/${handle.fd}` : `/proc/self/fd/${handle.fd}`;
+      await copyFile(descriptorPath, target, fsConstants.COPYFILE_EXCL | (fsConstants.COPYFILE_FICLONE ?? 0));
+    } else {
+      await pipeline(
+        handle.createReadStream({ autoClose: false }),
+        createWriteStream(target, { flags: "wx", mode })
+      );
+    }
     await chmod(target, mode);
-    return `sha256:${hash.digest("hex")}`;
+    return fileFingerprint(target);
   } catch (error) {
     await rm(target, { force: true }).catch(() => {});
     throw error;
@@ -323,7 +417,14 @@ export async function materializeCursorExecutable(identity) {
     }
     if (
       identity.launchPrefix.at(-1) !== identity.command ||
-      !path.isAbsolute(identity.bundleRoot) || !/^sha256:[a-f0-9]{64}$/u.test(identity.bundleFingerprint)
+      !path.isAbsolute(identity.bundleRoot) || !/^sha256:[a-f0-9]{64}$/u.test(identity.bundleFingerprint) ||
+      identity.runtimeCommand !== path.join(identity.bundleRoot, CURSOR_BUNDLE_RUNTIME_COMMAND) ||
+      identity.runtimeEntry !== path.join(identity.bundleRoot, CURSOR_BUNDLE_RUNTIME_ENTRY) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(identity.runtimeCommandFingerprint) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(identity.runtimeEntryFingerprint) ||
+      !Array.isArray(identity.runtimeArguments) ||
+      !["[]", '["--use-system-ca"]'].includes(JSON.stringify(identity.runtimeArguments)) ||
+      identity.bootstrapFingerprint !== CURSOR_DIRECT_BOOTSTRAP_FINGERPRINT
     ) {
       throw new DelegationError("cursor_executor_mismatch", "Cursor interpreter invocation is not bound to the verified launcher.");
     }
@@ -331,17 +432,29 @@ export async function materializeCursorExecutable(identity) {
     if (
       !verifiedInterpreter || verifiedInterpreter.command !== identity.launchCommand ||
       verifiedInterpreter.fingerprint !== identity.launchCommandFingerprint ||
+      path.basename(identity.launchCommand) !== "bash" ||
       !await isPermissionPinnedSystemExecutable(identity.launchCommand)
     ) {
       throw new DelegationError("cursor_executor_mismatch", "Cursor shell interpreter is not identity-matched and permission-pinned for launch.");
     }
-    await copyCursorBundle(identity.bundleRoot, snapshotRoot, identity.bundleFingerprint);
+    const copiedEntries = await copyCursorBundle(identity.bundleRoot, snapshotRoot, identity.bundleFingerprint);
+    const copiedRuntimeCommand = copiedEntries.find((entry) => entry.relativePath === CURSOR_BUNDLE_RUNTIME_COMMAND);
+    const copiedRuntimeEntry = copiedEntries.find((entry) => entry.relativePath === CURSOR_BUNDLE_RUNTIME_ENTRY);
+    if (
+      copiedRuntimeCommand?.fingerprint !== identity.runtimeCommandFingerprint ||
+      copiedRuntimeEntry?.fingerprint !== identity.runtimeEntryFingerprint
+    ) {
+      throw new DelegationError("cursor_executor_mismatch", "Cursor bundle runtime identity changed before its private launch snapshot was created.");
+    }
     const bundledLauncher = path.join(snapshotRoot, path.relative(identity.bundleRoot, identity.command));
+    const bundledRuntimeCommand = path.join(snapshotRoot, CURSOR_BUNDLE_RUNTIME_COMMAND);
+    const bundledRuntimeEntry = path.join(snapshotRoot, CURSOR_BUNDLE_RUNTIME_ENTRY);
     return {
       identity: {
         ...identity,
-        launchCommand: identity.launchCommand,
-        launchPrefix: [...identity.launchPrefix.slice(0, -1), bundledLauncher]
+        launchCommand: bundledRuntimeCommand,
+        launchPrefix: [...identity.runtimeArguments, bundledRuntimeEntry],
+        argv0: bundledLauncher
       },
       cleanup: () => rm(snapshotRoot, { recursive: true, force: true })
     };
@@ -374,10 +487,19 @@ export async function resolveCursorExecutable(command, options = {}) {
         };
       }
       const interpreter = await resolveInterpreter(shebang, environment, baseDirectory);
-      if (!interpreter) continue;
+      if (!interpreter || path.basename(interpreter.command) !== "bash" || (interpreter.arguments?.length ?? 0) !== 0) continue;
       const bundleRoot = path.dirname(launcher.command);
       const bundle = await inspectCursorBundle(bundleRoot);
       const launchPrefix = [...(interpreter.arguments ?? []), launcher.command];
+      const runtime = {
+        ...bundle.runtime,
+        arguments: await cursorRuntimeArguments(
+          launcher.command,
+          launcher.fingerprint,
+          bundle.runtime,
+          environment
+        )
+      };
       return {
         command: launcher.command,
         launchCommand: interpreter.command,
@@ -386,7 +508,20 @@ export async function resolveCursorExecutable(command, options = {}) {
         launchCommandFingerprint: interpreter.fingerprint,
         bundleRoot,
         bundleFingerprint: bundle.fingerprint,
-        fingerprint: launchFingerprint(launcher, interpreter.command, interpreter.fingerprint, launchPrefix, bundle.fingerprint)
+        runtimeCommand: runtime.command,
+        runtimeCommandFingerprint: runtime.commandFingerprint,
+        runtimeEntry: runtime.entry,
+        runtimeEntryFingerprint: runtime.entryFingerprint,
+        runtimeArguments: runtime.arguments,
+        bootstrapFingerprint: CURSOR_DIRECT_BOOTSTRAP_FINGERPRINT,
+        fingerprint: launchFingerprint(
+          launcher,
+          interpreter.command,
+          interpreter.fingerprint,
+          launchPrefix,
+          bundle.fingerprint,
+          runtime
+        )
       };
     } catch {
       // Try the next explicit PATH candidate without exposing filesystem details.
@@ -421,7 +556,14 @@ export async function discoverCursorCli(options = {}) {
       !/^sha256:[a-f0-9]{64}$/u.test(identity.launchCommandFingerprint) ||
       (identity.command === identity.launchCommand
         ? identity.bundleRoot !== null || identity.bundleFingerprint !== null
-        : !path.isAbsolute(identity.bundleRoot) || !/^sha256:[a-f0-9]{64}$/u.test(identity.bundleFingerprint)) ||
+        : !path.isAbsolute(identity.bundleRoot) || !/^sha256:[a-f0-9]{64}$/u.test(identity.bundleFingerprint) ||
+          typeof identity.runtimeCommand !== "string" || !path.isAbsolute(identity.runtimeCommand) ||
+          !/^sha256:[a-f0-9]{64}$/u.test(identity.runtimeCommandFingerprint) ||
+          typeof identity.runtimeEntry !== "string" || !path.isAbsolute(identity.runtimeEntry) ||
+          !/^sha256:[a-f0-9]{64}$/u.test(identity.runtimeEntryFingerprint) ||
+          !Array.isArray(identity.runtimeArguments) ||
+          !["[]", '["--use-system-ca"]'].includes(JSON.stringify(identity.runtimeArguments)) ||
+          identity.bootstrapFingerprint !== CURSOR_DIRECT_BOOTSTRAP_FINGERPRINT) ||
       !/^sha256:[a-f0-9]{64}$/u.test(identity.fingerprint)
     ) continue;
     const command = identity.command;
@@ -429,18 +571,19 @@ export async function discoverCursorCli(options = {}) {
     try {
       materialized = run === runProcess ? await materializeCursorExecutable(identity) : null;
       const probeIdentity = materialized?.identity ?? identity;
-      const versionProbe = await probe(run, probeIdentity, ["--version"], environment);
+      const launchEnvironment = cursorEnvironment(environment, command);
+      const versionProbe = await probe(run, probeIdentity, ["--version"], launchEnvironment);
       if (versionProbe.state !== "complete" || versionProbe.exitCode !== 0 || versionProbe.signal) continue;
       const version = parseVersion(versionProbe.output);
       if (!version) continue;
 
-      const helpProbe = await probe(run, probeIdentity, ["--help"], environment);
+      const helpProbe = await probe(run, probeIdentity, ["--help"], launchEnvironment);
       if (
         helpProbe.state !== "complete" || helpProbe.exitCode !== 0 || helpProbe.signal ||
         !supportsRequiredFlags(helpProbe.output)
       ) continue;
 
-      const authProbe = await probe(run, probeIdentity, ["status"], environment);
+      const authProbe = await probe(run, probeIdentity, ["status"], launchEnvironment);
       const authenticated = authProbe.state === "complete" && authProbe.exitCode === 0 && !authProbe.signal;
       const verifiedIdentity = await resolveExecutable(command, {
         environment,
@@ -456,6 +599,12 @@ export async function discoverCursorCli(options = {}) {
         launchCommandFingerprint: verifiedIdentity.launchCommandFingerprint,
         bundleRoot: verifiedIdentity.bundleRoot,
         bundleFingerprint: verifiedIdentity.bundleFingerprint,
+        runtimeCommand: verifiedIdentity.runtimeCommand,
+        runtimeCommandFingerprint: verifiedIdentity.runtimeCommandFingerprint,
+        runtimeEntry: verifiedIdentity.runtimeEntry,
+        runtimeEntryFingerprint: verifiedIdentity.runtimeEntryFingerprint,
+        runtimeArguments: verifiedIdentity.runtimeArguments,
+        bootstrapFingerprint: verifiedIdentity.bootstrapFingerprint,
         executableFingerprint: verifiedIdentity.fingerprint,
         version,
         authenticated,
@@ -516,18 +665,31 @@ function findPayload(value, depth = 0) {
 function parseTerminalPayload(value) {
   const direct = findPayload(value);
   if (direct || typeof value !== "string") return direct;
-  const candidates = [];
+  const candidates = new Map();
+  const addCandidate = (text) => {
+    try {
+      const payload = findPayload(JSON.parse(text.trim()));
+      if (payload) candidates.set(JSON.stringify(payload), payload);
+    } catch {
+      // Only complete JSON values with a supported payload are eligible.
+    }
+  };
   for (const line of value.split(/\r?\n/u)) {
     const trimmed = line.trim();
     if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) continue;
-    try {
-      const payload = findPayload(JSON.parse(trimmed));
-      if (payload) candidates.push(payload);
-    } catch {
-      // A terminal line is eligible only when the complete line is valid JSON.
-    }
+    addCandidate(trimmed);
   }
-  return candidates.length === 1 ? candidates[0] : null;
+  for (const match of value.matchAll(/```(?:json)?[ \t]*\r?\n([\s\S]*?)```/giu)) {
+    addCandidate(match[1]);
+  }
+  let cursor = value.length;
+  for (let attempts = 0; attempts < 64; attempts += 1) {
+    const start = value.lastIndexOf("{", cursor - 1);
+    if (start < 0) break;
+    addCandidate(value.slice(start));
+    cursor = start;
+  }
+  return candidates.size === 1 ? candidates.values().next().value : null;
 }
 
 function parseCursorEvents(stdout) {
@@ -672,6 +834,12 @@ export async function runExecutor(envelope, options = {}) {
       launchCommandFingerprint: readiness.launchCommandFingerprint,
       bundleRoot: readiness.bundleRoot,
       bundleFingerprint: readiness.bundleFingerprint,
+      runtimeCommand: readiness.runtimeCommand,
+      runtimeCommandFingerprint: readiness.runtimeCommandFingerprint,
+      runtimeEntry: readiness.runtimeEntry,
+      runtimeEntryFingerprint: readiness.runtimeEntryFingerprint,
+      runtimeArguments: readiness.runtimeArguments,
+      bootstrapFingerprint: readiness.bootstrapFingerprint,
       fingerprint: readiness.executableFingerprint
     }) : null;
     const launchIdentity = materialized?.identity ?? readiness;
@@ -681,16 +849,21 @@ export async function runExecutor(envelope, options = {}) {
       [...(launchIdentity.launchPrefix ?? []), ...buildCursorArgs(envelope, options.workingDirectory, options)],
       {
         cwd: options.workingDirectory,
-        env: safeEnvironment(options.environment ?? process.env),
+        env: cursorEnvironment(options.environment ?? process.env, readiness.command),
+        argv0: launchIdentity.argv0,
         timeoutMs: envelope.execution?.timeoutMs ?? 900_000,
         maxCaptureBytes: options.maxCaptureBytes ?? EXECUTION_CAPTURE_BYTES,
         signal: options.signal
       }
     );
-  } catch {
+  } catch (error) {
+    const identityMismatch = error instanceof DelegationError && error.code === "cursor_executor_mismatch";
     return {
       reportedStatus: "failed",
-      summary: "Cursor executor could not start.",
+      summary: identityMismatch
+        ? "Cursor executor identity changed before launch."
+        : "Cursor executor could not start.",
+      failureCode: identityMismatch ? "cursor_executor_mismatch" : "cursor_launch_failed",
       residualRisks: residualRisks(),
       exitCode: null,
       signal: null,

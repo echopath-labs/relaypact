@@ -83,6 +83,7 @@
         "exitCode": { "type": ["integer", "null"] },
         "signal": { "type": ["string", "null"] },
         "summary": { "type": "string" },
+        "failureCode": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,79}$" },
         "modelObservation": { "$ref": "#/$defs/modelObservation" }
       }
     },

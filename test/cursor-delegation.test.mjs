@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { execFile, execFileSync } from "node:child_process";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -31,9 +31,41 @@ import {
 } from "../packages/core/src/direct-lifecycle.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
-const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor-agent.sh", import.meta.url));
-const fakeCursorImplementation = fileURLToPath(new URL("./fixtures/fake-cursor-agent.mjs", import.meta.url));
-const fakeCursorPackage = fileURLToPath(new URL("./fixtures/package.json", import.meta.url));
+const fakeCursorLauncherSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.sh", import.meta.url));
+const fakeCursorImplementationSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.mjs", import.meta.url));
+const fakeCursorRuntimeSource = fileURLToPath(new URL("./fixtures/fake-cursor-runtime.c", import.meta.url));
+const fakeCursorPackageSource = fileURLToPath(new URL("./fixtures/package.json", import.meta.url));
+const fakeCursorRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-fixture-"));
+const fakeCursor = path.join(fakeCursorRoot, "cursor-agent");
+const fakeCursorImplementation = path.join(fakeCursorRoot, "index.js");
+const fakeCursorRuntime = path.join(fakeCursorRoot, "node");
+const fakeCursorPackage = path.join(fakeCursorRoot, "package.json");
+const fakeCursorCapabilities = path.join(fakeCursorRoot, "runtime-capabilities.json");
+await Promise.all([
+  copyFile(fakeCursorLauncherSource, fakeCursor),
+  copyFile(fakeCursorImplementationSource, fakeCursorImplementation),
+  copyFile(fakeCursorPackageSource, fakeCursorPackage)
+]);
+let fakeCursorRuntimeSupportsSystemCa = true;
+try {
+  execFileSync(process.env.CC || "cc", [fakeCursorRuntimeSource, "-O2", "-o", fakeCursorRuntime], {
+    stdio: "pipe"
+  });
+} catch {
+  await copyFile(process.execPath, fakeCursorRuntime);
+  try {
+    execFileSync(process.execPath, ["--use-system-ca", "--version"], { stdio: "ignore" });
+  } catch {
+    fakeCursorRuntimeSupportsSystemCa = false;
+  }
+}
+await writeFile(fakeCursorCapabilities, `${JSON.stringify({ systemCa: fakeCursorRuntimeSupportsSystemCa })}\n`);
+await Promise.all([
+  chmod(fakeCursor, 0o755),
+  chmod(fakeCursorImplementation, 0o755),
+  chmod(fakeCursorRuntime, 0o755)
+]);
+test.after(() => rm(fakeCursorRoot, { recursive: true, force: true }));
 const cli = fileURLToPath(new URL("../bin/relaypact.mjs", import.meta.url));
 const execFileAsync = promisify(execFile);
 const execute = (root, scenario, options = {}) => runDelegation(makeEnvelope(root, {
@@ -108,6 +140,41 @@ test("Cursor receives a minimized environment without ambient credentials", asyn
   assert.doesNotMatch(JSON.stringify(result), /ambient-secret-must-not-cross/u);
 });
 
+test("Cursor bundle bootstrap ignores poisoned PATH helpers but preserves task tool PATH", async () => {
+  const root = await createGitRepository();
+  const poisonRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-path-poison-"));
+  const poisonedMarkers = ["node", "realpath", "dirname", "basename", "readlink"]
+    .map((name) => path.join(poisonRoot, `${name}.executed`));
+  try {
+    await Promise.all(["node", "realpath", "dirname", "basename", "readlink"].map(async (name) => {
+      const executable = path.join(poisonRoot, name);
+      await writeFile(executable, `#!/bin/sh\nprintf poisoned > ${JSON.stringify(path.join(poisonRoot, `${name}.executed`))}\nexit 97\n`);
+      await chmod(executable, 0o755);
+    }));
+    const taskTool = path.join(poisonRoot, "cursor-user-tool");
+    await writeFile(taskTool, "#!/bin/sh\nprintf available\n");
+    await chmod(taskTool, 0o755);
+
+    const result = await execute(root, "path-tool", {
+      environment: { ...process.env, PATH: `${poisonRoot}:${process.env.PATH}` }
+    });
+    assert.equal(result.status, "completed");
+    for (const marker of poisonedMarkers) {
+      await assert.rejects(access(marker), (error) => error.code === "ENOENT");
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(poisonRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor direct launch profile preserves runtime flags and invocation identity", async () => {
+  const root = await createGitRepository();
+  const result = await execute(root, "launch-profile");
+  assert.equal(result.status, "completed");
+  assert.equal(result.executor.summary, "Direct launch profile preserved.");
+});
+
 test("Cursor execution timeout is bounded and normalized", async () => {
   const root = await createGitRepository();
   const result = await runExecutor(makeEnvelope(root, {
@@ -173,6 +240,22 @@ test("Cursor blocked and malformed terminal results remain ineligible", async ()
   }
 });
 
+test("Cursor accepts one formatted structured payload but rejects conflicting candidates", async () => {
+  const root = await createGitRepository();
+  try {
+    const formatted = await execute(root, "formatted-result");
+    assert.equal(formatted.status, "completed");
+    assert.equal(formatted.executor.summary, "Formatted structured result.");
+
+    const conflicting = await execute(root, "conflicting-formatted-result");
+    assert.equal(conflicting.status, "failed");
+    assert.equal(conflicting.executor.reportedStatus, "malformed");
+    assert.equal(conflicting.hostAcceptance.eligible, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("an unavailable selected Cursor executable fails closed without harness fallback", async () => {
   const calls = [];
   const readiness = await discoverCursorCli({
@@ -192,12 +275,12 @@ test("Cursor readiness refuses a CLI that lacks read-only mode support", async (
     executorCommand: "selected-cursor",
     resolveExecutable: async () => ({
       command: "/resolved/selected-cursor",
-      launchCommand: "/resolved/node",
-      launchPrefix: ["/resolved/selected-cursor"],
+      launchCommand: "/resolved/selected-cursor",
+      launchPrefix: [],
       launcherFingerprint: `sha256:${"1".repeat(64)}`,
-      launchCommandFingerprint: `sha256:${"2".repeat(64)}`,
-      bundleRoot: "/resolved",
-      bundleFingerprint: `sha256:${"3".repeat(64)}`,
+      launchCommandFingerprint: `sha256:${"1".repeat(64)}`,
+      bundleRoot: null,
+      bundleFingerprint: null,
       fingerprint: `sha256:${"0".repeat(64)}`
     }),
     async runProcess(_command, args) {
@@ -215,8 +298,8 @@ test("Cursor readiness refuses a CLI that lacks read-only mode support", async (
   });
   assert.equal(readiness.state, "blocked");
   assert.deepEqual(calls, [
-    ["/resolved/selected-cursor", "--version"],
-    ["/resolved/selected-cursor", "--help"]
+    ["--version"],
+    ["--help"]
   ]);
 });
 
@@ -225,12 +308,12 @@ test("Cursor readiness refuses a CLI that lacks trust support", async () => {
     executorCommand: "selected-cursor",
     resolveExecutable: async () => ({
       command: "/resolved/selected-cursor",
-      launchCommand: "/resolved/node",
-      launchPrefix: ["/resolved/selected-cursor"],
+      launchCommand: "/resolved/selected-cursor",
+      launchPrefix: [],
       launcherFingerprint: `sha256:${"1".repeat(64)}`,
-      launchCommandFingerprint: `sha256:${"2".repeat(64)}`,
-      bundleRoot: "/resolved",
-      bundleFingerprint: `sha256:${"3".repeat(64)}`,
+      launchCommandFingerprint: `sha256:${"1".repeat(64)}`,
+      bundleRoot: null,
+      bundleFingerprint: null,
       fingerprint: `sha256:${"0".repeat(64)}`
     }),
     async runProcess(_command, args) {
@@ -714,7 +797,8 @@ test("Cursor correction refuses executable content drift before lifecycle mutati
   await mkdir(stateRoot);
   await Promise.all([
     copyFile(fakeCursor, mutableCursor),
-    copyFile(fakeCursorImplementation, path.join(privateRoot, "fake-cursor-agent.mjs")),
+    copyFile(fakeCursorImplementation, path.join(privateRoot, "index.js")),
+    copyFile(fakeCursorRuntime, path.join(privateRoot, "node")),
     copyFile(fakeCursorPackage, path.join(privateRoot, "package.json"))
   ]);
   await chmod(mutableCursor, 0o755);
@@ -750,7 +834,8 @@ test("Cursor correction refuses shebang interpreter drift before session disclos
   await Promise.all([mkdir(stateRoot), mkdir(trustedBin), mkdir(replacementBin)]);
   await Promise.all([
     copyFile(fakeCursor, mutableCursor),
-    copyFile(fakeCursorImplementation, path.join(privateRoot, "fake-cursor-agent.mjs")),
+    copyFile(fakeCursorImplementation, path.join(privateRoot, "index.js")),
+    copyFile(fakeCursorRuntime, path.join(privateRoot, "node")),
     copyFile(fakeCursorPackage, path.join(privateRoot, "package.json")),
     symlink("/bin/bash", path.join(trustedBin, "bash")),
     symlink("/bin/sh", path.join(replacementBin, "bash"))
@@ -787,7 +872,8 @@ test("Cursor execution launches verified private snapshots after original path r
   const marker = path.join(privateRoot, "mutable-path-executed");
   await Promise.all([
     copyFile(fakeCursor, mutableCursor),
-    copyFile(fakeCursorImplementation, path.join(privateRoot, "fake-cursor-agent.mjs")),
+    copyFile(fakeCursorImplementation, path.join(privateRoot, "index.js")),
+    copyFile(fakeCursorRuntime, path.join(privateRoot, "node")),
     copyFile(fakeCursorPackage, path.join(privateRoot, "package.json"))
   ]);
   await chmod(mutableCursor, 0o755);
@@ -812,11 +898,12 @@ test("Cursor execution snapshots launcher-relative companion code before session
   const root = await createGitRepository();
   const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-bundle-snapshot-"));
   const mutableCursor = path.join(privateRoot, "cursor-agent");
-  const mutableImplementation = path.join(privateRoot, "fake-cursor-agent.mjs");
+  const mutableImplementation = path.join(privateRoot, "index.js");
   const marker = path.join(privateRoot, "mutable-companion-executed");
   await Promise.all([
     copyFile(fakeCursor, mutableCursor),
     copyFile(fakeCursorImplementation, mutableImplementation),
+    copyFile(fakeCursorRuntime, path.join(privateRoot, "node")),
     copyFile(fakeCursorPackage, path.join(privateRoot, "package.json"))
   ]);
   await chmod(mutableCursor, 0o755);
@@ -840,10 +927,11 @@ test("Cursor bundle materialization refuses added, removed, and symlinked compan
   for (const mutation of ["added", "removed", "symlinked"]) {
     const privateRoot = await mkdtemp(path.join(os.tmpdir(), `relaypact-cursor-bundle-${mutation}-`));
     const mutableCursor = path.join(privateRoot, "cursor-agent");
-    const mutableImplementation = path.join(privateRoot, "fake-cursor-agent.mjs");
+    const mutableImplementation = path.join(privateRoot, "index.js");
     await Promise.all([
       copyFile(fakeCursor, mutableCursor),
       copyFile(fakeCursorImplementation, mutableImplementation),
+      copyFile(fakeCursorRuntime, path.join(privateRoot, "node")),
       copyFile(fakeCursorPackage, path.join(privateRoot, "package.json"))
     ]);
     await chmod(mutableCursor, 0o755);
@@ -865,6 +953,39 @@ test("Cursor bundle materialization refuses added, removed, and symlinked compan
     } finally {
       await rm(privateRoot, { recursive: true, force: true });
     }
+  }
+});
+
+test("Cursor identity mismatch remains machine-readable after postflight", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-failure-code-"));
+  const mutableCursor = path.join(privateRoot, "cursor-agent");
+  const mutableImplementation = path.join(privateRoot, "index.js");
+  await Promise.all([
+    copyFile(fakeCursor, mutableCursor),
+    copyFile(fakeCursorImplementation, mutableImplementation),
+    copyFile(fakeCursorRuntime, path.join(privateRoot, "node")),
+    copyFile(fakeCursorPackage, path.join(privateRoot, "package.json"))
+  ]);
+  await chmod(mutableCursor, 0o755);
+  try {
+    const readiness = await discoverCursorCli({ executorCommand: mutableCursor });
+    assert.equal(readiness.state, "ready");
+    await writeFile(mutableImplementation, "#!/bin/sh\nexit 97\n");
+
+    const result = await runDelegation(makeEnvelope(root, { taskId: "cursor-identity-failure" }), {
+      executorCommand: mutableCursor,
+      readiness
+    });
+    assert.equal(result.status, "failed");
+    assert.equal(result.executor.reportedStatus, "failed");
+    assert.equal(result.executor.failureCode, "cursor_executor_mismatch");
+    assert.match(result.executor.summary, /identity changed/i);
+    assert.equal(result.hostAcceptance.eligible, false);
+    assert.equal(result.scope.compliant, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
   }
 });
 
@@ -953,7 +1074,7 @@ test("Cursor correction refuses an executor command that differs from signed sta
       executorHarness: "cursor"
     });
     assert.equal(loaded.state.lifecycleState, "awaiting_review");
-    assert.equal(loaded.state.executorCommand, fakeCursor);
+    assert.equal(loaded.state.executorCommand, await realpath(fakeCursor));
     assert.match(loaded.state.executorFingerprint, /^sha256:[a-f0-9]{64}$/u);
   } finally {
     await rm(root, { recursive: true, force: true });

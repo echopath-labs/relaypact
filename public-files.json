@@ -118,6 +118,7 @@
     "test/fixtures/fake-codex.mjs",
     "test/fixtures/fake-cursor-agent.mjs",
     "test/fixtures/fake-cursor-agent.sh",
+    "test/fixtures/fake-cursor-runtime.c",
     "test/fixtures/fake-pi.mjs",
     "test/fixtures/package.json",
     "test/helpers.mjs",

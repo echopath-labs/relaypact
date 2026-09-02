@@ -15,10 +15,24 @@ from a private content-verified snapshot. Shell launchers must belong to a
 recognized, bounded `@anysphere/agent-cli-runtime` installation bundle. RelayPact
 fingerprints and snapshots that complete static bundle—including launcher-relative
 companions—before execution, while excluding the runtime-only `.running`
-directory. The snapshot runs through a root-owned, non-writable system shell
-whose path and content are fingerprinted immediately before launch;
-user-mutable shebang interpreters are refused. The signed fingerprint binds the
-bundle, launcher, interpreter, and fixed argument prefix. Correction verifies
-that complete launch identity and preserves the original read-only or write
-authority before the handle can be reused. Public review and terminal archives
-retain only bounded evidence and never the raw handle.
+directory. RelayPact validates the launcher's system-Bash form but does not execute
+its shell logic for protected work. It uses a fixed `shell: false` launch profile
+to invoke the verified snapshot `node` and `index.js` by absolute path, with a
+trusted `CURSOR_INVOKED_AS` value. Any launcher-declared `--use-system-ca` path
+is selected only after the fingerprint-matched runtime accepts the same bounded
+version probe; otherwise RelayPact preserves the launcher's no-flag fallback.
+Inherited `PATH` is therefore not consulted before protected task or session data
+reaches Cursor, while Cursor retains the bounded Host PATH for delegated tool
+execution. The signed fingerprint binds the bundle, launcher, validated
+interpreter, runtime, selected runtime flags, and direct-launch profile.
+Correction verifies that complete launch identity and preserves the original
+read-only or write authority before the handle can be reused. Identity mismatch
+is retained as a bounded machine-readable failure code through Host review.
+Public review and terminal archives retain only bounded evidence and never the
+raw handle.
+
+Cursor terminal evidence is accepted only when one unambiguous supported
+structured payload is present. RelayPact recognizes a complete result, one
+complete JSON line, a JSON Markdown fence, or a trailing multiline JSON object;
+multiple distinct candidates remain malformed and ineligible for Host
+acceptance.

@@ -268,6 +268,7 @@ export async function runLocalDelegation(input, options = {}) {
       exitCode: executor.exitCode,
       signal: executor.signal,
       summary: executor.summary,
+      ...(executor.failureCode ? { failureCode: executor.failureCode } : {}),
       ...(executor.modelObservation ? { modelObservation: executor.modelObservation } : {})
     },
     hostAcceptance: { status: "pending", eligible: status === "completed", decidedBy: null },

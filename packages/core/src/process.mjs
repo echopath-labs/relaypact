@@ -54,6 +54,7 @@ export function runProcess(command, args, options = {}) {
     hardSettleGraceMs = DEFAULT_HARD_SETTLE_GRACE_MS,
     processGroup = process.platform !== "win32",
     outputEncoding = "utf8",
+    argv0 = undefined,
     signal: abortSignal = undefined
   } = options;
 
@@ -63,6 +64,7 @@ export function runProcess(command, args, options = {}) {
       env,
       detached: processGroup,
       shell: false,
+      ...(argv0 === undefined ? {} : { argv0 }),
       stdio: ["pipe", "pipe", "pipe"]
     });
 
