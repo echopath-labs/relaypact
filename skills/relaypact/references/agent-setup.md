@@ -16,7 +16,9 @@ node <skill-directory>/scripts/relaypact.mjs support
 node <skill-directory>/scripts/relaypact.mjs doctor
 ```
 
-Do not load Pi, a provider, a router, or credentials during support discovery.
+Do not load Pi, Cursor, a provider, a router, or credentials during default
+support discovery. Probe Cursor only after explicit route selection with
+`doctor --route codex-cursor`; that diagnostic must not invoke a model.
 Use `support-matrix.json` as the route-status authority. Treat doctor as local
 readiness only: report the Codex CLI version, `codex exec`, packaged Skill,
 marketplace/plugin visibility, aggregate state, and remediation. `needs_setup`
@@ -101,6 +103,8 @@ credential-free metadata only:
 - direct route: provider name, compatible `/v1` Responses base URL, explicit
   model, and credential environment-variable name;
 - router route: selected Codex profile plus a loopback health URL.
+- Cursor harness: no RelayPact model profile; use the model already configured
+  by the user inside Cursor and report only model metadata Cursor actually emits.
 
 The actual credential remains in host-owned configuration or the named process
 environment. Ask whether it is available; do not ask the user to paste its

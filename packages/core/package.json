@@ -7,6 +7,7 @@
     "./environment": "./src/environment.mjs",
     "./filesystem-evidence": "./src/filesystem-evidence.mjs",
     "./git": "./src/git.mjs",
+    "./local-delegation": "./src/local-delegation.mjs",
     "./process": "./src/process.mjs",
     "./redact": "./src/redact.mjs",
     "./context/*": "./src/context/*"

@@ -17,6 +17,9 @@ does not authorize broader access or automatic patch application.
   repository
 
 Pi is required only for the explicitly selected experimental `codex-pi` route.
+A compatible authenticated Cursor CLI is required only for the explicitly
+selected experimental `codex-cursor` route. RelayPact does not configure Cursor
+authentication, provider, or model.
 
 RelayPact supplies the delegation workflow, scope controls,
 execution isolation, evidence, and acceptance lifecycle. The delegated executor
@@ -101,6 +104,7 @@ From a source clone:
 ```bash
 node ./bin/relaypact.mjs support
 node ./bin/relaypact.mjs doctor
+node ./bin/relaypact.mjs doctor --route codex-cursor
 ```
 
 From an installed Skill, resolve
@@ -108,8 +112,9 @@ From an installed Skill, resolve
 the installed Skill directory. Do not assume the current directory is the
 plugin checkout.
 
-The support matrix identifies `codex-codex` as `public-preview` and `codex-pi`
-as `experimental`. `support` reports that static contract. `doctor` separately
+The support matrix identifies `codex-codex` as `public-preview`, with
+`codex-pi` and `codex-cursor` as explicit `experimental` routes. `support`
+reports that static contract. Default `doctor` separately
 checks the current Node.js, Git, Codex CLI, `codex exec`, packaged Skill,
 marketplace, and plugin visibility without reading authentication, contacting a
 provider, or starting a worker:
@@ -118,8 +123,10 @@ provider, or starting a worker:
 - `needs_setup`: runtime works, but marketplace or plugin visibility needs setup;
 - `blocked`: a required runtime, packaged Skill, or `codex exec` check failed.
 
-Doctor cannot prove live model/provider availability. That is evaluated only
-when the user selects and invokes a route.
+Selected-route Cursor doctor checks only local CLI capability and authentication
+status. It does not invoke a model, retain account output, or prove live model
+availability. Live execution is evaluated only after the user explicitly
+selects and invokes the route.
 
 ## Prepare private roots
 
@@ -372,10 +379,43 @@ these directories in a public repository or publicly synchronized folder.
   performs the bounded task.
 - **Harness:** the Agent loop, tools, context, permissions, and result behavior;
   the public-preview worker keeps the Codex harness.
-- **Route:** the selected connection to a model/provider, such as native Codex,
-  a direct Responses endpoint, or an explicit loopback router.
+- **Route:** the selected Coordinating Host to Executor Harness pair, such as
+  `codex-codex`, `codex-pi`, or `codex-cursor`.
 - **Profile:** host-owned, non-secret metadata selecting the worker command,
-  model alias, reasoning effort, environment names, and one route.
+  model alias, reasoning effort, and environment names for a harness that
+  supports profiles. Cursor model configuration remains Cursor-owned and is not
+  part of RelayPact route identity.
+
+## Experimental Codex-to-Cursor command
+
+Cursor remains an explicit experimental route and is not loaded by `run-codex`
+or by default diagnostics:
+
+```bash
+node ./bin/relaypact.mjs doctor --route codex-cursor
+node ./bin/relaypact.mjs run-cursor \
+  --envelope /absolute/private/cursor-task-envelope.json
+```
+
+Add `--read-only` to use Cursor plan mode without RelayPact granting `--force`.
+
+Use `--executor /absolute/path/to/cursor-agent` when discovery should be bound
+to one installation. RelayPact verifies version, required non-interactive and
+structured-output flags, and authentication before execution. It minimizes the
+child environment, invokes Cursor without a shell, captures bounded structured
+events, independently checks Git/filesystem scope and host validation, and
+returns completion with host acceptance still pending.
+
+Cursor chooses its own configured model. RelayPact never supplies a model flag,
+changes Cursor settings, or falls back to another harness. `modelObservation`
+is `observed/reported` only when Cursor emits a concrete bounded model field.
+Cursor's `Auto` value is retained as `harness_managed/selector_alias`, because it
+does not prove which underlying LLM handled the request. Missing metadata remains
+honestly `unavailable/unknown`.
+
+The current experimental command works directly in the approved target working
+tree and does not yet expose the persistent correction/terminal-decision archive
+used by `codex-codex`. Treat its result as review evidence, not acceptance.
 
 ## Experimental Codex-to-Pi command
 
@@ -397,6 +437,7 @@ Offline deterministic checks:
 ```bash
 npm run check
 npm run check:codex-codex
+npm run check:codex-cursor
 npm pack --dry-run
 ```
 
@@ -406,8 +447,15 @@ Plugin discovery uses an isolated home and no ambient credential:
 RELAYPACT_CODEX_PLUGIN_SMOKE=1 npm run smoke:codex-plugin
 ```
 
-Live Codex, direct-provider, router, and Pi smokes are opt-in. They may consume
-quota and must run only with explicitly prepared local configuration.
+Cursor readiness is opt-in but does not invoke a model:
+
+```bash
+RELAYPACT_CURSOR_READINESS=1 npm run smoke:cursor
+```
+
+Live Codex, Cursor execution (`RELAYPACT_CURSOR_SMOKE=1`), direct-provider,
+router, and Pi smokes are opt-in. They may consume quota and must run only with
+explicitly prepared local configuration and model-usage authorization.
 
 ## Recovery principles
 

@@ -15,13 +15,15 @@
     "relaypact": "./bin/relaypact.mjs"
   },
   "scripts": {
-    "test": "npm run test:contracts && npm run test:core && npm run test:codex-codex && npm run test:codex-pi && npm run test:boundaries",
+    "test": "npm run test:contracts && npm run test:core && npm run test:codex-codex && npm run test:codex-pi && npm run test:codex-cursor && npm run test:boundaries",
     "test:contracts": "node --test test/context-contract.test.mjs",
     "test:core": "node --test test/context-planner.test.mjs",
     "test:codex-codex": "node --test test/codex-*.test.mjs",
     "test:codex-pi": "node --test test/run-delegation.test.mjs",
+    "test:codex-cursor": "node --test test/cursor-*.test.mjs",
     "test:boundaries": "node --test test/security-boundaries.test.mjs test/package-validation.test.mjs",
     "smoke:pi": "node --test test/integration/pi-smoke.test.mjs",
+    "smoke:cursor": "node --test test/integration/cursor-smoke.test.mjs",
     "smoke:codex-plugin": "node --test test/integration/codex-plugin-discovery-smoke.test.mjs",
     "smoke:codex-native": "node --test test/integration/codex-native-smoke.test.mjs",
     "smoke:codex-direct": "node --test test/integration/codex-direct-provider-smoke.test.mjs",
@@ -32,6 +34,7 @@
     "check:core": "npm run test:core",
     "check:codex-codex": "npm run test:codex-codex",
     "check:codex-pi": "npm run test:codex-pi",
+    "check:codex-cursor": "npm run test:codex-cursor",
     "check:package": "npm run validate:architecture && npm run validate:package && npm run test:boundaries",
     "check": "npm run validate:architecture && npm run validate:package && npm test"
   }
