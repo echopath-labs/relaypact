@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { runDelegation } from "../packages/adapter-codex-cursor/src/run-delegation.mjs";
+import {
+  correctDelegation,
+  decideDelegation,
+  runDelegation
+} from "../packages/adapter-codex-cursor/src/run-delegation.mjs";
 import {
   assertCursorResumeSession,
   cursorSessionEvidence,
@@ -191,4 +196,168 @@ test("CLI exposes only explicit Cursor execution and diagnostics", async () => {
   assert.equal(doctor.route, "codex-cursor");
   assert.equal(doctor.executor.command, "cursor CLI");
   assert.doesNotMatch(diagnostic.stdout, /fixture-cursor-session/u);
+});
+
+test("CLI exposes explicit persistent Cursor run, correction, and terminal decision", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-cli-lifecycle-"));
+  const stateRoot = path.join(privateRoot, "state");
+  const archiveRoot = path.join(privateRoot, "archive");
+  const envelopePath = path.join(privateRoot, "envelope.json");
+  const promptPath = path.join(privateRoot, "correction.txt");
+  await Promise.all([
+    mkdir(stateRoot),
+    mkdir(archiveRoot),
+    writeFile(envelopePath, JSON.stringify(makeEnvelope(root, { taskId: "cursor-lifecycle" }))),
+    writeFile(promptPath, "Use the corrected bounded content.")
+  ]);
+  try {
+    const first = JSON.parse((await execFileAsync(process.execPath, [
+      cli, "run-cursor", "--envelope", envelopePath, "--executor", fakeCursor,
+      "--state-root", stateRoot, "--host-instance", "cursor-host-1"
+    ])).stdout);
+    assert.equal(first.review.lifecycleState, "awaiting_review");
+    const corrected = JSON.parse((await execFileAsync(process.execPath, [
+      cli, "correct-cursor", "--task-root", first.taskRoot, "--prompt", promptPath,
+      "--executor", fakeCursor
+    ])).stdout);
+    assert.equal(corrected.review.correctionSequence, 1);
+    const decided = JSON.parse((await execFileAsync(process.execPath, [
+      cli, "decide-cursor", "--task-root", corrected.taskRoot, "--action", "accept",
+      "--actor", "cursor-host-1", "--archive-root", archiveRoot
+    ])).stdout);
+    assert.equal(decided.acceptance.status, "accepted");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor persistent lifecycle resumes correction and archives an explicit terminal decision", async (context) => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-lifecycle-"));
+  const stateRoot = path.join(privateRoot, "state");
+  const archiveRoot = path.join(privateRoot, "archive");
+  await Promise.all([mkdir(stateRoot), mkdir(archiveRoot)]);
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    assert.equal(first.review.lifecycleState, "awaiting_review");
+    assert.equal(first.review.executionResult.hostAcceptance.status, "pending");
+    assert.doesNotMatch(JSON.stringify(first), /fixture-cursor-session/u);
+
+    const corrected = await correctDelegation(first.taskRoot, "Replace the initial edit with the corrected content.", {
+      executorCommand: fakeCursor
+    });
+    assert.equal(corrected.review.correctionSequence, 1);
+    assert.equal(corrected.review.executionResult.hostAcceptance.eligible, true);
+    assert.equal(await readFile(path.join(root, "allowed.txt"), "utf8"), "corrected cursor lifecycle edit\n");
+
+    const decided = await decideDelegation(
+      corrected.taskRoot,
+      "accept",
+      "cursor-host-1",
+      archiveRoot
+    );
+    assert.equal(decided.lifecycleState, "accepted");
+    assert.equal(decided.acceptance.status, "accepted");
+    assert.doesNotMatch(await readFile(decided.archive.reviewPath, "utf8"), /fixture-cursor-session/u);
+    await assert.rejects(access(corrected.taskRoot), (error) => error.code === "ENOENT");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+  context.diagnostic("Cursor correction retained Auto/harness configuration ownership and resumed only the protected original session.");
+});
+
+test("Cursor terminal decision refuses candidate drift after persistent review", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-state-"));
+  const archiveRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-archive-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    await writeFile(path.join(root, "allowed.txt"), "changed after review\n");
+    await assert.rejects(
+      decideDelegation(first.taskRoot, "accept", "cursor-host-1", archiveRoot),
+      (error) => error.code === "stale_review"
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+    await rm(archiveRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor persistent lifecycle refuses ineligible acceptance but permits explicit rejection", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-state-"));
+  const archiveRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-archive-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-breach" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    assert.equal(first.review.executionResult.hostAcceptance.eligible, false);
+    await assert.rejects(
+      decideDelegation(first.taskRoot, "accept", "cursor-host-1", archiveRoot),
+      (error) => error.code === "acceptance_ineligible"
+    );
+    const rejected = await decideDelegation(first.taskRoot, "reject", "cursor-host-1", archiveRoot);
+    assert.equal(rejected.acceptance.status, "rejected");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+    await rm(archiveRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor persistent lifecycle refuses a tampered review artifact", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-state-"));
+  const archiveRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-archive-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    const review = JSON.parse(await readFile(first.evidence.reviewPath, "utf8"));
+    review.executionResult.summary = "tampered review summary";
+    await writeFile(first.evidence.reviewPath, `${JSON.stringify(review, null, 2)}\n`);
+    await assert.rejects(
+      decideDelegation(first.taskRoot, "reject", "cursor-host-1", archiveRoot),
+      (error) => error.code === "review_identity_mismatch"
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+    await rm(archiveRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor correction refuses a changed executor session identity", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-state-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-session-drift" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    await assert.rejects(
+      correctDelegation(first.taskRoot, "Keep the correction inside the original session.", { executorCommand: fakeCursor }),
+      (error) => error.code === "cursor_session_mismatch"
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+  }
 });

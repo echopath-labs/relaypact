@@ -4,12 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./direct-lifecycle": "./src/direct-lifecycle.mjs",
     "./environment": "./src/environment.mjs",
     "./filesystem-evidence": "./src/filesystem-evidence.mjs",
     "./git": "./src/git.mjs",
     "./local-delegation": "./src/local-delegation.mjs",
     "./process": "./src/process.mjs",
     "./redact": "./src/redact.mjs",
+    "./signed-state": "./src/signed-state.mjs",
     "./context/*": "./src/context/*"
   }
 }

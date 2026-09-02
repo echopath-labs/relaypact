@@ -39,7 +39,9 @@ if (scenario === "process-failure") {
 event({
   type: "system",
   subtype: "init",
-  session_id: "fixture-cursor-session",
+  session_id: scenario === "session-drift" && prompt.includes("authorized correction")
+    ? "different-cursor-session"
+    : "fixture-cursor-session",
   ...(scenario === "model-unavailable" ? {} : { model: scenario === "model-auto" ? "Auto" : "fixture-cursor-model" })
 });
 
@@ -78,6 +80,15 @@ if (scenario === "hang") {
     subtype: "success",
     is_error: false,
     result: JSON.stringify({ status: resumed ? "completed" : "failed", summary: resumed ? "Resumed." : "Resume missing." })
+  });
+} else if (scenario === "lifecycle" || scenario === "session-drift") {
+  const correction = prompt.includes("authorized correction") && process.argv.includes("--resume=fixture-cursor-session");
+  write("allowed.txt", correction ? "corrected cursor lifecycle edit\n" : "initial cursor lifecycle edit\n");
+  event({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: JSON.stringify({ status: "completed", summary: correction ? "Correction completed." : "Initial lifecycle execution completed." })
   });
 } else {
   write("allowed.txt", "delegated cursor edit\n");

@@ -16,7 +16,9 @@ function usage() {
     "  relaypact correct-codex --task-root <dir> --profiles <file> --prompt <file>",
     "  relaypact decide-codex --task-root <dir> --profiles <file> --action <accept|reject|abandon> --actor <id> --archive-root <dir>",
     "  relaypact run-pi --envelope <file> [--executor <pi-path>]  # experimental",
-    "  relaypact run-cursor --envelope <file> [--executor <cursor-path>] [--read-only]  # experimental"
+    "  relaypact run-cursor --envelope <file> [--executor <cursor-path>] [--read-only] [--state-root <dir> --host-instance <id>]  # experimental",
+    "  relaypact correct-cursor --task-root <dir> --prompt <file> [--executor <cursor-path>]  # experimental",
+    "  relaypact decide-cursor --task-root <dir> --action <accept|reject|abandon> --actor <id> --archive-root <dir>  # experimental"
   ].join("\n");
 }
 
@@ -24,7 +26,7 @@ function parseArgs(argv) {
   if (argv[0] === "run") {
     throw new Error(`The ambiguous 'run' command was removed before 0.1.0. Use 'run-pi' explicitly. ${usage()}`);
   }
-  if (!["support", "doctor", "run-pi", "run-cursor", "run-codex", "correct-codex", "decide-codex"].includes(argv[0])) throw new Error(usage());
+  if (!["support", "doctor", "run-pi", "run-cursor", "correct-cursor", "decide-cursor", "run-codex", "correct-codex", "decide-codex"].includes(argv[0])) throw new Error(usage());
   const command = argv[0];
   const options = {};
   for (let index = 1; index < argv.length; index += 1) {
@@ -56,6 +58,12 @@ function parseArgs(argv) {
   }
   if (command === "run-pi" && !options.envelope) throw new Error(usage());
   if (command === "run-cursor" && !options.envelope) throw new Error(usage());
+  if (command === "run-cursor" && Boolean(options.stateRoot) !== Boolean(options.hostInstanceId)) throw new Error(usage());
+  if (command === "correct-cursor" && (!options.taskRoot || !options.prompt)) throw new Error(usage());
+  if (
+    command === "decide-cursor" &&
+    (!options.taskRoot || !["accept", "reject", "abandon"].includes(options.action) || !options.actor || !options.archiveRoot)
+  ) throw new Error(usage());
   if (command === "run-codex" && (!options.envelope || !options.profiles || !options.stateRoot || !options.hostInstanceId)) throw new Error(usage());
   if (command === "correct-codex" && (!options.taskRoot || !options.profiles || !options.prompt)) throw new Error(usage());
   if (
@@ -167,8 +175,26 @@ async function runCursor(options) {
   const envelope = await readJson(options.envelope);
   return runDelegation(envelope, {
     executorCommand: options.executor,
-    readOnly: options.readOnly === true
+    readOnly: options.readOnly === true,
+    stateRoot: options.stateRoot ? resolve(options.stateRoot) : undefined,
+    hostInstanceId: options.hostInstanceId
   });
+}
+
+async function correctCursor(options) {
+  const { correctDelegation } = await import("../../adapter-codex-cursor/src/run-delegation.mjs");
+  const prompt = await readBoundedText(options.prompt, 64 * 1024, "Correction prompt");
+  return correctDelegation(resolve(options.taskRoot), prompt, { executorCommand: options.executor });
+}
+
+async function decideCursor(options) {
+  const { decideDelegation } = await import("../../adapter-codex-cursor/src/run-delegation.mjs");
+  return decideDelegation(
+    resolve(options.taskRoot),
+    options.action,
+    options.actor,
+    resolve(options.archiveRoot)
+  );
 }
 
 export async function runCli(argv, io = process, runtime = {}) {
@@ -184,12 +210,15 @@ export async function runCli(argv, io = process, runtime = {}) {
     }
     else if (options.command === "run-pi") result = await runPi(options);
     else if (options.command === "run-cursor") result = await runCursor(options);
+    else if (options.command === "correct-cursor") result = await correctCursor(options);
+    else if (options.command === "decide-cursor") result = await decideCursor(options);
     else if (options.command === "run-codex") result = await runCodex(options);
     else if (options.command === "correct-codex") result = await correctCodex(options);
     else result = await decideCodex(options);
     io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     if (options.command === "doctor") io.exitCode = result.state === "blocked" ? 1 : 0;
-    else if (["run-pi", "run-cursor"].includes(options.command)) io.exitCode = result.status === "completed" || result.status === "blocked" ? 0 : 1;
+    else if (options.command === "run-pi" || (options.command === "run-cursor" && !result.review)) io.exitCode = result.status === "completed" || result.status === "blocked" ? 0 : 1;
+    else if (["run-cursor", "correct-cursor"].includes(options.command)) io.exitCode = result.review.lifecycleState === "failed" ? 1 : 0;
     else if (options.command === "run-codex" || options.command === "correct-codex") {
       io.exitCode = result.reviewPacket.lifecycleState === "failed" ? 1 : 0;
     } else if (options.command !== "support") io.exitCode = 0;

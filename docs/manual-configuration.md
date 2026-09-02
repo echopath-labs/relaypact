@@ -413,9 +413,35 @@ Cursor's `Auto` value is retained as `harness_managed/selector_alias`, because i
 does not prove which underlying LLM handled the request. Missing metadata remains
 honestly `unavailable/unknown`.
 
-The current experimental command works directly in the approved target working
-tree and does not yet expose the persistent correction/terminal-decision archive
-used by `codex-codex`. Treat its result as review evidence, not acceptance.
+The one-shot command works directly in the approved target working tree and
+returns pending review without creating resumable lifecycle state. To retain a
+protected same-session correction handle and later record a terminal decision,
+provide both private lifecycle arguments:
+
+```bash
+node ./bin/relaypact.mjs run-cursor \
+  --envelope /absolute/private/cursor-task-envelope.json \
+  --state-root /absolute/private/relaypact-cursor-state \
+  --host-instance coordinating-codex-instance
+
+node ./bin/relaypact.mjs correct-cursor \
+  --task-root /absolute/private/relaypact-cursor-state/task-... \
+  --prompt /absolute/private/cursor-correction.txt
+
+node ./bin/relaypact.mjs decide-cursor \
+  --task-root /absolute/private/relaypact-cursor-state/task-... \
+  --action accept \
+  --actor coordinating-codex-instance \
+  --archive-root /absolute/private/relaypact-cursor-archive
+```
+
+The state and archive roots must be pre-existing real directories outside the
+target repository. Correction refuses changed review evidence, new scope, new
+authority, or a missing original Cursor session. A terminal action rechecks the
+current filesystem, Git controls, index, branch, and HEAD against the signed
+review basis. Acceptance additionally requires eligible pending evidence.
+Archiving excludes the raw Cursor session handle and cleanup deletes only the
+private task state; source changes remain untouched.
 
 ## Experimental Codex-to-Pi command
 

@@ -45,9 +45,9 @@ Delegate implementation without delegating ownership or acceptance.
     observed changes, validations, credential-evidence status, and residual
     risks before proposing a terminal decision.
 11. Issue an explicit terminal decision only where the selected route supports
-   it and only within user-granted authority. Cursor's current experimental
-   direct-worktree result remains pending review and has no terminal-decision
-   archive command.
+   it and only within user-granted authority. Cursor's one-shot direct-worktree
+   result remains pending-only; use its private state-root mode before claiming
+   correction or terminal-decision support.
    Acceptance archives evidence but never applies, commits, pushes, tags,
    publishes, or deploys the candidate.
 

@@ -27,6 +27,10 @@ Cursor 主动报告模型元数据时，RelayPact 才进行观察和展示。Pi�
 CLI、OpenCodex、第三方 provider 或特定模型都不是 Codex-to-Codex 的前置条件或
 fallback。
 
+Cursor 的一次性命令仍只返回 pending；可选的私有 state-root 模式增加签名持久审查、
+受保护的同 session correction，以及显式归档的终态决策。它不会修改 Cursor 模型设置，
+也不会应用源码变更。
+
 这是由人类审查的预览版，不适合无人值守或生产关键任务。已验证前置条件包括
 Node.js 20 或更高版本、Git、Codex CLI 0.147.0 或更高版本，并且
 `codex --version` 与 `codex exec --help` 都可用。macOS 已完成本地验证；只有当

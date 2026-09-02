@@ -217,15 +217,22 @@ function modelObservation(events) {
   };
 }
 
-function buildPrompt(envelope) {
-  return [
+function buildPrompt(envelope, correctionPrompt = null) {
+  const sections = [
     "You are a bounded Delegated Executor operating through Cursor CLI.",
     "Execute only within the following task envelope.",
     "Stop with status blocked if information or authority is missing.",
     "Do not commit, push, widen scope, change Git control state, or expose credentials.",
     "The final line of your response must be exactly one compact JSON object with status (completed|blocked|failed), summary, and optional residualRisks. Do not put other JSON objects on separate lines.",
     JSON.stringify(envelope, null, 2)
-  ].join("\n\n");
+  ];
+  if (correctionPrompt) {
+    sections.push(
+      "This is an authorized correction on the same bounded task and session. Preserve the original envelope and address only this correction request:",
+      correctionPrompt
+    );
+  }
+  return sections.join("\n\n");
 }
 
 function buildCursorArgs(envelope, workingDirectory, options) {
@@ -239,7 +246,7 @@ function buildCursorArgs(envelope, workingDirectory, options) {
   if (options.readOnly === true) args.push("--mode", "plan");
   else args.push("--force");
   if (options.resumeSessionId) args.push(`--resume=${options.resumeSessionId}`);
-  args.push(buildPrompt(envelope));
+  args.push(buildPrompt(envelope, options.correctionPrompt));
   return args;
 }
 
@@ -367,4 +374,9 @@ export function assertCursorResumeSession(result) {
   const evidence = result?.[CURSOR_SESSION];
   if (!evidence) throw new DelegationError("cursor_session_unavailable", "Cursor execution did not yield a resumable session.");
   return evidence.sessionId;
+}
+
+export function cursorPrivateSession(result) {
+  const evidence = result?.[CURSOR_SESSION];
+  return evidence ? { handle: evidence.sessionId, digest: evidence.digest } : { handle: null, digest: null };
 }

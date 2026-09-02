@@ -28,6 +28,11 @@ model metadata when Cursor reports it. Pi, Cursor, OpenCode CLI, OpenCodex, a
 third-party provider, and any particular model are not prerequisites or
 fallbacks for the Codex-to-Codex path.
 
+Cursor's one-shot command remains pending-only. Its optional private state-root
+mode adds signed persistent review, protected same-session correction, and an
+explicit archived terminal decision without changing Cursor's model settings or
+applying source changes.
+
 This preview is human-reviewed and is not intended for unattended or
 production-critical use. Validated prerequisites are Node.js 20 or later, Git,
 and Codex CLI 0.147.0 or later with both `codex --version` and

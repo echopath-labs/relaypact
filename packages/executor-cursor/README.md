@@ -6,3 +6,8 @@ RelayPact selects Cursor as the execution harness, probes local CLI readiness,
 passes a bounded task envelope, and normalizes structured execution evidence.
 Cursor remains responsible for its own authentication and model configuration.
 RelayPact never selects or changes the Cursor model.
+
+Session identity is non-enumerable in ordinary executor results. The persistent
+adapter may place the raw handle only in HMAC-bound, mode-0600 task-private state
+for an explicit same-task correction; public review and terminal archives retain
+only bounded evidence and never the raw handle.
