@@ -149,7 +149,7 @@ async function processIsExecuting(pid) {
       const state = commandEnd >= 0 ? value.slice(commandEnd + 1).trim().split(/\s+/u)[0] : null;
       if (state === "Z") return false;
     } catch (error) {
-      if (error?.code === "ENOENT") return false;
+      if (new Set(["ENOENT", "ESRCH"]).has(error?.code)) return false;
       throw error;
     }
   }
