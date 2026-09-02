@@ -261,13 +261,14 @@ function sessionIdFrom(events, terminal) {
   return null;
 }
 
-function attachSession(result, sessionId) {
+function attachSession(result, sessionId, executorCommand) {
   if (!sessionId) return result;
   Object.defineProperty(result, CURSOR_SESSION, {
     enumerable: false,
     value: {
       sessionId,
-      digest: `sha256:${createHash("sha256").update(sessionId).digest("hex")}`
+      digest: `sha256:${createHash("sha256").update(sessionId).digest("hex")}`,
+      executorCommand
     }
   });
   return result;
@@ -346,7 +347,7 @@ export async function runExecutor(envelope, options = {}) {
       residualRisks: residualRisks(),
       ...metadata,
       modelObservation: observation
-    }, sessionIdFrom(parsed.events, parsed.terminal));
+    }, sessionIdFrom(parsed.events, parsed.terminal), readiness.command);
   }
 
   const payload = parseTerminalPayload(parsed.terminal.result);
@@ -357,7 +358,7 @@ export async function runExecutor(envelope, options = {}) {
       residualRisks: residualRisks(),
       ...metadata,
       modelObservation: observation
-    }, sessionIdFrom(parsed.events, parsed.terminal));
+    }, sessionIdFrom(parsed.events, parsed.terminal), readiness.command);
   }
 
   return attachSession({
@@ -368,7 +369,7 @@ export async function runExecutor(envelope, options = {}) {
       : []),
     ...metadata,
     modelObservation: observation
-  }, sessionIdFrom(parsed.events, parsed.terminal));
+  }, sessionIdFrom(parsed.events, parsed.terminal), readiness.command);
 }
 
 export function assertCursorResumeSession(result) {
@@ -379,5 +380,7 @@ export function assertCursorResumeSession(result) {
 
 export function cursorPrivateSession(result) {
   const evidence = result?.[CURSOR_SESSION];
-  return evidence ? { handle: evidence.sessionId, digest: evidence.digest } : { handle: null, digest: null };
+  return evidence
+    ? { handle: evidence.sessionId, digest: evidence.digest, executorCommand: evidence.executorCommand }
+    : { handle: null, digest: null, executorCommand: null };
 }

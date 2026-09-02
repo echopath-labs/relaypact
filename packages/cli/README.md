@@ -15,7 +15,8 @@ sanitized metadata without loading an executor.
 `run-cursor` similarly loads only the experimental Codex-to-Cursor route. Its
 one-shot form remains pending-only. Supplying `--state-root` and
 `--host-instance` together enables harness-neutral persistent review;
-`correct-cursor` resumes only the protected original Cursor session and
+`correct-cursor` resumes only the protected original Cursor session through the
+same signed executor command and
 `decide-cursor` records and archives one explicit terminal decision. None of
 these commands selects or configures Cursor's model.
 

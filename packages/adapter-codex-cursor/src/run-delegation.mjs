@@ -71,20 +71,28 @@ async function runCursorAttempt(input, options = {}) {
 
 export async function correctDelegation(taskRoot, prompt, options = {}) {
   let prepared = await loadDirectDelegation(taskRoot, ROUTE);
+  if (options.executorCommand && options.executorCommand !== prepared.state.executorCommand) {
+    throw new DelegationError("cursor_executor_mismatch", "Cursor correction must reuse the executor command bound to the original session.");
+  }
   prepared = await authorizeDirectCorrection(prepared, prompt);
   try {
     const attempt = await runCursorAttempt(prepared.envelope, {
       ...options,
+      executorCommand: prepared.executorCommand,
       resumeSessionId: prepared.resumeSessionId,
       correctionPrompt: prepared.correctionPrompt
     });
     const nextSession = cursorPrivateSession(attempt.executor);
-    if (nextSession.handle && nextSession.handle !== prepared.resumeSessionId) {
+    if (
+      (nextSession.handle && nextSession.handle !== prepared.resumeSessionId) ||
+      (nextSession.executorCommand && nextSession.executorCommand !== prepared.executorCommand)
+    ) {
       throw new DelegationError("cursor_session_mismatch", "Cursor correction returned a different session identity.");
     }
     const recorded = await recordDirectDelegationResult(prepared, attempt.result, {
       handle: nextSession.handle ?? prepared.resumeSessionId,
-      digest: nextSession.digest ?? prepared.state.sessionDigest
+      digest: nextSession.digest ?? prepared.state.sessionDigest,
+      executorCommand: nextSession.executorCommand ?? prepared.executorCommand
     });
     return {
       taskRoot: prepared.taskRoot,

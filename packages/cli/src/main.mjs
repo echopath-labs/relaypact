@@ -218,7 +218,10 @@ export async function runCli(argv, io = process, runtime = {}) {
     io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     if (options.command === "doctor") io.exitCode = result.state === "blocked" ? 1 : 0;
     else if (options.command === "run-pi" || (options.command === "run-cursor" && !result.review)) io.exitCode = result.status === "completed" || result.status === "blocked" ? 0 : 1;
-    else if (["run-cursor", "correct-cursor"].includes(options.command)) io.exitCode = result.review.lifecycleState === "failed" ? 1 : 0;
+    else if (["run-cursor", "correct-cursor"].includes(options.command)) {
+      const status = result.review.executionResult.status;
+      io.exitCode = status === "completed" || status === "blocked" ? 0 : 1;
+    }
     else if (options.command === "run-codex" || options.command === "correct-codex") {
       io.exitCode = result.reviewPacket.lifecycleState === "failed" ? 1 : 0;
     } else if (options.command !== "support") io.exitCode = 0;

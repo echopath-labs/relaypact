@@ -28,7 +28,7 @@ const STATE_KEYS = new Set([
   "hostInstanceId", "taskRootDev", "taskRootIno", "repositoryRoot", "workingDirectory",
   "branch", "head", "envelopeFingerprint", "initialFilesystemFingerprint",
   "initialGitControlFingerprint", "initialGitIndexFingerprint", "resultIdentity",
-  "sessionDigest", "sessionHandle", "reviewFingerprint", "reviewFilesystemFingerprint",
+  "sessionDigest", "sessionHandle", "executorCommand", "reviewFingerprint", "reviewFilesystemFingerprint",
   "reviewGitControlFingerprint", "reviewGitIndexFingerprint", "correctionSequence",
   "stateRevision", "integrity"
 ]);
@@ -79,6 +79,7 @@ function validateState(state) {
     !nullableFingerprint(state.reviewFingerprint) || !nullableEvidenceFingerprint(state.reviewFilesystemFingerprint) ||
     !nullableEvidenceFingerprint(state.reviewGitControlFingerprint) || !nullableEvidenceFingerprint(state.reviewGitIndexFingerprint) ||
     (state.sessionHandle !== null && !protectedHandle(state.sessionHandle)) ||
+    (state.executorCommand !== null && !protectedHandle(state.executorCommand)) ||
     typeof state.integrity !== "string" || !/^hmac-sha256:[a-f0-9]{64}$/u.test(state.integrity)
   ) {
     throw new DelegationError("task_state_unavailable", "Direct delegation lifecycle state failed schema validation.");
@@ -283,6 +284,7 @@ export async function prepareDirectDelegation({ envelope: input, stateRoot, host
     resultIdentity: null,
     sessionDigest: null,
     sessionHandle: null,
+    executorCommand: null,
     reviewFingerprint: null,
     reviewFilesystemFingerprint: null,
     reviewGitControlFingerprint: null,
@@ -305,7 +307,11 @@ export async function recordDirectDelegationResult(prepared, executionResult, se
   }
   if (
     Boolean(session.handle) !== Boolean(session.digest) ||
-    (session.handle && (!protectedHandle(session.handle) || sha256(session.handle) !== session.digest))
+    Boolean(session.handle) !== Boolean(session.executorCommand) ||
+    (session.handle && (
+      !protectedHandle(session.handle) || !protectedHandle(session.executorCommand) ||
+      sha256(session.handle) !== session.digest
+    ))
   ) {
     throw new DelegationError("executor_session_mismatch", "Protected executor session handle and digest are inconsistent.");
   }
@@ -352,6 +358,7 @@ export async function recordDirectDelegationResult(prepared, executionResult, se
       resultIdentity,
       sessionDigest: session.digest ?? null,
       sessionHandle: session.handle ?? null,
+      executorCommand: session.executorCommand ?? null,
       reviewFilesystemFingerprint: basis.filesystem.fingerprint,
       reviewGitControlFingerprint: basis.gitControl.fingerprint,
       reviewGitIndexFingerprint: basis.gitIndex.fingerprint,
@@ -415,7 +422,7 @@ export async function authorizeDirectCorrection(prepared, prompt) {
     prepared.state
   );
   const evidence = await assertReviewBasis(prepared.state);
-  if (!prepared.state.sessionHandle || !prepared.state.sessionDigest) {
+  if (!prepared.state.sessionHandle || !prepared.state.sessionDigest || !prepared.state.executorCommand) {
     throw new DelegationError("cursor_session_unavailable", "The selected executor did not yield a protected resumable session.");
   }
   const changedPaths = [...new Set([
@@ -455,6 +462,7 @@ export async function authorizeDirectCorrection(prepared, prompt) {
     priorReview: review,
     correctionPrompt: prompt,
     resumeSessionId: state.sessionHandle,
+    executorCommand: state.executorCommand,
     envelope: {
       ...prepared.envelope,
       repository: {

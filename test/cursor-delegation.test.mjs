@@ -262,8 +262,7 @@ test("CLI exposes explicit persistent Cursor run, correction, and terminal decis
     ])).stdout);
     assert.equal(first.review.lifecycleState, "awaiting_review");
     const corrected = JSON.parse((await execFileAsync(process.execPath, [
-      cli, "correct-cursor", "--task-root", first.taskRoot, "--prompt", promptPath,
-      "--executor", fakeCursor
+      cli, "correct-cursor", "--task-root", first.taskRoot, "--prompt", promptPath
     ])).stdout);
     assert.equal(corrected.review.correctionSequence, 1);
     const decided = JSON.parse((await execFileAsync(process.execPath, [
@@ -271,6 +270,33 @@ test("CLI exposes explicit persistent Cursor run, correction, and terminal decis
       "--actor", "cursor-host-1", "--archive-root", archiveRoot
     ])).stdout);
     assert.equal(decided.acceptance.status, "accepted");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("persistent Cursor CLI returns non-zero for a failed execution result", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-cli-failure-"));
+  const stateRoot = path.join(privateRoot, "state");
+  const envelopePath = path.join(privateRoot, "envelope.json");
+  await Promise.all([
+    mkdir(stateRoot),
+    writeFile(envelopePath, JSON.stringify(makeEnvelope(root, { taskId: "cursor-malformed" })))
+  ]);
+  try {
+    await assert.rejects(
+      execFileAsync(process.execPath, [
+        cli, "run-cursor", "--envelope", envelopePath, "--executor", fakeCursor,
+        "--state-root", stateRoot, "--host-instance", "cursor-host-1"
+      ]),
+      (error) => {
+        assert.equal(error.code, 1);
+        assert.equal(JSON.parse(error.stdout).review.executionResult.status, "failed");
+        return true;
+      }
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(privateRoot, { recursive: true, force: true });
@@ -456,6 +482,31 @@ test("Cursor correction refuses a changed executor session identity", async () =
       correctDelegation(first.taskRoot, "Keep the correction inside the original session.", { executorCommand: fakeCursor }),
       (error) => error.code === "cursor_session_mismatch"
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor correction refuses an executor command that differs from signed state", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-executor-drift-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    await assert.rejects(
+      correctDelegation(first.taskRoot, "Keep the original executor command.", { executorCommand: "/different/cursor-agent" }),
+      (error) => error.code === "cursor_executor_mismatch"
+    );
+    const loaded = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    assert.equal(loaded.state.lifecycleState, "awaiting_review");
+    assert.equal(loaded.state.executorCommand, fakeCursor);
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(stateRoot, { recursive: true, force: true });
