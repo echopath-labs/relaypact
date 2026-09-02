@@ -17,6 +17,7 @@ pushes, publishes, or deploys the candidate.
 
 Terminal decisions enter through the declared `host-codex` package. The adapter
 does not independently authorize acceptance, rejection, abandonment, or archive
-cleanup. Host finalization prepares and verifies the archive, rechecks the
-candidate basis, and only then commits terminal signed state; concurrent drift
-leaves the task pending and removes the uncommitted archive.
+cleanup. Host finalization prepares and verifies the archive, checks the
+candidate basis before and after the terminal state commit, and rolls back to the
+recoverable pending state if the post-commit basis changed. Failed-task abandon
+receipt creation and its terminal transition share the same signed-state lock.

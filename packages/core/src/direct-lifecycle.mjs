@@ -556,57 +556,69 @@ export async function abandonAndCleanupFailedDirectTask(prepared, actor, archive
     throw new DelegationError("host_actor_required", "A host or human decision-maker identity is required.");
   }
   const archiveRoot = await validateDirectArchiveRoot(prepared, archiveRootInput);
-  const state = await store(prepared.statePath).read();
-  if (state.lifecycleState !== "failed") {
-    throw new DelegationError("invalid_lifecycle_transition", `Cannot abandon failed direct delegation while it is ${state.lifecycleState}.`);
-  }
-  const initialTaskInfo = await lstat(prepared.taskRoot).catch(() => null);
-  if (
-    !initialTaskInfo?.isDirectory() || initialTaskInfo.isSymbolicLink() ||
-    initialTaskInfo.dev !== state.taskRootDev || initialTaskInfo.ino !== state.taskRootIno
-  ) {
-    throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before failed-task archival.");
-  }
-  const receiptIdentity = {
-    schemaVersion: "1.0.0",
-    taskId: state.taskId,
-    routeId: state.routeId,
-    executorHarness: state.executorHarness,
-    priorLifecycleState: "failed",
-    lifecycleState: "abandoned",
-    stateRevision: state.stateRevision + 1,
-    resultIdentity: state.resultIdentity,
-    abandonedBy: actor
-  };
-  const receipt = {
-    ...receiptIdentity,
-    fingerprint: sha256(canonicalize(receiptIdentity))
-  };
-  const archivePath = path.join(archiveRoot, `failure-${randomUUID()}`);
-  await mkdir(archivePath, { mode: 0o700 });
-  const receiptPath = path.join(archivePath, "failure-receipt.json");
-  await writeJson(receiptPath, receipt);
-  const persisted = await readJson(receiptPath);
-  if (canonicalize(persisted) !== canonicalize(receipt)) {
-    throw new DelegationError("archive_verification_failed", "Archived direct-worktree failure receipt changed before cleanup.");
-  }
-  const terminal = await transition(prepared.statePath, "failed", "abandoned");
-  if (
-    terminal.stateRevision !== receipt.stateRevision || terminal.resultIdentity !== receipt.resultIdentity ||
-    receipt.fingerprint !== sha256(canonicalize(receiptIdentity))
-  ) {
-    throw new DelegationError("archive_verification_failed", "Archived failure receipt no longer matches terminal lifecycle state.");
-  }
-  const taskInfo = await lstat(prepared.taskRoot).catch(() => null);
-  if (
-    !taskInfo?.isDirectory() || taskInfo.isSymbolicLink() ||
-    taskInfo.dev !== initialTaskInfo.dev || taskInfo.ino !== initialTaskInfo.ino
-  ) {
-    throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before failed-task cleanup.");
-  }
-  await rm(prepared.taskRoot, { recursive: true, force: true });
-  await store(prepared.statePath).removeIntegrityAnchor();
-  return { state: terminal, receipt, archive: { archivePath, receiptPath } };
+  return store(prepared.statePath).withLock(async ({ read, persist }) => {
+    const state = await read();
+    if (state.lifecycleState !== "failed") {
+      throw new DelegationError("invalid_lifecycle_transition", `Cannot abandon failed direct delegation while it is ${state.lifecycleState}.`);
+    }
+    const initialTaskInfo = await lstat(prepared.taskRoot).catch(() => null);
+    if (
+      !initialTaskInfo?.isDirectory() || initialTaskInfo.isSymbolicLink() ||
+      initialTaskInfo.dev !== state.taskRootDev || initialTaskInfo.ino !== state.taskRootIno
+    ) {
+      throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before failed-task archival.");
+    }
+    const receiptIdentity = {
+      schemaVersion: "1.0.0",
+      taskId: state.taskId,
+      routeId: state.routeId,
+      executorHarness: state.executorHarness,
+      priorLifecycleState: "failed",
+      lifecycleState: "abandoned",
+      stateRevision: state.stateRevision + 1,
+      resultIdentity: state.resultIdentity,
+      abandonedBy: actor
+    };
+    const receipt = {
+      ...receiptIdentity,
+      fingerprint: sha256(canonicalize(receiptIdentity))
+    };
+    const archivePath = path.join(archiveRoot, `failure-${randomUUID()}`);
+    const receiptPath = path.join(archivePath, "failure-receipt.json");
+    let terminal;
+    try {
+      await mkdir(archivePath, { mode: 0o700 });
+      await writeJson(receiptPath, receipt);
+      const persistedReceipt = await readJson(receiptPath);
+      if (canonicalize(persistedReceipt) !== canonicalize(receipt)) {
+        throw new DelegationError("archive_verification_failed", "Archived direct-worktree failure receipt changed before cleanup.");
+      }
+      terminal = await persist({
+        ...state,
+        lifecycleState: "abandoned",
+        stateRevision: state.stateRevision + 1
+      }, { expectedRevision: state.stateRevision });
+      if (
+        terminal.stateRevision !== receipt.stateRevision || terminal.resultIdentity !== receipt.resultIdentity ||
+        receipt.fingerprint !== sha256(canonicalize(receiptIdentity))
+      ) {
+        throw new DelegationError("archive_verification_failed", "Archived failure receipt no longer matches terminal lifecycle state.");
+      }
+    } catch (error) {
+      if (!terminal) await rm(archivePath, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+    const taskInfo = await lstat(prepared.taskRoot).catch(() => null);
+    if (
+      !taskInfo?.isDirectory() || taskInfo.isSymbolicLink() ||
+      taskInfo.dev !== initialTaskInfo.dev || taskInfo.ino !== initialTaskInfo.ino
+    ) {
+      throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before failed-task cleanup.");
+    }
+    await rm(prepared.taskRoot, { recursive: true, force: true });
+    await store(prepared.statePath).removeIntegrityAnchor();
+    return { state: terminal, receipt, archive: { archivePath, receiptPath } };
+  });
 }
 
 export async function finalizeDirectTerminalDecision(prepared, action, actor, archiveRootInput, options = {}) {
@@ -651,8 +663,21 @@ export async function finalizeDirectTerminalDecision(prepared, action, actor, ar
       await options.beforeFinalBasisCheck?.();
       await assertReviewBasis(state);
       terminal = await persist(terminalCandidate, { expectedRevision: state.stateRevision });
+      await options.afterTerminalStateCommit?.();
+      await assertReviewBasis(state);
     } catch (error) {
-      if (!terminal) await rm(archivePath, { recursive: true, force: true }).catch(() => {});
+      if (terminal) {
+        try {
+          await persist(state, { expectedRevision: terminal.stateRevision });
+          terminal = undefined;
+        } catch {
+          throw new DelegationError(
+            "task_state_unavailable",
+            "Terminal review basis failed after commit and the recoverable pending state could not be restored; archived evidence was preserved."
+          );
+        }
+      }
+      await rm(archivePath, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
     const finalTaskInfo = await lstat(prepared.taskRoot).catch(() => null);

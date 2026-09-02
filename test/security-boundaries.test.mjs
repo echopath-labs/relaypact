@@ -65,6 +65,21 @@ test("process capture reports truncation and hard timeout settlement", async () 
   assert.ok(performance.now() - started < 2500);
 });
 
+test("process termination remains single-reason while timeout and cancellation overlap", async () => {
+  const controller = new AbortController();
+  const execution = runProcess(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {
+    timeoutMs: 300,
+    terminationGraceMs: 200,
+    hardSettleGraceMs: 30,
+    signal: controller.signal
+  });
+  setTimeout(() => controller.abort(), 350);
+  const result = await execution;
+  assert.equal(result.timedOut, true);
+  assert.equal(result.cancelled, false);
+  assert.equal(result.hardKilled, true);
+});
+
 test("signed state recovers a lock whose owning process has exited", async () => {
   const root = await createDirectory();
   const taskRoot = path.join(root, "task");
@@ -164,6 +179,28 @@ test("signed state age-bounds a live lock when process identity is unavailable",
   const observed = await stateStore.withLock(async ({ read }) => read());
   assert.equal(observed.stateRevision, 0);
   await assert.rejects(lstat(lockPath), (error) => error.code === "ENOENT");
+});
+
+test("signed state renews an unidentified live owner's lock lease", async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const statePath = path.join(taskRoot, "state.json");
+  const stateStore = createSignedStateStore(statePath, () => {}, {
+    processIdentity: async () => null,
+    lockLeaseMs: 40,
+    lockHeartbeatMs: 10
+  });
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  let release;
+  const held = stateStore.withLock(() => new Promise((resolve) => { release = resolve; }));
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await assert.rejects(
+    stateStore.withLock(async () => {}),
+    (error) => error.code === "task_state_busy"
+  );
+  release();
+  await held;
 });
 
 async function processIsExecuting(pid) {

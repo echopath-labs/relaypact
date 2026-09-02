@@ -11,5 +11,7 @@ Host decisions for direct experimental routes also enter through this package.
 Core supplies product-neutral signed-state, evidence, and cleanup primitives;
 the Codex host authorizes terminal acceptance, rejection, or abandonment.
 Direct terminal finalization keeps the signed-state lock while it prepares the
-archive, rechecks candidate evidence, and commits the terminal state; stale
-evidence never publishes a terminal decision.
+archive and checks candidate evidence before and after the terminal state
+commit. A failed post-commit check restores the exact recoverable pending state
+and removes the provisional archive; stale evidence is never returned as a
+terminal decision.

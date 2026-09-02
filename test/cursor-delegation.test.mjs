@@ -15,9 +15,12 @@ import {
   assertCursorResumeSession,
   cursorSessionEvidence,
   discoverCursorCli,
+  materializeCursorExecutable,
+  resolveCursorExecutable,
   runExecutor
 } from "../packages/executor-cursor/src/executor.mjs";
 import {
+  abandonAndCleanupFailedDirectTask,
   authorizeDirectCorrection,
   beginDirectDelegation,
   failDirectDelegation,
@@ -28,7 +31,9 @@ import {
 } from "../packages/core/src/direct-lifecycle.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
-const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor-agent.mjs", import.meta.url));
+const fakeCursor = fileURLToPath(new URL("./fixtures/fake-cursor-agent.sh", import.meta.url));
+const fakeCursorImplementation = fileURLToPath(new URL("./fixtures/fake-cursor-agent.mjs", import.meta.url));
+const fakeCursorPackage = fileURLToPath(new URL("./fixtures/package.json", import.meta.url));
 const cli = fileURLToPath(new URL("../bin/relaypact.mjs", import.meta.url));
 const execFileAsync = promisify(execFile);
 const execute = (root, scenario, options = {}) => runDelegation(makeEnvelope(root, {
@@ -189,6 +194,10 @@ test("Cursor readiness refuses a CLI that lacks read-only mode support", async (
       command: "/resolved/selected-cursor",
       launchCommand: "/resolved/node",
       launchPrefix: ["/resolved/selected-cursor"],
+      launcherFingerprint: `sha256:${"1".repeat(64)}`,
+      launchCommandFingerprint: `sha256:${"2".repeat(64)}`,
+      bundleRoot: "/resolved",
+      bundleFingerprint: `sha256:${"3".repeat(64)}`,
       fingerprint: `sha256:${"0".repeat(64)}`
     }),
     async runProcess(_command, args) {
@@ -199,7 +208,7 @@ test("Cursor readiness refuses a CLI that lacks read-only mode support", async (
       return {
         exitCode: 0,
         signal: null,
-        stdout: "--print --output-format --workspace --sandbox --resume --force",
+        stdout: "--print --output-format --workspace --sandbox --resume --force --trust",
         stderr: ""
       };
     }
@@ -209,6 +218,48 @@ test("Cursor readiness refuses a CLI that lacks read-only mode support", async (
     ["/resolved/selected-cursor", "--version"],
     ["/resolved/selected-cursor", "--help"]
   ]);
+});
+
+test("Cursor readiness refuses a CLI that lacks trust support", async () => {
+  const readiness = await discoverCursorCli({
+    executorCommand: "selected-cursor",
+    resolveExecutable: async () => ({
+      command: "/resolved/selected-cursor",
+      launchCommand: "/resolved/node",
+      launchPrefix: ["/resolved/selected-cursor"],
+      launcherFingerprint: `sha256:${"1".repeat(64)}`,
+      launchCommandFingerprint: `sha256:${"2".repeat(64)}`,
+      bundleRoot: "/resolved",
+      bundleFingerprint: `sha256:${"3".repeat(64)}`,
+      fingerprint: `sha256:${"0".repeat(64)}`
+    }),
+    async runProcess(_command, args) {
+      if (args.includes("--version")) {
+        return { exitCode: 0, signal: null, stdout: "cursor-agent 2026.08.31-test", stderr: "" };
+      }
+      return {
+        exitCode: 0,
+        signal: null,
+        stdout: "--print --output-format --workspace --sandbox --resume --force --mode",
+        stderr: ""
+      };
+    }
+  });
+  assert.equal(readiness.state, "blocked");
+});
+
+test("Cursor readiness refuses a user-mutable shebang interpreter", async () => {
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-unpinned-shell-"));
+  const interpreter = path.join(privateRoot, "bash");
+  const launcher = path.join(privateRoot, "cursor-agent");
+  try {
+    await copyFile("/bin/bash", interpreter);
+    await writeFile(launcher, `#!${interpreter}\nexit 0\n`);
+    await Promise.all([chmod(interpreter, 0o755), chmod(launcher, 0o755)]);
+    assert.equal(await resolveCursorExecutable(launcher), null);
+  } finally {
+    await rm(privateRoot, { recursive: true, force: true });
+  }
 });
 
 test("Cursor session identity is private, digestible, and explicitly resumable", async () => {
@@ -472,6 +523,7 @@ test("Cursor terminal decision remains pending when evidence changes during arch
       routeId: "codex-cursor",
       executorHarness: "cursor"
     });
+    const reviewedContent = await readFile(path.join(root, "allowed.txt"), "utf8");
     await assert.rejects(
       finalizeDirectTerminalDecision(prepared, "accept", "cursor-host-1", archiveRoot, {
         beforeFinalBasisCheck: () => writeFile(path.join(root, "allowed.txt"), "changed during terminal archival\n")
@@ -484,6 +536,46 @@ test("Cursor terminal decision remains pending when evidence changes during arch
     });
     assert.equal(pending.state.lifecycleState, "awaiting_review");
     assert.deepEqual(await readdir(archiveRoot), []);
+    await writeFile(path.join(root, "allowed.txt"), reviewedContent);
+    const recovered = await finalizeDirectTerminalDecision(pending, "accept", "cursor-host-1", archiveRoot);
+    assert.equal(recovered.state.lifecycleState, "accepted");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+    await rm(archiveRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor terminal decision rolls back when evidence changes after terminal state commit", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-postcommit-race-state-"));
+  const archiveRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-postcommit-race-archive-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    const prepared = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    const reviewedContent = await readFile(path.join(root, "allowed.txt"), "utf8");
+    await assert.rejects(
+      finalizeDirectTerminalDecision(prepared, "accept", "cursor-host-1", archiveRoot, {
+        afterTerminalStateCommit: () => writeFile(path.join(root, "allowed.txt"), "changed after terminal commit\n")
+      }),
+      (error) => error.code === "stale_review"
+    );
+    const pending = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    assert.equal(pending.state.lifecycleState, "awaiting_review");
+    assert.deepEqual(await readdir(archiveRoot), []);
+    await writeFile(path.join(root, "allowed.txt"), reviewedContent);
+    const recovered = await finalizeDirectTerminalDecision(pending, "accept", "cursor-host-1", archiveRoot);
+    assert.equal(recovered.state.lifecycleState, "accepted");
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(stateRoot, { recursive: true, force: true });
@@ -620,7 +712,11 @@ test("Cursor correction refuses executable content drift before lifecycle mutati
   const stateRoot = path.join(privateRoot, "state");
   const mutableCursor = path.join(privateRoot, "cursor-agent");
   await mkdir(stateRoot);
-  await copyFile(fakeCursor, mutableCursor);
+  await Promise.all([
+    copyFile(fakeCursor, mutableCursor),
+    copyFile(fakeCursorImplementation, path.join(privateRoot, "fake-cursor-agent.mjs")),
+    copyFile(fakeCursorPackage, path.join(privateRoot, "package.json"))
+  ]);
   await chmod(mutableCursor, 0o755);
   try {
     const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
@@ -654,20 +750,22 @@ test("Cursor correction refuses shebang interpreter drift before session disclos
   await Promise.all([mkdir(stateRoot), mkdir(trustedBin), mkdir(replacementBin)]);
   await Promise.all([
     copyFile(fakeCursor, mutableCursor),
-    symlink(process.execPath, path.join(trustedBin, "node")),
-    symlink("/bin/sh", path.join(replacementBin, "node"))
+    copyFile(fakeCursorImplementation, path.join(privateRoot, "fake-cursor-agent.mjs")),
+    copyFile(fakeCursorPackage, path.join(privateRoot, "package.json")),
+    symlink("/bin/bash", path.join(trustedBin, "bash")),
+    symlink("/bin/sh", path.join(replacementBin, "bash"))
   ]);
   await chmod(mutableCursor, 0o755);
   try {
     const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
       executorCommand: mutableCursor,
-      environment: { ...process.env, PATH: trustedBin },
+      environment: { ...process.env, PATH: `${trustedBin}:${path.dirname(process.execPath)}:/usr/bin:/bin` },
       stateRoot,
       hostInstanceId: "cursor-host-1"
     });
     await assert.rejects(
       correctDelegation(first.taskRoot, "Do not disclose the session through a changed interpreter.", {
-        environment: { ...process.env, PATH: replacementBin }
+        environment: { ...process.env, PATH: `${replacementBin}:${path.dirname(process.execPath)}:/usr/bin:/bin` }
       }),
       (error) => error.code === "cursor_executor_mismatch"
     );
@@ -679,6 +777,94 @@ test("Cursor correction refuses shebang interpreter drift before session disclos
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor execution launches verified private snapshots after original path replacement", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-launch-snapshot-"));
+  const mutableCursor = path.join(privateRoot, "cursor-agent");
+  const marker = path.join(privateRoot, "mutable-path-executed");
+  await Promise.all([
+    copyFile(fakeCursor, mutableCursor),
+    copyFile(fakeCursorImplementation, path.join(privateRoot, "fake-cursor-agent.mjs")),
+    copyFile(fakeCursorPackage, path.join(privateRoot, "package.json"))
+  ]);
+  await chmod(mutableCursor, 0o755);
+  try {
+    const result = await runExecutor(makeEnvelope(root, { taskId: "cursor-success" }), {
+      executorCommand: mutableCursor,
+      workingDirectory: root,
+      async beforeVerifiedLaunch() {
+        await writeFile(mutableCursor, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\nexit 9\n`);
+        await chmod(mutableCursor, 0o755);
+      }
+    });
+    assert.equal(result.reportedStatus, "completed");
+    await assert.rejects(access(marker), (error) => error.code === "ENOENT");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor execution snapshots launcher-relative companion code before session disclosure", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-bundle-snapshot-"));
+  const mutableCursor = path.join(privateRoot, "cursor-agent");
+  const mutableImplementation = path.join(privateRoot, "fake-cursor-agent.mjs");
+  const marker = path.join(privateRoot, "mutable-companion-executed");
+  await Promise.all([
+    copyFile(fakeCursor, mutableCursor),
+    copyFile(fakeCursorImplementation, mutableImplementation),
+    copyFile(fakeCursorPackage, path.join(privateRoot, "package.json"))
+  ]);
+  await chmod(mutableCursor, 0o755);
+  try {
+    const result = await runExecutor(makeEnvelope(root, { taskId: "cursor-success" }), {
+      executorCommand: mutableCursor,
+      workingDirectory: root,
+      async beforeVerifiedLaunch() {
+        await writeFile(mutableImplementation, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "executed");\nprocess.exit(9);\n`);
+      }
+    });
+    assert.equal(result.reportedStatus, "completed");
+    await assert.rejects(access(marker), (error) => error.code === "ENOENT");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor bundle materialization refuses added, removed, and symlinked companions", async () => {
+  for (const mutation of ["added", "removed", "symlinked"]) {
+    const privateRoot = await mkdtemp(path.join(os.tmpdir(), `relaypact-cursor-bundle-${mutation}-`));
+    const mutableCursor = path.join(privateRoot, "cursor-agent");
+    const mutableImplementation = path.join(privateRoot, "fake-cursor-agent.mjs");
+    await Promise.all([
+      copyFile(fakeCursor, mutableCursor),
+      copyFile(fakeCursorImplementation, mutableImplementation),
+      copyFile(fakeCursorPackage, path.join(privateRoot, "package.json"))
+    ]);
+    await chmod(mutableCursor, 0o755);
+    try {
+      const identity = await resolveCursorExecutable(mutableCursor);
+      assert.ok(identity);
+      if (mutation === "added") {
+        await writeFile(path.join(privateRoot, "injected.index.js"), "throw new Error('must not run');\n");
+      } else if (mutation === "removed") {
+        await rm(mutableImplementation);
+      } else {
+        await rm(mutableImplementation);
+        await symlink(fakeCursorImplementation, mutableImplementation);
+      }
+      await assert.rejects(
+        materializeCursorExecutable(identity),
+        (error) => error.code === "cursor_executor_mismatch"
+      );
+    } finally {
+      await rm(privateRoot, { recursive: true, force: true });
+    }
   }
 });
 
@@ -710,6 +896,39 @@ test("failed persistent Cursor task can be explicitly abandoned and archived", a
     assert.doesNotMatch(await readFile(abandoned.archive.receiptPath, "utf8"), /fixture-cursor-session/u);
     await assert.rejects(access(first.taskRoot), (error) => error.code === "ENOENT");
     assert.equal(await readFile(path.join(root, "allowed.txt"), "utf8"), "corrected cursor lifecycle edit\n");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("concurrent failed-task abandonment publishes only one committed receipt", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-failed-race-"));
+  const stateRoot = path.join(privateRoot, "state");
+  const archiveRoot = path.join(privateRoot, "archive");
+  await Promise.all([mkdir(stateRoot), mkdir(archiveRoot)]);
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-session-drift" }), {
+      executorCommand: fakeCursor,
+      stateRoot,
+      hostInstanceId: "cursor-host-1"
+    });
+    await assert.rejects(
+      correctDelegation(first.taskRoot, "Trigger the bounded session mismatch."),
+      (error) => error.code === "cursor_session_mismatch"
+    );
+    const prepared = await loadDirectDelegation(first.taskRoot, {
+      routeId: "codex-cursor",
+      executorHarness: "cursor"
+    });
+    const outcomes = await Promise.allSettled([
+      abandonAndCleanupFailedDirectTask(prepared, "cursor-host-1", archiveRoot),
+      abandonAndCleanupFailedDirectTask(prepared, "cursor-host-2", archiveRoot)
+    ]);
+    assert.equal(outcomes.filter(({ status }) => status === "fulfilled").length, 1);
+    assert.equal(outcomes.filter(({ status }) => status === "rejected").length, 1);
+    assert.equal((await readdir(archiveRoot)).length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(privateRoot, { recursive: true, force: true });

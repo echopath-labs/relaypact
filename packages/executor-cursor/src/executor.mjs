@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { constants as fsConstants, createReadStream } from "node:fs";
-import { access, open, realpath, stat } from "node:fs/promises";
+import { constants as fsConstants, createWriteStream } from "node:fs";
+import { access, chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import { runProcess } from "../../core/src/process.mjs";
 import { conciseOutput } from "../../core/src/redact.mjs";
@@ -11,6 +13,10 @@ const EXECUTOR_STATUSES = new Set(["completed", "blocked", "failed"]);
 const PROBE_TIMEOUT_MS = 5_000;
 const PROBE_CAPTURE_BYTES = 256 * 1024;
 const EXECUTION_CAPTURE_BYTES = 8 * 1024 * 1024;
+const MAX_CURSOR_BUNDLE_FILES = 1_024;
+const MAX_CURSOR_BUNDLE_BYTES = 512 * 1024 * 1024;
+const MAX_CURSOR_BUNDLE_DEPTH = 16;
+const SUPPORTED_SHELL_INTERPRETERS = new Set(["bash", "dash", "ksh", "sh", "zsh"]);
 const HARNESS_OWNED_AUTH_RISK = "Cursor authentication and model configuration remain harness-owned; RelayPact cannot inventory their credential values for exact-value evidence scanning.";
 const SAFE_ENVIRONMENT_NAMES = [
   "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL",
@@ -70,7 +76,7 @@ function parseVersion(output) {
 }
 
 function supportsRequiredFlags(output) {
-  return ["--print", "--output-format", "--workspace", "--sandbox", "--resume", "--force", "--mode"]
+  return ["--print", "--output-format", "--workspace", "--sandbox", "--resume", "--force", "--mode", "--trust"]
     .every((flag) => output.includes(flag));
 }
 
@@ -85,13 +91,14 @@ function commandCandidates(command, environment, baseDirectory) {
 }
 
 async function fileFingerprint(file) {
-  return new Promise((resolve, reject) => {
+  const handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  try {
     const hash = createHash("sha256");
-    const stream = createReadStream(file);
-    stream.on("error", reject);
-    stream.on("data", (chunk) => hash.update(chunk));
-    stream.on("end", () => resolve(`sha256:${hash.digest("hex")}`));
-  });
+    for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk);
+    return `sha256:${hash.digest("hex")}`;
+  } finally {
+    await handle.close().catch(() => {});
+  }
 }
 
 async function shebangTokens(file) {
@@ -117,6 +124,106 @@ async function resolveExecutableFile(candidate) {
   return { command: resolved, fingerprint: await fileFingerprint(resolved) };
 }
 
+async function isPermissionPinnedSystemExecutable(file) {
+  let current = file;
+  while (true) {
+    const info = await stat(current);
+    if (info.uid !== 0 || (info.mode & 0o022) !== 0) return false;
+    if (current === path.parse(current).root) return true;
+    current = path.dirname(current);
+  }
+}
+
+async function collectCursorBundleFiles(root, relative = "", depth = 0, files = []) {
+  if (depth > MAX_CURSOR_BUNDLE_DEPTH) {
+    throw new DelegationError("cursor_executor_mismatch", "Cursor installation bundle exceeds the supported directory depth.");
+  }
+  const directory = path.join(root, relative);
+  const names = (await readdir(directory)).sort();
+  for (const name of names) {
+    const nextRelative = relative ? path.join(relative, name) : name;
+    if (nextRelative === ".running") continue;
+    const source = path.join(root, nextRelative);
+    const info = await lstat(source);
+    if (info.isSymbolicLink()) {
+      throw new DelegationError("cursor_executor_mismatch", "Cursor installation bundle contains an unsupported symbolic link.");
+    }
+    if (info.isDirectory()) {
+      await collectCursorBundleFiles(root, nextRelative, depth + 1, files);
+      continue;
+    }
+    if (!info.isFile()) {
+      throw new DelegationError("cursor_executor_mismatch", "Cursor installation bundle contains an unsupported filesystem entry.");
+    }
+    files.push({
+      relativePath: nextRelative,
+      source,
+      size: info.size,
+      executable: (info.mode & 0o111) !== 0
+    });
+    if (files.length > MAX_CURSOR_BUNDLE_FILES) {
+      throw new DelegationError("cursor_executor_mismatch", "Cursor installation bundle exceeds the supported file-count bound.");
+    }
+    const totalBytes = files.reduce((sum, entry) => sum + entry.size, 0);
+    if (totalBytes > MAX_CURSOR_BUNDLE_BYTES) {
+      throw new DelegationError("cursor_executor_mismatch", "Cursor installation bundle exceeds the supported byte bound.");
+    }
+  }
+  return files;
+}
+
+function cursorBundleFingerprint(entries) {
+  const value = entries.map(({ relativePath, size, executable, fingerprint }) => ({
+    relativePath,
+    size,
+    executable,
+    fingerprint
+  }));
+  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+
+async function assertCursorBundleIdentity(root) {
+  const packagePath = path.join(root, "package.json");
+  const info = await lstat(packagePath);
+  if (!info.isFile() || info.isSymbolicLink() || info.size > 64 * 1024) {
+    throw new DelegationError("cursor_executor_mismatch", "Cursor shell launcher must belong to a bounded Agent CLI installation bundle.");
+  }
+  const metadata = JSON.parse(await readFile(packagePath, "utf8"));
+  if (metadata?.name !== "@anysphere/agent-cli-runtime" || metadata.private !== true) {
+    throw new DelegationError("cursor_executor_mismatch", "Cursor shell launcher is not part of a recognized Agent CLI installation bundle.");
+  }
+}
+
+async function inspectCursorBundle(root) {
+  await assertCursorBundleIdentity(root);
+  const files = await collectCursorBundleFiles(root);
+  const entries = [];
+  for (const file of files) {
+    entries.push({ ...file, fingerprint: await fileFingerprint(file.source) });
+  }
+  return { files, fingerprint: cursorBundleFingerprint(entries) };
+}
+
+async function copyCursorBundle(root, targetRoot, expectedFingerprint) {
+  await assertCursorBundleIdentity(root);
+  const files = await collectCursorBundleFiles(root);
+  const entries = [];
+  for (const file of files) {
+    const target = path.join(targetRoot, file.relativePath);
+    await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+    const fingerprint = await copyVerifiedFile(
+      file.source,
+      target,
+      file.executable ? 0o500 : 0o400
+    );
+    entries.push({ ...file, fingerprint });
+  }
+  const observedFingerprint = cursorBundleFingerprint(entries);
+  if (observedFingerprint !== expectedFingerprint) {
+    throw new DelegationError("cursor_executor_mismatch", "Cursor installation bundle changed before its private launch snapshot was created.");
+  }
+}
+
 async function resolveInterpreter(tokens, environment, baseDirectory) {
   if (!Array.isArray(tokens) || tokens.length === 0) return null;
   const [interpreter, ...arguments_] = tokens;
@@ -126,7 +233,11 @@ async function resolveInterpreter(tokens, environment, baseDirectory) {
     for (const candidate of commandCandidates(arguments_[0], environment, baseDirectory)) {
       try {
         const resolved = await resolveExecutableFile(candidate);
-        if (resolved && (await shebangTokens(resolved.command))?.length === 0) return resolved;
+        if (
+          resolved && (await shebangTokens(resolved.command))?.length === 0 &&
+          SUPPORTED_SHELL_INTERPRETERS.has(path.basename(resolved.command)) &&
+          await isPermissionPinnedSystemExecutable(resolved.command)
+        ) return resolved;
       } catch {
         // Try the next explicit PATH candidate.
       }
@@ -135,14 +246,19 @@ async function resolveInterpreter(tokens, environment, baseDirectory) {
   }
   if (arguments_.length > 1) return null;
   const resolved = await resolveExecutableFile(interpreter).catch(() => null);
-  if (!resolved || (await shebangTokens(resolved.command))?.length !== 0) return null;
+  if (
+    !resolved || (await shebangTokens(resolved.command))?.length !== 0 ||
+    !SUPPORTED_SHELL_INTERPRETERS.has(path.basename(resolved.command)) ||
+    !await isPermissionPinnedSystemExecutable(resolved.command)
+  ) return null;
   return { ...resolved, arguments: arguments_ };
 }
 
-function launchFingerprint(launcher, launchCommand, launchCommandFingerprint, launchPrefix) {
+function launchFingerprint(launcher, launchCommand, launchCommandFingerprint, launchPrefix, bundleFingerprint = null) {
   const value = JSON.stringify({
     launcher: { command: launcher.command, fingerprint: launcher.fingerprint },
-    invocation: { command: launchCommand, fingerprint: launchCommandFingerprint, prefix: launchPrefix }
+    invocation: { command: launchCommand, fingerprint: launchCommandFingerprint, prefix: launchPrefix },
+    bundleFingerprint
   });
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
@@ -152,7 +268,87 @@ function sameExecutableIdentity(left, right) {
     left.command === right.command &&
     left.fingerprint === right.fingerprint &&
     left.launchCommand === right.launchCommand &&
+    left.launcherFingerprint === right.launcherFingerprint &&
+    left.launchCommandFingerprint === right.launchCommandFingerprint &&
+    left.bundleRoot === right.bundleRoot &&
+    left.bundleFingerprint === right.bundleFingerprint &&
     JSON.stringify(left.launchPrefix) === JSON.stringify(right.launchPrefix));
+}
+
+async function copyVerifiedFile(source, target, mode) {
+  const handle = await open(source, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw new Error("Snapshot source is not a regular file.");
+    const hash = createHash("sha256");
+    const input = handle.createReadStream({ autoClose: false });
+    input.on("data", (chunk) => hash.update(chunk));
+    await pipeline(input, createWriteStream(target, { flags: "wx", mode }));
+    await chmod(target, mode);
+    return `sha256:${hash.digest("hex")}`;
+  } catch (error) {
+    await rm(target, { force: true }).catch(() => {});
+    throw error;
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+async function copyVerifiedExecutable(source, target, expectedFingerprint) {
+  const observed = await copyVerifiedFile(source, target, 0o500);
+  if (observed !== expectedFingerprint) {
+    await rm(target, { force: true }).catch(() => {});
+    throw new DelegationError("cursor_executor_mismatch", "Cursor executable identity changed before its private launch snapshot was created.");
+  }
+}
+
+export async function materializeCursorExecutable(identity) {
+  if (
+    !identity || !path.isAbsolute(identity.command) || !path.isAbsolute(identity.launchCommand) ||
+    !/^sha256:[a-f0-9]{64}$/u.test(identity.launcherFingerprint) ||
+    !/^sha256:[a-f0-9]{64}$/u.test(identity.launchCommandFingerprint)
+  ) {
+    throw new DelegationError("cursor_executor_mismatch", "Cursor executable identity is incomplete for verified launch materialization.");
+  }
+  const snapshotRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-exec-"));
+  await chmod(snapshotRoot, 0o700);
+  try {
+    const launcher = path.join(snapshotRoot, "launcher");
+    if (identity.command === identity.launchCommand) {
+      await copyVerifiedExecutable(identity.command, launcher, identity.launcherFingerprint);
+      return {
+        identity: { ...identity, launchCommand: launcher, launchPrefix: [] },
+        cleanup: () => rm(snapshotRoot, { recursive: true, force: true })
+      };
+    }
+    if (
+      identity.launchPrefix.at(-1) !== identity.command ||
+      !path.isAbsolute(identity.bundleRoot) || !/^sha256:[a-f0-9]{64}$/u.test(identity.bundleFingerprint)
+    ) {
+      throw new DelegationError("cursor_executor_mismatch", "Cursor interpreter invocation is not bound to the verified launcher.");
+    }
+    const verifiedInterpreter = await resolveExecutableFile(identity.launchCommand);
+    if (
+      !verifiedInterpreter || verifiedInterpreter.command !== identity.launchCommand ||
+      verifiedInterpreter.fingerprint !== identity.launchCommandFingerprint ||
+      !await isPermissionPinnedSystemExecutable(identity.launchCommand)
+    ) {
+      throw new DelegationError("cursor_executor_mismatch", "Cursor shell interpreter is not identity-matched and permission-pinned for launch.");
+    }
+    await copyCursorBundle(identity.bundleRoot, snapshotRoot, identity.bundleFingerprint);
+    const bundledLauncher = path.join(snapshotRoot, path.relative(identity.bundleRoot, identity.command));
+    return {
+      identity: {
+        ...identity,
+        launchCommand: identity.launchCommand,
+        launchPrefix: [...identity.launchPrefix.slice(0, -1), bundledLauncher]
+      },
+      cleanup: () => rm(snapshotRoot, { recursive: true, force: true })
+    };
+  } catch (error) {
+    await rm(snapshotRoot, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 export async function resolveCursorExecutable(command, options = {}) {
@@ -170,17 +366,27 @@ export async function resolveCursorExecutable(command, options = {}) {
           command: launcher.command,
           launchCommand: launcher.command,
           launchPrefix: [],
+          launcherFingerprint: launcher.fingerprint,
+          launchCommandFingerprint: launcher.fingerprint,
+          bundleRoot: null,
+          bundleFingerprint: null,
           fingerprint: launchFingerprint(launcher, launcher.command, launcher.fingerprint, [])
         };
       }
       const interpreter = await resolveInterpreter(shebang, environment, baseDirectory);
       if (!interpreter) continue;
+      const bundleRoot = path.dirname(launcher.command);
+      const bundle = await inspectCursorBundle(bundleRoot);
       const launchPrefix = [...(interpreter.arguments ?? []), launcher.command];
       return {
         command: launcher.command,
         launchCommand: interpreter.command,
         launchPrefix,
-        fingerprint: launchFingerprint(launcher, interpreter.command, interpreter.fingerprint, launchPrefix)
+        launcherFingerprint: launcher.fingerprint,
+        launchCommandFingerprint: interpreter.fingerprint,
+        bundleRoot,
+        bundleFingerprint: bundle.fingerprint,
+        fingerprint: launchFingerprint(launcher, interpreter.command, interpreter.fingerprint, launchPrefix, bundle.fingerprint)
       };
     } catch {
       // Try the next explicit PATH candidate without exposing filesystem details.
@@ -211,45 +417,59 @@ export async function discoverCursorCli(options = {}) {
       !identity || typeof identity.command !== "string" || !path.isAbsolute(identity.command) ||
       typeof identity.launchCommand !== "string" || !path.isAbsolute(identity.launchCommand) ||
       !Array.isArray(identity.launchPrefix) || identity.launchPrefix.some((item) => typeof item !== "string") ||
+      !/^sha256:[a-f0-9]{64}$/u.test(identity.launcherFingerprint) ||
+      !/^sha256:[a-f0-9]{64}$/u.test(identity.launchCommandFingerprint) ||
+      (identity.command === identity.launchCommand
+        ? identity.bundleRoot !== null || identity.bundleFingerprint !== null
+        : !path.isAbsolute(identity.bundleRoot) || !/^sha256:[a-f0-9]{64}$/u.test(identity.bundleFingerprint)) ||
       !/^sha256:[a-f0-9]{64}$/u.test(identity.fingerprint)
     ) continue;
     const command = identity.command;
-    const versionProbe = await probe(run, identity, ["--version"], environment);
-    if (versionProbe.state !== "complete" || versionProbe.exitCode !== 0 || versionProbe.signal) continue;
-    const version = parseVersion(versionProbe.output);
-    if (!version) continue;
+    let materialized;
+    try {
+      materialized = run === runProcess ? await materializeCursorExecutable(identity) : null;
+      const probeIdentity = materialized?.identity ?? identity;
+      const versionProbe = await probe(run, probeIdentity, ["--version"], environment);
+      if (versionProbe.state !== "complete" || versionProbe.exitCode !== 0 || versionProbe.signal) continue;
+      const version = parseVersion(versionProbe.output);
+      if (!version) continue;
 
-    const helpProbe = await probe(run, identity, ["--help"], environment);
-    if (
-      helpProbe.state !== "complete" || helpProbe.exitCode !== 0 || helpProbe.signal ||
-      !supportsRequiredFlags(helpProbe.output)
-    ) continue;
+      const helpProbe = await probe(run, probeIdentity, ["--help"], environment);
+      if (
+        helpProbe.state !== "complete" || helpProbe.exitCode !== 0 || helpProbe.signal ||
+        !supportsRequiredFlags(helpProbe.output)
+      ) continue;
 
-    const authProbe = await probe(run, identity, ["status"], environment);
-    const authenticated = authProbe.state === "complete" && authProbe.exitCode === 0 && !authProbe.signal;
-    const verifiedIdentity = await resolveExecutable(command, {
-      environment,
-      commandBaseDirectory: options.commandBaseDirectory
-    });
-    if (
-      !sameExecutableIdentity(verifiedIdentity, identity)
-    ) continue;
-    return {
-      state: authenticated ? "ready" : "blocked",
-      command,
-      launchCommand: verifiedIdentity.launchCommand,
-      launchPrefix: verifiedIdentity.launchPrefix,
-      executableFingerprint: verifiedIdentity.fingerprint,
-      version,
-      authenticated,
-      structuredOutput: true,
-      capabilities: {
-        boundedWorkspace: true,
-        sandbox: true,
-        force: true,
-        resume: true
-      }
-    };
+      const authProbe = await probe(run, probeIdentity, ["status"], environment);
+      const authenticated = authProbe.state === "complete" && authProbe.exitCode === 0 && !authProbe.signal;
+      const verifiedIdentity = await resolveExecutable(command, {
+        environment,
+        commandBaseDirectory: options.commandBaseDirectory
+      });
+      if (!sameExecutableIdentity(verifiedIdentity, identity)) continue;
+      return {
+        state: authenticated ? "ready" : "blocked",
+        command,
+        launchCommand: verifiedIdentity.launchCommand,
+        launchPrefix: verifiedIdentity.launchPrefix,
+        launcherFingerprint: verifiedIdentity.launcherFingerprint,
+        launchCommandFingerprint: verifiedIdentity.launchCommandFingerprint,
+        bundleRoot: verifiedIdentity.bundleRoot,
+        bundleFingerprint: verifiedIdentity.bundleFingerprint,
+        executableFingerprint: verifiedIdentity.fingerprint,
+        version,
+        authenticated,
+        structuredOutput: true,
+        capabilities: {
+          boundedWorkspace: true,
+          sandbox: true,
+          force: true,
+          resume: true
+        }
+      };
+    } finally {
+      await materialized?.cleanup().catch(() => {});
+    }
   }
 
   return {
@@ -442,10 +662,23 @@ export async function runExecutor(envelope, options = {}) {
 
   const run = options.runProcess ?? runProcess;
   let processResult;
+  let materialized;
   try {
+    materialized = run === runProcess ? await materializeCursorExecutable({
+      command: readiness.command,
+      launchCommand: readiness.launchCommand ?? readiness.command,
+      launchPrefix: readiness.launchPrefix ?? [],
+      launcherFingerprint: readiness.launcherFingerprint,
+      launchCommandFingerprint: readiness.launchCommandFingerprint,
+      bundleRoot: readiness.bundleRoot,
+      bundleFingerprint: readiness.bundleFingerprint,
+      fingerprint: readiness.executableFingerprint
+    }) : null;
+    const launchIdentity = materialized?.identity ?? readiness;
+    await options.beforeVerifiedLaunch?.();
     processResult = await run(
-      readiness.launchCommand ?? readiness.command,
-      [...(readiness.launchPrefix ?? []), ...buildCursorArgs(envelope, options.workingDirectory, options)],
+      launchIdentity.launchCommand ?? launchIdentity.command,
+      [...(launchIdentity.launchPrefix ?? []), ...buildCursorArgs(envelope, options.workingDirectory, options)],
       {
         cwd: options.workingDirectory,
         env: safeEnvironment(options.environment ?? process.env),
@@ -463,6 +696,8 @@ export async function runExecutor(envelope, options = {}) {
       signal: null,
       modelObservation: modelObservation([])
     };
+  } finally {
+    await materialized?.cleanup().catch(() => {});
   }
 
   const metadata = processMetadata(processResult);

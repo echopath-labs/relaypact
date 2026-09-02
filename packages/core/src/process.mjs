@@ -73,6 +73,7 @@ export function runProcess(command, args, options = {}) {
     let hardKilled = false;
     let groupCleanupAttempted = false;
     let settled = false;
+    let terminationStarted = false;
     let forceTimer;
     let hardSettleTimer;
 
@@ -103,7 +104,8 @@ export function runProcess(command, args, options = {}) {
     };
 
     const terminate = (reason) => {
-      if (settled) return;
+      if (settled || terminationStarted) return;
+      terminationStarted = true;
       if (reason === "timeout") timedOut = true;
       if (reason === "cancel") cancelled = true;
       signalProcess(child, "SIGTERM", processGroup);
