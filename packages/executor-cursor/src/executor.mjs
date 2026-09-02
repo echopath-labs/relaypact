@@ -7,6 +7,7 @@ const CURSOR_SESSION = Symbol("cursorSession");
 const EXECUTOR_STATUSES = new Set(["completed", "blocked", "failed"]);
 const PROBE_TIMEOUT_MS = 5_000;
 const PROBE_CAPTURE_BYTES = 256 * 1024;
+const EXECUTION_CAPTURE_BYTES = 8 * 1024 * 1024;
 const HARNESS_OWNED_AUTH_RISK = "Cursor authentication and model configuration remain harness-owned; RelayPact cannot inventory their credential values for exact-value evidence scanning.";
 const SAFE_ENVIRONMENT_NAMES = [
   "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL",
@@ -302,7 +303,7 @@ export async function runExecutor(envelope, options = {}) {
         cwd: options.workingDirectory,
         env: safeEnvironment(options.environment ?? process.env),
         timeoutMs: envelope.execution?.timeoutMs ?? 900_000,
-        maxCaptureBytes: options.maxCaptureBytes,
+        maxCaptureBytes: options.maxCaptureBytes ?? EXECUTION_CAPTURE_BYTES,
         signal: options.signal
       }
     );

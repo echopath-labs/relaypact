@@ -108,6 +108,42 @@ test("Cursor execution timeout is bounded and normalized", async () => {
   assert.match(result.summary, /timed out/i);
 });
 
+test("Cursor execution reserves a bounded event-stream capture budget", async () => {
+  const root = await createGitRepository();
+  let captureBytes = null;
+  const result = await runExecutor(makeEnvelope(root, { taskId: "cursor-capture-budget" }), {
+    readiness: {
+      state: "ready",
+      command: "cursor-agent",
+      version: "2026.08.31-test",
+      authenticated: true,
+      structuredOutput: true,
+      capabilities: { boundedWorkspace: true, sandbox: true, force: true, resume: true }
+    },
+    workingDirectory: root,
+    async runProcess(_command, _args, options) {
+      captureBytes = options.maxCaptureBytes;
+      return {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        cancelled: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdout: `${JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: JSON.stringify({ status: "completed", summary: "review complete" })
+        })}\n`,
+        stderr: ""
+      };
+    }
+  });
+  assert.equal(captureBytes, 8 * 1024 * 1024);
+  assert.equal(result.reportedStatus, "completed");
+});
+
 test("Cursor blocked and malformed terminal results remain ineligible", async () => {
   for (const [scenario, expected] of [
     ["blocked", "blocked"],
