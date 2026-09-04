@@ -7,6 +7,10 @@ passes a bounded task envelope, and normalizes structured execution evidence.
 Cursor remains responsible for its own authentication and model configuration.
 RelayPact never selects or changes the Cursor model.
 
+Readiness probes share the Host cancellation signal across version, capability,
+authentication-status, and final executable-identity checks. Cancellation stops
+later probes and candidate fallback before any Agent request starts.
+
 Session identity is non-enumerable in ordinary executor results. The persistent
 adapter may place the raw handle only in HMAC-bound, mode-0600 task-private state
 for an explicit same-task correction. Before retaining that handle, discovery

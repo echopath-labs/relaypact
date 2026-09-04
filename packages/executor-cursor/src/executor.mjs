@@ -61,13 +61,15 @@ function residualRisks(values = []) {
   ])];
 }
 
-async function probe(run, identity, args, environment) {
+async function probe(run, identity, args, environment, signal) {
+  if (signal?.aborted) return { state: "interrupted" };
   try {
     const result = await run(identity.launchCommand, [...identity.launchPrefix, ...args], {
       env: environment,
       argv0: identity.argv0,
       timeoutMs: PROBE_TIMEOUT_MS,
-      maxCaptureBytes: PROBE_CAPTURE_BYTES
+      maxCaptureBytes: PROBE_CAPTURE_BYTES,
+      signal
     });
     if (result.timedOut || result.cancelled) return { state: "interrupted" };
     if (result.stdoutTruncated || result.stderrTruncated) return { state: "truncated" };
@@ -78,8 +80,24 @@ async function probe(run, identity, args, environment) {
       output: `${result.stdout ?? ""}\n${result.stderr ?? ""}`
     };
   } catch {
-    return { state: "unavailable" };
+    return { state: signal?.aborted ? "interrupted" : "unavailable" };
   }
+}
+
+function unavailableReadiness(state = "blocked") {
+  return {
+    state,
+    command: null,
+    version: null,
+    authenticated: false,
+    structuredOutput: false,
+    capabilities: {
+      boundedWorkspace: false,
+      sandbox: false,
+      force: false,
+      resume: false
+    }
+  };
 }
 
 function parseVersion(output) {
@@ -541,10 +559,12 @@ export async function discoverCursorCli(options = {}) {
     : ["cursor-agent", "agent"]);
 
   for (const candidate of candidates) {
+    if (options.signal?.aborted) return unavailableReadiness("interrupted");
     const resolvedIdentity = await resolveExecutable(
       typeof candidate === "string" ? candidate : candidate?.command,
       { environment, commandBaseDirectory: options.commandBaseDirectory }
     );
+    if (options.signal?.aborted) return unavailableReadiness("interrupted");
     const identity = typeof candidate === "string" || sameExecutableIdentity(candidate, resolvedIdentity)
       ? resolvedIdentity
       : null;
@@ -572,23 +592,28 @@ export async function discoverCursorCli(options = {}) {
       materialized = run === runProcess ? await materializeCursorExecutable(identity) : null;
       const probeIdentity = materialized?.identity ?? identity;
       const launchEnvironment = cursorEnvironment(environment, command);
-      const versionProbe = await probe(run, probeIdentity, ["--version"], launchEnvironment);
+      const versionProbe = await probe(run, probeIdentity, ["--version"], launchEnvironment, options.signal);
+      if (versionProbe.state === "interrupted") return unavailableReadiness("interrupted");
       if (versionProbe.state !== "complete" || versionProbe.exitCode !== 0 || versionProbe.signal) continue;
       const version = parseVersion(versionProbe.output);
       if (!version) continue;
 
-      const helpProbe = await probe(run, probeIdentity, ["--help"], launchEnvironment);
+      const helpProbe = await probe(run, probeIdentity, ["--help"], launchEnvironment, options.signal);
+      if (helpProbe.state === "interrupted") return unavailableReadiness("interrupted");
       if (
         helpProbe.state !== "complete" || helpProbe.exitCode !== 0 || helpProbe.signal ||
         !supportsRequiredFlags(helpProbe.output)
       ) continue;
 
-      const authProbe = await probe(run, probeIdentity, ["status"], launchEnvironment);
+      const authProbe = await probe(run, probeIdentity, ["status"], launchEnvironment, options.signal);
+      if (authProbe.state === "interrupted") return unavailableReadiness("interrupted");
       const authenticated = authProbe.state === "complete" && authProbe.exitCode === 0 && !authProbe.signal;
+      if (options.signal?.aborted) return unavailableReadiness("interrupted");
       const verifiedIdentity = await resolveExecutable(command, {
         environment,
         commandBaseDirectory: options.commandBaseDirectory
       });
+      if (options.signal?.aborted) return unavailableReadiness("interrupted");
       if (!sameExecutableIdentity(verifiedIdentity, identity)) continue;
       return {
         state: authenticated ? "ready" : "blocked",
@@ -621,19 +646,7 @@ export async function discoverCursorCli(options = {}) {
     }
   }
 
-  return {
-    state: "blocked",
-    command: null,
-    version: null,
-    authenticated: false,
-    structuredOutput: false,
-    capabilities: {
-      boundedWorkspace: false,
-      sandbox: false,
-      force: false,
-      resume: false
-    }
-  };
+  return unavailableReadiness();
 }
 
 function findPayload(value, depth = 0) {
@@ -810,14 +823,18 @@ export function cursorSessionEvidence(result) {
 export async function runExecutor(envelope, options = {}) {
   const readiness = options.readiness ?? await discoverCursorCli(options);
   if (readiness.state !== "ready") {
+    const cancelled = readiness.state === "interrupted";
     return {
-      reportedStatus: "blocked",
-      summary: readiness.command
-        ? "Cursor CLI authentication is unavailable or could not be verified."
-        : "A compatible Cursor CLI installation could not be verified.",
+      reportedStatus: cancelled ? "failed" : "blocked",
+      summary: cancelled
+        ? "Cursor readiness was cancelled."
+        : readiness.command
+          ? "Cursor CLI authentication is unavailable or could not be verified."
+          : "A compatible Cursor CLI installation could not be verified.",
       residualRisks: residualRisks(),
       exitCode: null,
       signal: null,
+      ...(cancelled ? { cancelled: true } : {}),
       modelObservation: modelObservation([])
     };
   }

@@ -446,10 +446,12 @@ session. A run started with `--read-only` remains read-only during every
 correction. A terminal action rechecks the current filesystem, Git controls,
 index, branch, and HEAD against the signed review basis. Acceptance additionally
 requires eligible pending evidence. If execution fails before a current review
-exists, use only `decide-cursor --action abandon` to archive a bounded failure
-receipt and clean task-private state. Archiving excludes the raw Cursor session
-handle and cleanup deletes only the private task state; source changes remain
-untouched.
+exists, or an interrupted owner leaves the task in `prepared` or `running`, use
+only `decide-cursor --action abandon` to archive a bounded failure or
+interruption receipt and clean task-private state. RelayPact holds a signed
+execution lease across active work, so abandonment returns `task_state_busy`
+until the live owner exits. Archiving excludes the raw Cursor session handle and
+cleanup deletes only the private task state; source changes remain untouched.
 
 ## Experimental Codex-to-Pi command
 

@@ -15,3 +15,7 @@ archive and checks candidate evidence before and after the terminal state
 commit. A failed post-commit check restores the exact recoverable pending state
 and removes the provisional archive; stale evidence is never returned as a
 terminal decision.
+For an incomplete direct task, the Host permits only explicit abandonment.
+Failed tasks produce bounded failure receipts; interrupted `prepared` or
+`running` tasks produce bounded interruption receipts only after the signed
+execution lock proves that no matching live owner remains.

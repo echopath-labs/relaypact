@@ -2,11 +2,10 @@ import { runLocalDelegation } from "../../core/src/local-delegation.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import {
   authorizeDirectCorrection,
-  beginDirectDelegation,
-  failDirectDelegation,
+  executeDirectDelegation,
   loadDirectDelegation,
   prepareDirectDelegation,
-  recordDirectDelegationResult
+  requireDirectExecutorSession
 } from "../../core/src/direct-lifecycle.mjs";
 import { decideDirectDelegation } from "../../host-codex/src/direct-actions.mjs";
 import {
@@ -25,33 +24,39 @@ function cursorSecurityEvidence() {
   };
 }
 
+function cursorLifecycleError(error) {
+  if (error instanceof DelegationError && error.code === "executor_session_unavailable") {
+    return new DelegationError("cursor_session_unavailable", error.message, error.details);
+  }
+  return error;
+}
+
 export async function runDelegation(input, options = {}) {
   if ((options.stateRoot || options.hostInstanceId) && !(options.stateRoot && options.hostInstanceId)) {
     throw new TypeError("Persistent Cursor execution requires both stateRoot and hostInstanceId.");
   }
   if (!options.stateRoot) return runCursorAttempt(input, options).then(({ result }) => result);
 
-  let prepared = await prepareDirectDelegation({
+  const prepared = await prepareDirectDelegation({
     envelope: input,
     stateRoot: options.stateRoot,
     hostInstanceId: options.hostInstanceId,
     executionMode: options.readOnly === true ? "read_only" : "write",
     ...ROUTE
   });
-  prepared = await beginDirectDelegation(prepared);
-  try {
-    const attempt = await runCursorAttempt(prepared.envelope, options);
-    const recorded = await recordDirectDelegationResult(prepared, attempt.result, cursorPrivateSession(attempt.executor));
+  const recorded = await executeDirectDelegation(prepared, async (active) => {
+    const attempt = await runCursorAttempt(active.envelope, options);
     return {
-      taskRoot: prepared.taskRoot,
-      statePath: prepared.statePath,
-      evidence: recorded.evidence,
-      review: recorded.review
+      executionResult: attempt.result,
+      session: cursorPrivateSession(attempt.executor)
     };
-  } catch (error) {
-    await failDirectDelegation(prepared).catch(() => {});
-    throw error;
-  }
+  });
+  return {
+    taskRoot: prepared.taskRoot,
+    statePath: prepared.statePath,
+    evidence: recorded.evidence,
+    review: recorded.review
+  };
 }
 
 async function runCursorAttempt(input, options = {}) {
@@ -75,6 +80,15 @@ async function runCursorAttempt(input, options = {}) {
 
 export async function correctDelegation(taskRoot, prompt, options = {}) {
   let prepared = await loadDirectDelegation(taskRoot, ROUTE);
+  const executorContextOverride = options.executorCommand !== undefined ||
+    options.environment !== undefined || options.commandBaseDirectory !== undefined;
+  if (!prepared.state.sessionHandle && !executorContextOverride) {
+    try {
+      requireDirectExecutorSession(prepared.state);
+    } catch (error) {
+      throw cursorLifecycleError(error);
+    }
+  }
   const identity = await resolveCursorExecutable(
     options.executorCommand ?? prepared.state.executorCommand,
     {
@@ -88,44 +102,53 @@ export async function correctDelegation(taskRoot, prompt, options = {}) {
   ) {
     throw new DelegationError("cursor_executor_mismatch", "Cursor correction must reuse the executor command bound to the original session.");
   }
+  try {
+    requireDirectExecutorSession(prepared.state);
+  } catch (error) {
+    throw cursorLifecycleError(error);
+  }
   const readiness = await discoverCursorCli({
     ...options,
     executorIdentity: identity
   });
-  prepared = await authorizeDirectCorrection(prepared, prompt);
   try {
-    const attempt = await runCursorAttempt(prepared.envelope, {
+    prepared = await authorizeDirectCorrection(prepared, prompt);
+  } catch (error) {
+    throw cursorLifecycleError(error);
+  }
+  const recorded = await executeDirectDelegation(prepared, async (active) => {
+    const attempt = await runCursorAttempt(active.envelope, {
       ...options,
-      executorCommand: prepared.executorCommand,
+      executorCommand: active.executorCommand,
       readiness,
-      readOnly: prepared.executionMode === "read_only",
-      resumeSessionId: prepared.resumeSessionId,
-      correctionPrompt: prepared.correctionPrompt
+      readOnly: active.executionMode === "read_only",
+      resumeSessionId: active.resumeSessionId,
+      correctionPrompt: active.correctionPrompt
     });
     const nextSession = cursorPrivateSession(attempt.executor);
     if (
-      (nextSession.handle && nextSession.handle !== prepared.resumeSessionId) ||
-      (nextSession.executorCommand && nextSession.executorCommand !== prepared.executorCommand) ||
-      (nextSession.executorFingerprint && nextSession.executorFingerprint !== prepared.executorFingerprint)
+      (nextSession.handle && nextSession.handle !== active.resumeSessionId) ||
+      (nextSession.executorCommand && nextSession.executorCommand !== active.executorCommand) ||
+      (nextSession.executorFingerprint && nextSession.executorFingerprint !== active.executorFingerprint)
     ) {
       throw new DelegationError("cursor_session_mismatch", "Cursor correction returned a different session identity.");
     }
-    const recorded = await recordDirectDelegationResult(prepared, attempt.result, {
-      handle: nextSession.handle ?? prepared.resumeSessionId,
-      digest: nextSession.digest ?? prepared.state.sessionDigest,
-      executorCommand: nextSession.executorCommand ?? prepared.executorCommand,
-      executorFingerprint: nextSession.executorFingerprint ?? prepared.executorFingerprint
-    });
     return {
-      taskRoot: prepared.taskRoot,
-      statePath: prepared.statePath,
-      evidence: recorded.evidence,
-      review: recorded.review
+      executionResult: attempt.result,
+      session: {
+        handle: nextSession.handle ?? active.resumeSessionId,
+        digest: nextSession.digest ?? active.state.sessionDigest,
+        executorCommand: nextSession.executorCommand ?? active.executorCommand,
+        executorFingerprint: nextSession.executorFingerprint ?? active.executorFingerprint
+      }
     };
-  } catch (error) {
-    await failDirectDelegation(prepared).catch(() => {});
-    throw error;
-  }
+  });
+  return {
+    taskRoot: prepared.taskRoot,
+    statePath: prepared.statePath,
+    evidence: recorded.evidence,
+    review: recorded.review
+  };
 }
 
 export async function decideDelegation(taskRoot, action, actor, archiveRoot) {

@@ -322,7 +322,11 @@ export async function beginDirectDelegation(prepared) {
   return { ...prepared, state };
 }
 
-export async function recordDirectDelegationResult(prepared, executionResult, session = {}) {
+function samePathSet(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+async function recordDirectDelegationResultLocked(prepared, executionResult, session, { read, persist }) {
   if (executionResult?.taskId !== prepared.envelope.taskId || executionResult?.hostAcceptance?.status !== "pending") {
     throw new DelegationError("review_identity_mismatch", "Execution result is not attributable to the prepared direct delegation.");
   }
@@ -343,8 +347,15 @@ export async function recordDirectDelegationResult(prepared, executionResult, se
     ...basis.git.dirtyPaths,
     ...changedFilesystemPaths(prepared.initialFilesystem, basis.filesystem)
   ])].sort();
-  const cumulativeBreaches = evaluatePathScope(cumulativePaths, prepared.envelope.scope);
-  const lifecycleState = await store(prepared.statePath).read();
+  const retainedPaths = [...new Set(executionResult.changedPaths ?? [])].sort();
+  const cumulativeBreaches = evaluatePathScope(retainedPaths, prepared.envelope.scope);
+  if (!samePathSet(cumulativePaths, retainedPaths)) {
+    cumulativeBreaches.push("evidence:persistent postflight path mismatch");
+  }
+  const lifecycleState = await read();
+  if (lifecycleState.lifecycleState !== "running") {
+    throw new DelegationError("invalid_lifecycle_transition", `Cannot record a result while direct delegation is ${lifecycleState.lifecycleState}.`);
+  }
   if (basis.git.head !== lifecycleState.head) cumulativeBreaches.push("git:HEAD changed during delegated execution");
   if (basis.git.branch !== lifecycleState.branch) cumulativeBreaches.push("git:branch changed during delegated execution");
   if (
@@ -357,7 +368,7 @@ export async function recordDirectDelegationResult(prepared, executionResult, se
     ...executionResult,
     status: rejected ? "rejected" : executionResult.status,
     summary: rejected ? "Execution was rejected by independent persistent postflight checks." : executionResult.summary,
-    changedPaths: cumulativePaths,
+    changedPaths: retainedPaths,
     scope: { compliant: !rejected, breaches },
     hostAcceptance: {
       status: "pending",
@@ -370,33 +381,75 @@ export async function recordDirectDelegationResult(prepared, executionResult, se
   };
   const resultIdentity = sha256(canonicalize(normalizedResult));
   const evidencePath = reviewPath(prepared.taskRoot, lifecycleState.correctionSequence);
-  const { state, review } = await store(prepared.statePath).withLock(async ({ read, persist }) => {
-    const current = await read();
-    if (current.lifecycleState !== "running") {
-      throw new DelegationError("invalid_lifecycle_transition", `Cannot record a result while direct delegation is ${current.lifecycleState}.`);
-    }
-    const unsignedState = {
-      ...current,
-      lifecycleState: "awaiting_review",
-      resultIdentity,
-      sessionDigest: session.digest ?? null,
-      sessionHandle: session.handle ?? null,
-      executorCommand: session.executorCommand ?? null,
-      executorFingerprint: session.executorFingerprint ?? null,
-      reviewFilesystemFingerprint: basis.filesystem.fingerprint,
-      reviewGitControlFingerprint: basis.gitControl.fingerprint,
-      reviewGitIndexFingerprint: basis.gitIndex.fingerprint,
-      stateRevision: current.stateRevision + 1
-    };
-    const candidateReview = bindReview(unsignedState, normalizedResult);
-    await writeReviewJson(evidencePath, candidateReview);
-    const persisted = await persist({
-      ...unsignedState,
-      reviewFingerprint: candidateReview.reviewIdentity.fingerprint
-    }, { expectedRevision: current.stateRevision });
-    return { state: persisted, review: bindReview(persisted, normalizedResult) };
-  });
+  const unsignedState = {
+    ...lifecycleState,
+    lifecycleState: "awaiting_review",
+    resultIdentity,
+    sessionDigest: session.digest ?? null,
+    sessionHandle: session.handle ?? null,
+    executorCommand: session.executorCommand ?? null,
+    executorFingerprint: session.executorFingerprint ?? null,
+    reviewFilesystemFingerprint: basis.filesystem.fingerprint,
+    reviewGitControlFingerprint: basis.gitControl.fingerprint,
+    reviewGitIndexFingerprint: basis.gitIndex.fingerprint,
+    stateRevision: lifecycleState.stateRevision + 1
+  };
+  const candidateReview = bindReview(unsignedState, normalizedResult);
+  await writeReviewJson(evidencePath, candidateReview);
+  const state = await persist({
+    ...unsignedState,
+    reviewFingerprint: candidateReview.reviewIdentity.fingerprint
+  }, { expectedRevision: lifecycleState.stateRevision });
+  const review = bindReview(state, normalizedResult);
   return { state, review, evidence: { reviewPath: evidencePath } };
+}
+
+export async function recordDirectDelegationResult(prepared, executionResult, session = {}) {
+  return store(prepared.statePath).withLock((context) => (
+    recordDirectDelegationResultLocked(prepared, executionResult, session, context)
+  ));
+}
+
+export async function executeDirectDelegation(prepared, operation) {
+  if (typeof operation !== "function") throw new TypeError("A direct delegation operation is required.");
+  return store(prepared.statePath).withLock(async ({ read, persist, ...context }) => {
+    let state = await read();
+    if (
+      state.stateRevision !== prepared.state.stateRevision ||
+      state.lifecycleState !== prepared.state.lifecycleState
+    ) {
+      throw new DelegationError("task_state_conflict", "Direct delegation lifecycle changed before execution could begin.");
+    }
+    if (state.lifecycleState === "prepared") {
+      state = await persist({
+        ...state,
+        lifecycleState: "running",
+        stateRevision: state.stateRevision + 1
+      }, { expectedRevision: state.stateRevision });
+    } else if (state.lifecycleState !== "running") {
+      throw new DelegationError("invalid_lifecycle_transition", `Cannot execute direct delegation while it is ${state.lifecycleState}.`);
+    }
+    const active = { ...prepared, state };
+    try {
+      const attempt = await operation(active);
+      return await recordDirectDelegationResultLocked(
+        active,
+        attempt?.executionResult,
+        attempt?.session ?? {},
+        { read, persist, ...context }
+      );
+    } catch (error) {
+      const current = await read();
+      if (new Set(["running", "correction_requested"]).has(current.lifecycleState)) {
+        await persist({
+          ...current,
+          lifecycleState: "failed",
+          stateRevision: current.stateRevision + 1
+        }, { expectedRevision: current.stateRevision });
+      }
+      throw error;
+    }
+  });
 }
 
 export async function failDirectDelegation(prepared) {
@@ -437,6 +490,15 @@ export async function loadDirectDelegation(taskRootInput, { routeId, executorHar
   return { taskRoot, statePath, state, envelope, initialFilesystem, repository };
 }
 
+export function requireDirectExecutorSession(state) {
+  if (
+    !state?.sessionHandle || !state.sessionDigest ||
+    !state.executorCommand || !state.executorFingerprint
+  ) {
+    throw new DelegationError("executor_session_unavailable", "The selected executor did not yield a protected resumable session.");
+  }
+}
+
 export async function authorizeDirectCorrection(prepared, prompt) {
   if (!nonempty(prompt) || Buffer.byteLength(prompt) > 64 * 1024) {
     throw new DelegationError("invalid_correction", "A bounded non-empty correction prompt is required.");
@@ -446,12 +508,7 @@ export async function authorizeDirectCorrection(prepared, prompt) {
     prepared.state
   );
   const evidence = await assertReviewBasis(prepared.state);
-  if (
-    !prepared.state.sessionHandle || !prepared.state.sessionDigest ||
-    !prepared.state.executorCommand || !prepared.state.executorFingerprint
-  ) {
-    throw new DelegationError("cursor_session_unavailable", "The selected executor did not yield a protected resumable session.");
-  }
+  requireDirectExecutorSession(prepared.state);
   const changedPaths = [...new Set([
     ...evidence.git.dirtyPaths,
     ...changedFilesystemPaths(prepared.initialFilesystem, evidence.filesystem)
@@ -551,29 +608,29 @@ export async function validateDirectArchiveRoot(prepared, archiveRootInput) {
   return archiveRoot;
 }
 
-export async function abandonAndCleanupFailedDirectTask(prepared, actor, archiveRootInput) {
+async function abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, allowedStates) {
   if (!nonempty(actor)) {
     throw new DelegationError("host_actor_required", "A host or human decision-maker identity is required.");
   }
   const archiveRoot = await validateDirectArchiveRoot(prepared, archiveRootInput);
   return store(prepared.statePath).withLock(async ({ read, persist }) => {
     const state = await read();
-    if (state.lifecycleState !== "failed") {
-      throw new DelegationError("invalid_lifecycle_transition", `Cannot abandon failed direct delegation while it is ${state.lifecycleState}.`);
+    if (!allowedStates.has(state.lifecycleState)) {
+      throw new DelegationError("invalid_lifecycle_transition", `Cannot abandon direct delegation while it is ${state.lifecycleState}.`);
     }
     const initialTaskInfo = await lstat(prepared.taskRoot).catch(() => null);
     if (
       !initialTaskInfo?.isDirectory() || initialTaskInfo.isSymbolicLink() ||
       initialTaskInfo.dev !== state.taskRootDev || initialTaskInfo.ino !== state.taskRootIno
     ) {
-      throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before failed-task archival.");
+      throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before abandonment archival.");
     }
     const receiptIdentity = {
       schemaVersion: "1.0.0",
       taskId: state.taskId,
       routeId: state.routeId,
       executorHarness: state.executorHarness,
-      priorLifecycleState: "failed",
+      priorLifecycleState: state.lifecycleState,
       lifecycleState: "abandoned",
       stateRevision: state.stateRevision + 1,
       resultIdentity: state.resultIdentity,
@@ -583,15 +640,16 @@ export async function abandonAndCleanupFailedDirectTask(prepared, actor, archive
       ...receiptIdentity,
       fingerprint: sha256(canonicalize(receiptIdentity))
     };
-    const archivePath = path.join(archiveRoot, `failure-${randomUUID()}`);
-    const receiptPath = path.join(archivePath, "failure-receipt.json");
+    const failure = state.lifecycleState === "failed";
+    const archivePath = path.join(archiveRoot, `${failure ? "failure" : "interruption"}-${randomUUID()}`);
+    const receiptPath = path.join(archivePath, `${failure ? "failure" : "interruption"}-receipt.json`);
     let terminal;
     try {
       await mkdir(archivePath, { mode: 0o700 });
       await writeJson(receiptPath, receipt);
       const persistedReceipt = await readJson(receiptPath);
       if (canonicalize(persistedReceipt) !== canonicalize(receipt)) {
-        throw new DelegationError("archive_verification_failed", "Archived direct-worktree failure receipt changed before cleanup.");
+        throw new DelegationError("archive_verification_failed", "Archived direct-worktree abandonment receipt changed before cleanup.");
       }
       terminal = await persist({
         ...state,
@@ -602,7 +660,7 @@ export async function abandonAndCleanupFailedDirectTask(prepared, actor, archive
         terminal.stateRevision !== receipt.stateRevision || terminal.resultIdentity !== receipt.resultIdentity ||
         receipt.fingerprint !== sha256(canonicalize(receiptIdentity))
       ) {
-        throw new DelegationError("archive_verification_failed", "Archived failure receipt no longer matches terminal lifecycle state.");
+        throw new DelegationError("archive_verification_failed", "Archived abandonment receipt no longer matches terminal lifecycle state.");
       }
     } catch (error) {
       if (!terminal) await rm(archivePath, { recursive: true, force: true }).catch(() => {});
@@ -613,12 +671,20 @@ export async function abandonAndCleanupFailedDirectTask(prepared, actor, archive
       !taskInfo?.isDirectory() || taskInfo.isSymbolicLink() ||
       taskInfo.dev !== initialTaskInfo.dev || taskInfo.ino !== initialTaskInfo.ino
     ) {
-      throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before failed-task cleanup.");
+      throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before abandonment cleanup.");
     }
     await rm(prepared.taskRoot, { recursive: true, force: true });
     await store(prepared.statePath).removeIntegrityAnchor();
     return { state: terminal, receipt, archive: { archivePath, receiptPath } };
   });
+}
+
+export async function abandonAndCleanupFailedDirectTask(prepared, actor, archiveRootInput) {
+  return abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, new Set(["failed"]));
+}
+
+export async function abandonAndCleanupInterruptedDirectTask(prepared, actor, archiveRootInput) {
+  return abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, new Set(["prepared", "running"]));
 }
 
 export async function finalizeDirectTerminalDecision(prepared, action, actor, archiveRootInput, options = {}) {

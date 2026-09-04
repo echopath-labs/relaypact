@@ -1,17 +1,20 @@
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import {
   abandonAndCleanupFailedDirectTask,
+  abandonAndCleanupInterruptedDirectTask,
   finalizeDirectTerminalDecision,
   validateDirectArchiveRoot
 } from "../../core/src/direct-lifecycle.mjs";
 
 export async function decideDirectDelegation(prepared, action, actor, archiveRoot) {
   await validateDirectArchiveRoot(prepared, archiveRoot);
-  if (prepared.state.lifecycleState === "failed") {
+  if (new Set(["prepared", "running", "failed"]).has(prepared.state.lifecycleState)) {
     if (action !== "abandon") {
-      throw new DelegationError("invalid_host_action", "A failed direct task can only be explicitly abandoned.");
+      throw new DelegationError("invalid_host_action", "An incomplete direct task can only be explicitly abandoned.");
     }
-    const abandoned = await abandonAndCleanupFailedDirectTask(prepared, actor, archiveRoot);
+    const abandoned = prepared.state.lifecycleState === "failed"
+      ? await abandonAndCleanupFailedDirectTask(prepared, actor, archiveRoot)
+      : await abandonAndCleanupInterruptedDirectTask(prepared, actor, archiveRoot);
     return {
       action,
       lifecycleState: abandoned.state.lifecycleState,

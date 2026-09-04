@@ -33,8 +33,10 @@ mode adds signed persistent review, protected same-session correction, and an
 explicit archived terminal decision without changing Cursor's model settings or
 applying source changes. Persistent correction preserves the original read-only
 or write authority and verifies the bound absolute Cursor launcher plus any
-resolved shebang interpreter before resuming; a failed task can be explicitly
-abandoned and privately cleaned.
+resolved shebang interpreter before resuming. A failed task, or a prepared or
+running task left behind by an interrupted owner, can be explicitly abandoned
+and privately cleaned. Cleanup refuses a task while its execution lease still
+has a live owner.
 
 This preview is human-reviewed and is not intended for unattended or
 production-critical use. Validated prerequisites are Node.js 20 or later, Git,

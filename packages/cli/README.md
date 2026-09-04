@@ -22,9 +22,12 @@ same signed absolute executable identity and original read/write authority, and
 `decide-cursor` records and archives one explicit terminal decision. None of
 these commands selects or configures Cursor's model.
 
-If persistent execution enters `failed` before it has a current review, only
-`decide-cursor --action abandon` is permitted. It archives a bounded failure
-receipt and removes task-private state without changing candidate source files.
+If persistent execution enters `failed` before it has a current review, or an
+interrupted owner leaves it in `prepared` or `running`, only
+`decide-cursor --action abandon` is permitted. It archives a bounded failure or
+interruption receipt and removes task-private state without changing candidate
+source files. Abandonment returns `task_state_busy` while the signed execution
+lease still has a live owner.
 
 For persistent `run-cursor` and `correct-cursor`, completed or blocked
 execution returns exit code `0`; failed, rejected, or malformed execution
