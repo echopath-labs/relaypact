@@ -31,7 +31,19 @@
       "properties": {
         "name": { "type": "string" },
         "fingerprint": { "type": "string" },
-        "effectiveModel": { "type": ["string", "null"] }
+        "effectiveModel": { "type": ["string", "null"] },
+        "modelObservation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "value", "source", "assurance", "observedAt"],
+          "properties": {
+            "state": { "enum": ["observed", "harness_managed", "unavailable"] },
+            "value": { "type": ["string", "null"] },
+            "source": { "enum": ["executor_event", "unavailable"] },
+            "assurance": { "enum": ["reported", "selector_alias", "unknown"] },
+            "observedAt": { "type": "string", "format": "date-time" }
+          }
+        }
       }
     },
     "contextEvidence": {

@@ -18,11 +18,25 @@ CLI. No second Codex installation or executor package is required.
 - Public source version: **0.1.2 Public Preview**.
 - Latest published release: **v0.1.2**.
 - Support: `codex-codex` is `public-preview`; `codex-pi` remains
-  `experimental` and inactive.
+  `experimental` and inactive; `codex-cursor` is source-included,
+  `experimental`, and inactive at the root Plugin.
 
-[`support-matrix.json`](support-matrix.json) is authoritative. Pi, OpenCode CLI,
-OpenCodex, a third-party provider, and any particular model are not prerequisites
-or fallbacks for the Codex-to-Codex path.
+[`support-matrix.json`](support-matrix.json) is authoritative. The Cursor route
+must be selected explicitly and requires a compatible authenticated local Cursor
+CLI. Cursor owns its authentication and model selection; RelayPact only observes
+model metadata when Cursor reports it. Pi, Cursor, OpenCode CLI, OpenCodex, a
+third-party provider, and any particular model are not prerequisites or
+fallbacks for the Codex-to-Codex path.
+
+Cursor's one-shot command remains pending-only. Its optional private state-root
+mode adds signed persistent review, protected same-session correction, and an
+explicit archived terminal decision without changing Cursor's model settings or
+applying source changes. Persistent correction preserves the original read-only
+or write authority and verifies the bound absolute Cursor launcher plus any
+resolved shebang interpreter before resuming. A failed task, or a prepared or
+running task left behind by an interrupted owner, can be explicitly abandoned
+and privately cleaned. Cleanup refuses a task while its execution lease still
+has a live owner.
 
 This preview is human-reviewed and is not intended for unattended or
 production-critical use. Validated prerequisites are Node.js 20 or later, Git,
@@ -126,7 +140,7 @@ further separate actions. RelayPact never infers one authority from another.
 - The executor receives only declared context and write authority. A read-only
   path is readable, omitted from writable paths, and not forbidden.
 - Route or context failure is fail-closed; RelayPact never silently falls back
-  to Pi, another harness, provider, or model.
+  to Pi, Cursor, another harness, provider, or model.
 - Host review keeps `relaypactPromptBytes`, `relaypactResultSchemaBytes`, and
   `relaypactDeclaredInputBytes` separate from selected context bytes and
   provider-reported tokens. They are not token, quota, cost, or hidden-harness
@@ -142,6 +156,7 @@ further separate actions. RelayPact never infers one authority from another.
 - [5 分钟开始使用](docs/agent-quickstart.zh-CN.md)
 - [Install, version verification, upgrade, uninstall, troubleshooting, and CLI reference](docs/manual-configuration.md)
 - [Codex-to-Codex adapter reference](packages/adapter-codex-codex/README.md)
+- [Experimental Codex-to-Cursor adapter reference](packages/adapter-codex-cursor/README.md)
 - [Examples](examples/README.md)
 - [Release checklist](RELEASING.md)
 - [Contribution guide](CONTRIBUTING.md)
@@ -151,8 +166,10 @@ further separate actions. RelayPact never infers one authority from another.
 
 ```bash
 npm run check:codex-codex
+npm run check:codex-cursor
 npm run check
 ```
 
-The default suite is deterministic and offline. Real Codex, Pi, router, and
-provider smokes are opt-in and may consume local resources or account quota.
+The default suite is deterministic and offline. Cursor readiness can be probed
+without a model request; real Codex, Cursor execution, Pi, router, and provider
+smokes are opt-in and may consume local resources or account quota.

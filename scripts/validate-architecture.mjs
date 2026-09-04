@@ -5,11 +5,13 @@ import { fileURLToPath } from "node:url";
 
 const EXPECTED_PACKAGES = new Map([
   ["adapter-codex-codex", "@relaypact/adapter-codex-codex"],
+  ["adapter-codex-cursor", "@relaypact/adapter-codex-cursor"],
   ["adapter-codex-pi", "@relaypact/adapter-codex-pi"],
   ["cli", "@relaypact/cli"],
   ["contracts", "@relaypact/contracts"],
   ["core", "@relaypact/core"],
   ["executor-codex", "@relaypact/executor-codex"],
+  ["executor-cursor", "@relaypact/executor-cursor"],
   ["executor-pi", "@relaypact/executor-pi"],
   ["host-codex", "@relaypact/host-codex"]
 ]);
@@ -29,9 +31,11 @@ const ALLOWED_DEPENDENCIES = new Map([
   ["contracts", new Set()],
   ["core", new Set(["contracts"])],
   ["executor-codex", new Set(["contracts", "core"])],
+  ["executor-cursor", new Set(["contracts", "core"])],
   ["executor-pi", new Set(["contracts", "core"])],
   ["host-codex", new Set(["contracts", "core", "executor-codex"])],
   ["adapter-codex-codex", new Set(["contracts", "core", "executor-codex", "host-codex"])],
+  ["adapter-codex-cursor", new Set(["contracts", "core", "executor-cursor", "host-codex"])],
   ["adapter-codex-pi", new Set(["contracts", "core", "executor-pi", "host-codex"])],
   ["cli", new Set([...EXPECTED_PACKAGES.keys()].filter((name) => name !== "cli"))]
 ]);
@@ -67,6 +71,21 @@ const ROUTE_EXPECTATIONS = new Map([
     ],
     deterministicCheck: "npm run check:codex-pi",
     liveSmoke: "npm run smoke:pi"
+  }],
+  ["codex-cursor", {
+    hostPackage: "packages/host-codex",
+    executorPackage: "packages/executor-cursor",
+    adapterPackage: "packages/adapter-codex-cursor",
+    executionHarness: "cursor",
+    status: "experimental",
+    sourceIncluded: true,
+    rootPluginActivation: false,
+    prerequisites: [
+      "Node.js 20 or later",
+      "an explicit compatible authenticated Cursor CLI installation"
+    ],
+    deterministicCheck: "npm run check:codex-cursor",
+    liveSmoke: "npm run smoke:cursor"
   }]
 ]);
 
@@ -218,10 +237,45 @@ export async function validateArchitecture(rootInput) {
       if (!ALLOWED_DEPENDENCIES.get(owner)?.has(dependency)) {
         errors.push(`${path.relative(root, file)} imports forbidden package ${dependency}.`);
       }
-      if ((owner.includes("codex-codex") || owner === "executor-codex" || owner === "host-codex") && dependency.includes("pi")) {
-        errors.push(`${path.relative(root, file)} couples the Codex route to ${dependency}.`);
+      const ownerHarness = owner.startsWith("executor-")
+        ? owner.slice("executor-".length)
+        : owner.startsWith("adapter-codex-")
+          ? owner.slice("adapter-codex-".length)
+          : null;
+      const dependencyHarness = dependency.startsWith("executor-")
+        ? dependency.slice("executor-".length)
+        : null;
+      if (ownerHarness && dependencyHarness && ownerHarness !== dependencyHarness) {
+        const routeLabel = ownerHarness === "codex" ? "Codex" : ownerHarness;
+        errors.push(`${path.relative(root, file)} couples the ${routeLabel} route to ${dependency}.`);
       }
     }
+  }
+
+  const cursorAdapterPath = path.join(root, "packages", "adapter-codex-cursor", "src", "run-delegation.mjs");
+  const cursorAdapterSource = await readFile(cursorAdapterPath, "utf8").catch(() => "");
+  if (!cursorAdapterSource.includes('from "../../host-codex/src/direct-actions.mjs"')) {
+    errors.push("The codex-cursor adapter must route terminal governance through host-codex direct actions.");
+  }
+  for (const hostAction of [
+    "abandonAndCleanupFailedDirectTask",
+    "archiveAndCleanupDirectTask",
+    "finalizeDirectTerminalDecision",
+    "recordDirectTerminalDecision",
+    "validateDirectArchiveRoot"
+  ]) {
+    if (cursorAdapterSource.includes(hostAction)) {
+      errors.push(`The codex-cursor adapter bypasses host-codex terminal governance with ${hostAction}.`);
+    }
+  }
+
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const doctorSource = await readFile(doctorPath, "utf8").catch(() => "");
+  if (/^import\s+.*executor-cursor/mu.test(doctorSource)) {
+    errors.push("Default doctor must not statically load the optional Cursor executor.");
+  }
+  if (!doctorSource.includes('await import("../../executor-cursor/src/executor.mjs")')) {
+    errors.push("Cursor doctor must load the Cursor executor only inside the selected diagnostic route.");
   }
 
   for (const legacy of ["src", "contracts", "hosts", "executors", "adapters"]) {

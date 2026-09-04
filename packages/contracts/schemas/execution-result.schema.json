@@ -4,6 +4,20 @@
   "title": "Agent Delegation Execution Result",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "modelObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "value", "source", "assurance", "observedAt"],
+      "properties": {
+        "state": { "enum": ["observed", "harness_managed", "unavailable"] },
+        "value": { "type": ["string", "null"] },
+        "source": { "enum": ["executor_event", "unavailable"] },
+        "assurance": { "enum": ["reported", "selector_alias", "unknown"] },
+        "observedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
   "required": [
     "schemaVersion",
     "taskId",
@@ -68,7 +82,9 @@
         "reportedStatus": { "enum": ["completed", "blocked", "failed", "malformed"] },
         "exitCode": { "type": ["integer", "null"] },
         "signal": { "type": ["string", "null"] },
-        "summary": { "type": "string" }
+        "summary": { "type": "string" },
+        "failureCode": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,79}$" },
+        "modelObservation": { "$ref": "#/$defs/modelObservation" }
       }
     },
     "hostAcceptance": {

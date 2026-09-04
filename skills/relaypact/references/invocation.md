@@ -49,3 +49,47 @@ packet or candidate patch before it records the decision and archives evidence.
 Acceptance additionally requires current evidence to remain eligible. No
 terminal action applies the candidate patch to the source repository or
 commits, pushes, tags, publishes, or deploys.
+
+For the explicitly selected experimental Cursor route, the one-shot form stays
+pending-only and can be read-only. `--executor` is optional when the compatible
+Cursor CLI is discoverable:
+
+```text
+node <skill-directory>/scripts/relaypact.mjs run-cursor
+  --envelope <task-envelope.json>
+  [--read-only]
+  [--executor <cursor-path>]
+```
+
+Persistent review requires both private lifecycle identities:
+
+```text
+node <skill-directory>/scripts/relaypact.mjs run-cursor
+  --envelope <task-envelope.json>
+  [--read-only]
+  [--executor <cursor-path>]
+  --state-root <private-state-root>
+  --host-instance <coordinating-instance-id>
+
+node <skill-directory>/scripts/relaypact.mjs correct-cursor
+  --task-root <task-root>
+  --prompt <correction.txt>
+
+node <skill-directory>/scripts/relaypact.mjs decide-cursor
+  --task-root <task-root>
+  --action <accept|reject|abandon>
+  --actor <host-or-human-id>
+  --archive-root <private-archive-root>
+```
+
+Cursor correction resumes only the protected original session and never adds a
+model flag. It also reuses the exact executor command bound to the original
+session; an explicit mismatched override is refused. Terminal decision rechecks the signed direct-worktree review basis,
+archives no raw session handle, and leaves source changes untouched.
+An explicit `abandon` may clean a failed task or an interrupted task left in
+`prepared` or `running`; it refuses with `task_state_busy` while an active
+execution lease still has a live owner.
+For `run-cursor` and `correct-cursor`, completed or blocked execution returns
+exit code `0`; failed, rejected, or malformed execution returns exit code `1`.
+The JSON review remains the authoritative result and host acceptance stays
+pending until an explicit terminal decision.

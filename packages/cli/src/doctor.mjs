@@ -200,3 +200,52 @@ export async function runDoctor(options = {}) {
     ]
   };
 }
+
+export async function runCursorDoctor(options = {}) {
+  const { discoverCursorCli } = await import("../../executor-cursor/src/executor.mjs");
+  const nodeVersion = options.nodeVersion ?? process.versions.node;
+  const nodeMajor = Number.parseInt(nodeVersion.split(".")[0], 10);
+  const checks = [];
+  checks.push(Number.isInteger(nodeMajor) && nodeMajor >= MINIMUM_NODE_MAJOR
+    ? check("node", "pass", `Node.js ${nodeVersion} is supported.`)
+    : check("node", "fail", `Node.js ${MINIMUM_NODE_MAJOR} or later is required.`, "upgrade-node"));
+
+  checks.push(await packagedSkillCheck(options.readFile ?? readFile));
+  const gitResult = await probe(
+    options.runProcess ?? runProcess,
+    "git",
+    ["--version"],
+    safeEnvironment(options.environment ?? process.env)
+  );
+  checks.push(gitResult.status === "complete" && gitResult.exitCode === 0 && /^git version \d+/u.test(gitResult.stdout.trim())
+    ? check("git", "pass", "Git is available.")
+    : check("git", "fail", "Git is unavailable or could not be verified.", "install-git"));
+
+  const readiness = await discoverCursorCli(options);
+  checks.push(readiness.command
+    ? check("cursor-cli", "pass", `Cursor CLI ${readiness.version} exposes the required local execution flags.`)
+    : check("cursor-cli", "fail", "A compatible Cursor CLI could not be verified.", "install-or-upgrade-cursor-cli"));
+  checks.push(readiness.authenticated
+    ? check("cursor-auth", "pass", "Cursor CLI reports an authenticated local session.")
+    : check("cursor-auth", "fail", "Cursor CLI authentication could not be verified.", "authenticate-cursor-cli"));
+
+  const requiredIds = new Set(["node", "packaged-skill", "git", "cursor-cli", "cursor-auth"]);
+  const blocked = checks.some((item) => requiredIds.has(item.id) && item.status !== "pass");
+  return {
+    schemaVersion: "1.0.0",
+    command: "doctor",
+    state: blocked ? "blocked" : "ready",
+    route: "codex-cursor",
+    executor: {
+      source: options.executorCommand ? "explicit-cursor-cli" : "discovered-cursor-cli",
+      command: "cursor CLI",
+      version: readiness.version,
+      additionalInstallationRequired: !readiness.command
+    },
+    checks,
+    limitations: [
+      "RelayPact observes Cursor readiness but does not select or configure its model.",
+      "Doctor does not invoke a model or retain Cursor account output."
+    ]
+  };
+}

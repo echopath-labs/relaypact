@@ -1,7 +1,7 @@
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash, createHmac } from "node:crypto";
 import path from "node:path";
 import { DelegationError } from "../../contracts/src/errors.mjs";
+import { canonicalize, createSignedStateStore } from "../../core/src/signed-state.mjs";
 import { resultIdentity } from "./result.mjs";
 
 const TRANSITIONS = {
@@ -38,56 +38,6 @@ function validRelaypactInput(value) {
     return false;
   }
   return value.relaypactDeclaredInputBytes === value.relaypactPromptBytes + value.relaypactResultSchemaBytes;
-}
-
-function canonicalize(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function integrityRoot(statePath) {
-  return path.join(path.dirname(path.dirname(statePath)), ".relaypact-integrity");
-}
-
-function integrityKeyPath(statePath) {
-  const task = createHash("sha256").update(path.resolve(path.dirname(statePath))).digest("hex");
-  return path.join(integrityRoot(statePath), `${task}.key`);
-}
-
-async function loadIntegrityKey(statePath, { create = false } = {}) {
-  const root = integrityRoot(statePath);
-  const keyPath = integrityKeyPath(statePath);
-  if (create) await mkdir(root, { recursive: true, mode: 0o700 });
-  if (create) {
-    try {
-      await writeFile(keyPath, randomBytes(32), { flag: "wx", mode: 0o600 });
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-    }
-  }
-  let info;
-  try {
-    info = await lstat(keyPath);
-  } catch {
-    throw new DelegationError("task_state_unavailable", "Host lifecycle integrity key is unavailable.");
-  }
-  if (!info.isFile() || info.isSymbolicLink() || info.size !== 32 || (info.mode & 0o777) !== 0o600) {
-    throw new DelegationError("task_state_unavailable", "Host lifecycle integrity key has an unsafe type, size, or mode.");
-  }
-  return readFile(keyPath);
-}
-
-function unsignedState(state) {
-  const { integrity: ignored, ...unsigned } = state;
-  void ignored;
-  return unsigned;
-}
-
-function stateMac(state, key) {
-  return `hmac-sha256:${createHmac("sha256", key).update(canonicalize(unsignedState(state))).digest("hex")}`;
 }
 
 function sensitiveGrantFingerprint(channel, values, key) {
@@ -130,76 +80,8 @@ export function validateTaskState(state) {
   return state;
 }
 
-async function persist(statePath, state, { exclusive = false, expectedRevision = undefined } = {}) {
-  const key = await loadIntegrityKey(statePath, { create: exclusive });
-  const signed = { ...state, integrity: stateMac(state, key) };
-  validateTaskState(signed);
-  if (exclusive) {
-    await writeFile(statePath, `${JSON.stringify(signed, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-    await chmod(statePath, 0o600);
-    return signed;
-  }
-  if (expectedRevision !== undefined) {
-    const current = await readTaskStateUnlocked(statePath);
-    if (current.stateRevision !== expectedRevision) {
-      throw new DelegationError("task_state_conflict", "Task lifecycle changed before the state update could commit.");
-    }
-  }
-  const temporary = `${statePath}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(signed, null, 2)}\n`, { flag: "wx", mode: 0o600 });
-  await rename(temporary, statePath);
-  await chmod(statePath, 0o600);
-  return signed;
-}
-
-async function readTaskStateUnlocked(statePath) {
-  let state;
-  try {
-    state = JSON.parse(await readFile(statePath, "utf8"));
-  } catch {
-    throw new DelegationError("task_state_unavailable", "Task lifecycle state is missing or malformed.");
-  }
-  validateTaskState(state);
-  const key = await loadIntegrityKey(statePath);
-  const expected = Buffer.from(stateMac(state, key));
-  const actual = Buffer.from(state.integrity);
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-    throw new DelegationError("task_state_unavailable", "Task lifecycle state failed host integrity verification.");
-  }
-  return state;
-}
-
-async function withTaskStateLock(statePath, operation) {
-  const lockRoot = path.join(integrityRoot(statePath), "locks");
-  await mkdir(lockRoot, { recursive: true, mode: 0o700 });
-  const lockPath = path.join(lockRoot, `${path.basename(integrityKeyPath(statePath), ".key")}.lock`);
-  let handle;
-  let lockIdentity;
-  try {
-    handle = await open(lockPath, "wx", 0o600);
-    lockIdentity = await handle.stat();
-    try {
-      await handle.writeFile(`${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`);
-    } catch (error) {
-      await handle.close().catch(() => {});
-      await rm(lockPath, { force: true }).catch(() => {});
-      throw error;
-    }
-  } catch (error) {
-    if (error?.code === "EEXIST") {
-      throw new DelegationError("task_state_busy", "Task lifecycle state is being updated by another host action.");
-    }
-    throw error;
-  }
-  try {
-    return await operation();
-  } finally {
-    await handle.close().catch(() => {});
-    const current = await lstat(lockPath).catch(() => null);
-    if (current && current.dev === lockIdentity.dev && current.ino === lockIdentity.ino) {
-      await rm(lockPath, { force: true }).catch(() => {});
-    }
-  }
+function taskStateStore(statePath) {
+  return createSignedStateStore(statePath, validateTaskState);
 }
 
 async function transitionUnlocked(statePath, state, next, updates = {}) {
@@ -207,7 +89,7 @@ async function transitionUnlocked(statePath, state, next, updates = {}) {
     throw new DelegationError("invalid_lifecycle_transition", `Cannot transition task from ${state.lifecycleState} to ${next}.`);
   }
   const updated = { ...state, ...updates, lifecycleState: next, stateRevision: state.stateRevision + 1 };
-  return persist(statePath, updated, { expectedRevision: state.stateRevision });
+  return taskStateStore(statePath).persist(updated, { expectedRevision: state.stateRevision });
 }
 
 function assertCorrectionIdentityValue(state, identity) {
@@ -254,17 +136,17 @@ export async function createTaskState({ capsule, profile, hostInstanceId }) {
     stateRevision: 0,
     integrity: "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000000"
   };
-  const persistedState = await persist(statePath, state, { exclusive: true });
+  const persistedState = await taskStateStore(statePath).create(state);
   return { statePath, state: persistedState };
 }
 
 export async function readTaskState(statePath) {
-  return readTaskStateUnlocked(statePath);
+  return taskStateStore(statePath).read();
 }
 
 export async function transitionTaskState(statePath, next, updates = {}) {
-  return withTaskStateLock(statePath, async () => {
-    const state = await readTaskStateUnlocked(statePath);
+  return taskStateStore(statePath).withLock(async ({ read }) => {
+    const state = await read();
     return transitionUnlocked(statePath, state, next, updates);
   });
 }
@@ -272,14 +154,14 @@ export async function transitionTaskState(statePath, next, updates = {}) {
 export async function bindTaskSensitiveGrant(statePath, channel, values) {
   const field = SENSITIVE_GRANT_FIELDS[channel];
   if (!field) throw new DelegationError("sensitive_grant_invalid", "Sensitive grant channel is unsupported.");
-  return withTaskStateLock(statePath, async () => {
-    const state = await readTaskStateUnlocked(statePath);
-    const key = await loadIntegrityKey(statePath);
+  return taskStateStore(statePath).withLock(async ({ read, persist, key: readKey }) => {
+    const state = await read();
+    const key = await readKey();
     const fingerprint = sensitiveGrantFingerprint(channel, values, key);
     if (state[field] !== null) {
       return { consistent: state[field] === fingerprint, fingerprint: state[field], state };
     }
-    const updated = await persist(statePath, {
+    const updated = await persist({
       ...state,
       [field]: fingerprint,
       stateRevision: state.stateRevision + 1
@@ -291,9 +173,9 @@ export async function bindTaskSensitiveGrant(statePath, channel, values) {
 export async function taskSensitiveGrantMatches(statePath, channel, values) {
   const field = SENSITIVE_GRANT_FIELDS[channel];
   if (!field) throw new DelegationError("sensitive_grant_invalid", "Sensitive grant channel is unsupported.");
-  const state = await readTaskStateUnlocked(statePath);
+  const state = await taskStateStore(statePath).read();
   if (state[field] === null) return false;
-  const key = await loadIntegrityKey(statePath);
+  const key = await taskStateStore(statePath).key();
   return state[field] === sensitiveGrantFingerprint(channel, values, key);
 }
 
@@ -305,8 +187,8 @@ export async function transitionTaskStateMatching(statePath, next, expected, upd
   if (!expected || typeof expected !== "object" || Array.isArray(expected) || Object.keys(expected).some((key) => !allowed.has(key))) {
     throw new DelegationError("review_identity_mismatch", "Terminal state expectations are missing or malformed.");
   }
-  return withTaskStateLock(statePath, async () => {
-    const state = await readTaskStateUnlocked(statePath);
+  return taskStateStore(statePath).withLock(async ({ read }) => {
+    const state = await read();
     const mismatches = Object.entries(expected)
       .filter(([key, value]) => state[key] !== value)
       .map(([key]) => key);
@@ -318,8 +200,8 @@ export async function transitionTaskStateMatching(statePath, next, expected, upd
 }
 
 export async function recordWorkerResult(statePath, { threadId, result, relaypactInput = null }) {
-  return withTaskStateLock(statePath, async () => {
-    const state = await readTaskStateUnlocked(statePath);
+  return taskStateStore(statePath).withLock(async ({ read }) => {
+    const state = await read();
     if (typeof threadId !== "string" || threadId.trim().length === 0 || threadId === state.hostInstanceId) {
       throw new DelegationError("executor_identity_unavailable", "A distinct delegated Codex thread identity was not evidenced.");
     }
@@ -338,12 +220,12 @@ export async function recordWorkerResult(statePath, { threadId, result, relaypac
 }
 
 export async function assertCorrectionIdentity(statePath, identity) {
-  return assertCorrectionIdentityValue(await readTaskStateUnlocked(statePath), identity);
+  return assertCorrectionIdentityValue(await taskStateStore(statePath).read(), identity);
 }
 
 export async function authorizeCorrection(statePath, identity) {
-  return withTaskStateLock(statePath, async () => {
-    const state = assertCorrectionIdentityValue(await readTaskStateUnlocked(statePath), identity);
+  return taskStateStore(statePath).withLock(async ({ read }) => {
+    const state = assertCorrectionIdentityValue(await read(), identity);
     if (state.correctionSequence >= MAX_CORRECTION_SEQUENCE) {
       throw new DelegationError("correction_sequence_exhausted", "Correction sequence limit has been reached.");
     }
@@ -358,5 +240,5 @@ export function opaqueTaskMetricId(taskId) {
 }
 
 export async function removeTaskIntegrityAnchor(statePath) {
-  await rm(integrityKeyPath(statePath), { force: true });
+  await taskStateStore(statePath).removeIntegrityAnchor();
 }

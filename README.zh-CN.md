@@ -18,11 +18,21 @@ executor，同时由协调 Codex 保留范围、证据审查、风险判断和�
 - Public source 版本：**0.1.2 Public Preview**。
 - 最新已发布版本：**v0.1.2**。
 - 支持状态：`codex-codex` 是 `public-preview`；`codex-pi` 保持
-  `experimental`、inactive。
+  `experimental`、inactive；`codex-cursor` 已包含源码，但仍是
+  `experimental`，且不在根 Plugin 中激活。
 
-以 [`support-matrix.json`](support-matrix.json) 为准。Pi、OpenCode CLI、
-OpenCodex、第三方 provider 或特定模型都不是 Codex-to-Codex 的前置条件或
+以 [`support-matrix.json`](support-matrix.json) 为准。Cursor 路线必须显式选择，
+并要求本地存在兼容且已登录的 Cursor CLI。Cursor 自己管理认证与模型选择；只有
+Cursor 主动报告模型元数据时，RelayPact 才进行观察和展示。Pi、Cursor、OpenCode
+CLI、OpenCodex、第三方 provider 或特定模型都不是 Codex-to-Codex 的前置条件或
 fallback。
+
+Cursor 的一次性命令仍只返回 pending；可选的私有 state-root 模式增加签名持久审查、
+受保护的同 session correction，以及显式归档的终态决策。它不会修改 Cursor 模型设置，
+也不会应用源码变更。持久 correction 会保留原始只读或写入权限，并在恢复 session 前
+校验绑定的 Cursor 绝对启动路径，以及存在时已解析的 shebang 解释器身份。失败任务，
+或因 owner 中断而遗留在 `prepared` / `running` 的任务，可由 Host 显式 abandon 并
+清理私有状态；只要活跃执行租约仍有存活 owner，清理就会被拒绝。
 
 这是由人类审查的预览版，不适合无人值守或生产关键任务。已验证前置条件包括
 Node.js 20 或更高版本、Git、Codex CLI 0.147.0 或更高版本，并且
@@ -115,8 +125,8 @@ RelayPact 永远不会从一个授权推断另一个授权。
 - 凭据只保留在 host 管理的配置或环境授权中，不能进入 task envelope、示例或
   公开文档。
 - Executor 只能获得声明的上下文和写权限。只读路径可读、不可写，也不能被禁止。
-- 路线或上下文失败时 fail closed，绝不会静默 fallback 到 Pi、其他 harness、
-  provider 或模型。
+- 路线或上下文失败时 fail closed，绝不会静默 fallback 到 Pi、Cursor、其他
+  harness、provider 或模型。
 - Host review 会把 `relaypactPromptBytes`、`relaypactResultSchemaBytes`、
   `relaypactDeclaredInputBytes`、选中上下文字节与 provider token 分开记录；这些
   字段不是 token、额度、费用或隐藏 harness 开销估算。
@@ -130,6 +140,7 @@ RelayPact 永远不会从一个授权推断另一个授权。
 - [5-minute getting started](docs/agent-quickstart.md)
 - [安装、版本验证、升级、卸载、排障与 CLI 参考](docs/manual-configuration.md)
 - [Codex-to-Codex adapter 参考](packages/adapter-codex-codex/README.md)
+- [实验性 Codex-to-Cursor adapter 参考](packages/adapter-codex-cursor/README.md)
 - [示例](examples/README.md)
 - [发布清单](RELEASING.md)
 - [贡献指南](CONTRIBUTING.md)
@@ -139,8 +150,10 @@ RelayPact 永远不会从一个授权推断另一个授权。
 
 ```bash
 npm run check:codex-codex
+npm run check:codex-cursor
 npm run check
 ```
 
-默认测试是离线确定性测试。真实 Codex、Pi、router 和 provider smoke 必须显式
-启用，并可能消耗本地资源或账户额度。
+默认测试是离线确定性测试。Cursor readiness 可以在不发起模型请求的情况下检查；
+真实 Codex、Cursor 执行、Pi、router 和 provider smoke 必须显式启用，并可能
+消耗本地资源或账户额度。
