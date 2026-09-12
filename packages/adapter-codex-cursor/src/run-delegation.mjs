@@ -45,7 +45,8 @@ export async function runDelegation(input, options = {}) {
     ...ROUTE
   });
   const recorded = await executeDirectDelegation(prepared, async (active) => {
-    const attempt = await runCursorAttempt(active.envelope, options);
+    const attempt = await runCursorAttempt(active.envelope, { ...options, initialFilesystem: active.initialFilesystem });
+    await active.markExecutionSettled();
     return {
       executionResult: attempt.result,
       session: cursorPrivateSession(attempt.executor)
@@ -79,6 +80,7 @@ async function runCursorAttempt(input, options = {}) {
 }
 
 export async function correctDelegation(taskRoot, prompt, options = {}) {
+  options.signal?.throwIfAborted();
   let prepared = await loadDirectDelegation(taskRoot, ROUTE);
   const executorContextOverride = options.executorCommand !== undefined ||
     options.environment !== undefined || options.commandBaseDirectory !== undefined;
@@ -93,9 +95,12 @@ export async function correctDelegation(taskRoot, prompt, options = {}) {
     options.executorCommand ?? prepared.state.executorCommand,
     {
       environment: options.environment,
-      commandBaseDirectory: options.commandBaseDirectory
+      commandBaseDirectory: options.commandBaseDirectory,
+      signal: options.signal,
+      runProcess: options.runProcess
     }
   );
+  options.signal?.throwIfAborted();
   if (
     !identity || identity.command !== prepared.state.executorCommand ||
     identity.fingerprint !== prepared.state.executorFingerprint
@@ -111,6 +116,7 @@ export async function correctDelegation(taskRoot, prompt, options = {}) {
     ...options,
     executorIdentity: identity
   });
+  options.signal?.throwIfAborted();
   try {
     prepared = await authorizeDirectCorrection(prepared, prompt);
   } catch (error) {
@@ -123,8 +129,10 @@ export async function correctDelegation(taskRoot, prompt, options = {}) {
       readiness,
       readOnly: active.executionMode === "read_only",
       resumeSessionId: active.resumeSessionId,
+      initialFilesystem: active.initialFilesystem,
       correctionPrompt: active.correctionPrompt
     });
+    await active.markExecutionSettled();
     const nextSession = cursorPrivateSession(attempt.executor);
     if (
       (nextSession.handle && nextSession.handle !== active.resumeSessionId) ||

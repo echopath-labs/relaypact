@@ -450,7 +450,10 @@ exists, or an interrupted owner leaves the task in `prepared` or `running`, use
 only `decide-cursor --action abandon` to archive a bounded failure or
 interruption receipt and clean task-private state. RelayPact holds a signed
 execution lease across active work, so abandonment returns `task_state_busy`
-until the live owner exits. Archiving excludes the raw Cursor session handle and
+while the owner lives. After Host exit, non-prepared tasks still require signed
+execution-completion evidence; otherwise `execution_stop_unverified` preserves
+state. There is no automatic recovery for orphaned execution without this proof.
+Archiving excludes the raw Cursor session handle and
 cleanup deletes only the private task state; source changes remain untouched.
 
 ## Experimental Codex-to-Pi command

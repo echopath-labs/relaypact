@@ -31,7 +31,7 @@ const STATE_KEYS = new Set([
   "executionMode", "sessionDigest", "sessionHandle", "executorCommand", "executorFingerprint",
   "reviewFingerprint", "reviewFilesystemFingerprint",
   "reviewGitControlFingerprint", "reviewGitIndexFingerprint", "correctionSequence",
-  "stateRevision", "integrity"
+  "stateRevision", "integrity", "executionSettled"
 ]);
 const REVIEW_KEYS = new Set([
   "schemaVersion", "taskId", "routeId", "executorHarness", "lifecycleState",
@@ -70,6 +70,7 @@ function validateState(state) {
     "initialGitControlFingerprint", "initialGitIndexFingerprint"
   ];
   if (
+    (state.executionSettled !== undefined && typeof state.executionSettled !== "boolean") ||
     unknown.length > 0 || state.schemaVersion !== "1.0.0" || !STATES.has(state.lifecycleState) ||
     required.some((key) => !nonempty(state[key])) ||
     !EXECUTION_MODES.has(state.executionMode) ||
@@ -289,6 +290,7 @@ export async function prepareDirectDelegation({
     routeId,
     executorHarness,
     lifecycleState: "prepared",
+    executionSettled: true,
     hostInstanceId,
     taskRootDev: taskInfo.dev,
     taskRootIno: taskInfo.ino,
@@ -318,7 +320,7 @@ export async function prepareDirectDelegation({
 }
 
 export async function beginDirectDelegation(prepared) {
-  const state = await transition(prepared.statePath, "prepared", "running");
+  const state = await transition(prepared.statePath, "prepared", "running", { executionSettled: false });
   return { ...prepared, state };
 }
 
@@ -384,6 +386,7 @@ async function recordDirectDelegationResultLocked(prepared, executionResult, ses
   const unsignedState = {
     ...lifecycleState,
     lifecycleState: "awaiting_review",
+    executionSettled: true,
     resultIdentity,
     sessionDigest: session.digest ?? null,
     sessionHandle: session.handle ?? null,
@@ -420,18 +423,30 @@ export async function executeDirectDelegation(prepared, operation) {
     ) {
       throw new DelegationError("task_state_conflict", "Direct delegation lifecycle changed before execution could begin.");
     }
-    if (state.lifecycleState === "prepared") {
+    if (!new Set(["prepared", "running"]).has(state.lifecycleState)) {
+      throw new DelegationError("invalid_lifecycle_transition", `Cannot execute direct delegation while it is ${state.lifecycleState}.`);
+    }
+    if (state.lifecycleState === "prepared" || state.executionSettled !== false) {
       state = await persist({
         ...state,
         lifecycleState: "running",
+        executionSettled: false,
         stateRevision: state.stateRevision + 1
       }, { expectedRevision: state.stateRevision });
-    } else if (state.lifecycleState !== "running") {
-      throw new DelegationError("invalid_lifecycle_transition", `Cannot execute direct delegation while it is ${state.lifecycleState}.`);
     }
-    const active = { ...prepared, state };
+    const markExecutionSettled = async () => {
+      const current = await read();
+      if (current.executionSettled === true) return;
+      state = await persist({
+        ...current,
+        executionSettled: true,
+        stateRevision: current.stateRevision + 1
+      }, { expectedRevision: current.stateRevision });
+    };
+    const active = { ...prepared, state, markExecutionSettled };
     try {
       const attempt = await operation(active);
+      await markExecutionSettled();
       return await recordDirectDelegationResultLocked(
         active,
         attempt?.executionResult,
@@ -532,6 +547,7 @@ export async function authorizeDirectCorrection(prepared, prompt) {
     return persist({
       ...current,
       lifecycleState: "running",
+      executionSettled: false,
       correctionSequence: current.correctionSequence + 1,
       reviewFingerprint: null,
       reviewFilesystemFingerprint: null,
@@ -617,6 +633,11 @@ async function abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, al
     const state = await read();
     if (!allowedStates.has(state.lifecycleState)) {
       throw new DelegationError("invalid_lifecycle_transition", `Cannot abandon direct delegation while it is ${state.lifecycleState}.`);
+    }
+    // A dead Host lock proves nothing about detached executors or validations.
+    // Legacy running/failed states have no completion proof and fail closed.
+    if (state.lifecycleState !== "prepared" && state.executionSettled !== true) {
+      throw new DelegationError("execution_stop_unverified", "Execution completion is unverified; preserve task state until execution can be safely recovered.");
     }
     const initialTaskInfo = await lstat(prepared.taskRoot).catch(() => null);
     if (

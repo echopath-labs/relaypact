@@ -25,8 +25,10 @@ these commands selects or configures Cursor's model.
 If persistent execution enters `failed` before it has a current review, or an
 interrupted owner leaves it in `prepared` or `running`, only
 `decide-cursor --action abandon` is permitted. It archives a bounded failure or
-interruption receipt and removes task-private state without changing candidate
-source files. Abandonment returns `task_state_busy` while the signed execution
+interruption receipt only for a prepared task or when signed execution completion
+is available. Otherwise `execution_stop_unverified` preserves task-private state.
+Host exit is insufficient proof; orphaned execution has no automatic cleanup.
+Candidate source files are never changed. Abandonment returns `task_state_busy` while the signed execution
 lease still has a live owner.
 
 For persistent `run-cursor` and `correct-cursor`, completed or blocked

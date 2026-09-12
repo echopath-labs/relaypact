@@ -13,8 +13,9 @@ refuses review, permission, executable, or scope drift and archives an explicit
 accept/reject/abandon decision before deleting task-private state. A task that
 fails before a current review exists, or is left `prepared` or `running` by an
 interrupted owner, can only be explicitly abandoned. RelayPact archives a
-bounded failure or interruption receipt before cleanup and refuses abandonment
-while an active execution lease remains owned. It never applies, commits,
+bounded failure or interruption receipt only when cleanup is safe. A live Host
+returns `task_state_busy`; a non-prepared task without signed execution-completion
+evidence returns `execution_stop_unverified` and keeps all recovery state. It never applies, commits,
 pushes, publishes, or deploys the candidate.
 
 Terminal decisions enter through the declared `host-codex` package. The adapter

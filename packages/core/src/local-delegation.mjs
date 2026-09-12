@@ -4,7 +4,7 @@ import path from "node:path";
 import { validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
 import { evaluatePathScope } from "../../contracts/src/path-policy.mjs";
 import { createIsolatedEnvironment } from "./environment.mjs";
-import { changedFilesystemPaths, snapshotFilesystem, snapshotGitControls } from "./filesystem-evidence.mjs";
+import { assertFilesystemSnapshot, changedFilesystemPaths, snapshotFilesystem, snapshotGitControls } from "./filesystem-evidence.mjs";
 import {
   collectGitState,
   enforceDirtyTreePolicy,
@@ -139,7 +139,7 @@ async function inspectChangedFilesForSensitiveValues(repositoryRoot, changedPath
   return null;
 }
 
-async function collectPostflight(repository, before, filesystemBefore, gitControlsBefore, gitIndexBefore) {
+async function collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore) {
   const [after, filesystemAfter, gitControlsAfter, gitIndexAfter] = await Promise.all([
     collectGitState(repository.gitRoot),
     snapshotFilesystem(repository.gitRoot, { exclude: [".git"] }),
@@ -150,7 +150,7 @@ async function collectPostflight(repository, before, filesystemBefore, gitContro
   return {
     after,
     committedPaths,
-    filesystemPaths: changedFilesystemPaths(filesystemBefore, filesystemAfter),
+    filesystemPaths: changedFilesystemPaths(pathBaseline, filesystemAfter),
     gitControlsChanged: gitControlsBefore.fingerprint !== gitControlsAfter.fingerprint ||
       gitIndexBefore.fingerprint !== gitIndexAfter.fingerprint
   };
@@ -171,6 +171,10 @@ export async function runLocalDelegation(input, options = {}) {
     snapshotGitIndex(repository.gitRoot)
   ]);
 
+  const pathBaseline = options.initialFilesystem
+    ? assertFilesystemSnapshot(options.initialFilesystem)
+    : filesystemBefore;
+
   const executor = await options.execute(envelope, {
     workingDirectory: repository.workingDirectory,
     repository,
@@ -185,7 +189,7 @@ export async function runLocalDelegation(input, options = {}) {
     ...validationSensitiveValues
   ])];
 
-  let postflight = await collectPostflight(repository, before, filesystemBefore, gitControlsBefore, gitIndexBefore);
+  let postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore);
   let after = postflight.after;
   let changedPaths = mergePaths(after.dirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
   const baselinePathEvidence = sanitizeChangedPathEvidence(before.dirtyPaths, security, validationSensitiveValues);
@@ -214,7 +218,7 @@ export async function runLocalDelegation(input, options = {}) {
       validationEnv,
       redactionValues: evidenceSensitiveValues
     });
-    postflight = await collectPostflight(repository, before, filesystemBefore, gitControlsBefore, gitIndexBefore);
+    postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore);
     after = postflight.after;
     changedPaths = mergePaths(after.dirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
     pathEvidence = sanitizeChangedPathEvidence(changedPaths, security, validationSensitiveValues);

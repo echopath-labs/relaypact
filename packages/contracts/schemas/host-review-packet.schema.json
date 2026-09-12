@@ -36,6 +36,20 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["state", "value", "source", "assurance", "observedAt"],
+          "oneOf": [
+            { "properties": {
+              "state": { "const": "observed" }, "value": { "type": "string", "minLength": 1 },
+              "source": { "const": "executor_event" }, "assurance": { "const": "reported" }
+            } },
+            { "properties": {
+              "state": { "const": "harness_managed" }, "value": { "type": "string", "minLength": 1 },
+              "source": { "const": "executor_event" }, "assurance": { "const": "selector_alias" }
+            } },
+            { "properties": {
+              "state": { "const": "unavailable" }, "value": { "type": "null" },
+              "source": { "const": "unavailable" }, "assurance": { "const": "unknown" }
+            } }
+          ],
           "properties": {
             "state": { "enum": ["observed", "harness_managed", "unavailable"] },
             "value": { "type": ["string", "null"] },

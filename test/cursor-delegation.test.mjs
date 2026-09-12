@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
+import { once } from "node:events";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -32,6 +33,7 @@ import {
   requireDirectExecutorSession
 } from "../packages/core/src/direct-lifecycle.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
+import { createSignedStateStore } from "../packages/core/src/signed-state.mjs";
 
 const fakeCursorLauncherSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.sh", import.meta.url));
 const fakeCursorImplementationSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.mjs", import.meta.url));
@@ -70,6 +72,111 @@ await Promise.all([
 test.after(() => rm(fakeCursorRoot, { recursive: true, force: true }));
 const cli = fileURLToPath(new URL("../bin/relaypact.mjs", import.meta.url));
 const execFileAsync = promisify(execFile);
+
+async function nodeCursorFixture(privateRoot, transform) {
+  const bundle = path.join(privateRoot, "fixture");
+  await mkdir(bundle);
+  await copyFile(fakeCursorLauncherSource, path.join(bundle, "cursor-agent"));
+  await copyFile(fakeCursorPackageSource, path.join(bundle, "package.json"));
+  await copyFile(process.execPath, path.join(bundle, "node"));
+  await writeFile(path.join(bundle, "index.js"), transform(await readFile(fakeCursorImplementationSource, "utf8")));
+  await chmod(path.join(bundle, "cursor-agent"), 0o755);
+  await chmod(path.join(bundle, "node"), 0o755);
+  return path.join(bundle, "cursor-agent");
+}
+
+test("Host termination cannot erase state while its Cursor process is still writing", { skip: process.platform === "win32" }, async () => {
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  for (const signal of ["SIGTERM", "SIGKILL"]) {
+    const root = await createGitRepository();
+    const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-host-exit-test-"));
+    let host, exit, executorPid;
+    try {
+      for (const name of ["state", "archive", "home", "runtime"]) await mkdir(path.join(privateRoot, name));
+      const marker = path.join(privateRoot, "executor.json");
+      const command = await nodeCursorFixture(privateRoot, source => source.replace("  setInterval(() => {}, 1000);", [
+        `  writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid: process.pid}));`,
+        "  let tick = 0; setInterval(() => write('allowed.txt', String(++tick)), 40);",
+        "  setTimeout(() => process.exit(0), 20000);"
+      ].join("\n")));
+      const envelope = makeEnvelope(root, { taskId: "cursor-hang", execution: { timeoutMs: 60_000 } });
+      const moduleUrl = new URL("../packages/adapter-codex-cursor/src/run-delegation.mjs", import.meta.url).href;
+      const options = { executorCommand: command, stateRoot: path.join(privateRoot, "state"), hostInstanceId: "fixture-host" };
+      host = spawn(process.execPath, ["--input-type=module", "-e", `import {runDelegation} from ${JSON.stringify(moduleUrl)}; await runDelegation(${JSON.stringify(envelope)}, ${JSON.stringify(options)});`], {
+        stdio: "ignore", env: { PATH: process.env.PATH, HOME: path.join(privateRoot, "home"), TMPDIR: path.join(privateRoot, "runtime") }
+      });
+      exit = once(host, "exit");
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const info = await readFile(marker, "utf8").catch(() => null);
+        if (info) { executorPid = JSON.parse(info).pid; break; }
+        await delay(30);
+      }
+      assert.ok(executorPid, "The offline Cursor fixture must reach active execution");
+      const taskName = (await readdir(options.stateRoot)).find(name => name.startsWith("task-"));
+      const taskRoot = path.join(options.stateRoot, taskName);
+      const archiveRoot = path.join(privateRoot, "archive");
+      await assert.rejects(decideDelegation(taskRoot, "abandon", "other-host", archiveRoot), error => error.code === "task_state_busy");
+      host.kill(signal); await exit;
+      assert.ok(alive(executorPid));
+      for (const failureTransition of [false, true]) {
+        if (failureTransition) await failDirectDelegation(await loadDirectDelegation(taskRoot));
+        await assert.rejects(decideDelegation(taskRoot, "abandon", "other-host", archiveRoot), error => error.code === "execution_stop_unverified");
+        await access(path.join(taskRoot, "state.json"));
+        assert.deepEqual(await readdir(archiveRoot), []);
+      }
+      const before = await readFile(path.join(root, "allowed.txt"), "utf8");
+      await delay(150);
+      assert.notEqual(await readFile(path.join(root, "allowed.txt"), "utf8"), before);
+    } finally {
+      if (host && host.exitCode === null && host.signalCode === null) { host.kill("SIGKILL"); await exit; }
+      if (executorPid && alive(executorPid)) {
+        try { process.kill(-executorPid, "SIGKILL"); } catch { try { process.kill(executorPid, "SIGKILL"); } catch {} }
+      }
+      for (let i = 0; executorPid && alive(executorPid) && i < 50; i++) await delay(20);
+      // Linux may retain an already-dead adopted zombie briefly.
+      if (executorPid && alive(executorPid)) {
+        const { stdout } = await execFileAsync("ps", ["-o", "stat=", "-p", String(executorPid)]);
+        assert.match(stdout.trim(), /^Z/u);
+      }
+      await rm(root, { recursive: true, force: true });
+      await rm(privateRoot, { recursive: true, force: true });
+    }
+  }
+});
+
+test("Cursor correction retains an unchanged ignored artifact from its first attempt", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-ignored-correction-"));
+  try {
+    await writeFile(path.join(root, ".gitignore"), "ignored.txt\n");
+    execFileSync("git", ["add", ".gitignore"], { cwd: root });
+    execFileSync("git", ["commit", "-m", "test: ignored baseline"], { cwd: root, stdio: "ignore" });
+    for (const name of ["state", "archive"]) await mkdir(path.join(privateRoot, name));
+    const command = await nodeCursorFixture(privateRoot, source => source.replace(
+      '  write("allowed.txt", correction ? "corrected cursor lifecycle edit\\n" : "initial cursor lifecycle edit\\n");',
+      '  if (!correction) write("ignored.txt", "first attempt artifact\\n");\n  write("allowed.txt", correction ? "corrected cursor lifecycle edit\\n" : "initial cursor lifecycle edit\\n");'
+    ));
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle", scope: { allowedPaths: ["allowed.txt", "ignored.txt"] } }), {
+      executorCommand: command, stateRoot: path.join(privateRoot, "state"), hostInstanceId: "fixture-host"
+    });
+    assert.equal(first.review.executionResult.hostAcceptance.eligible, true);
+    assert.deepEqual(first.review.executionResult.changedPaths, ["allowed.txt", "ignored.txt"]);
+    for (let i = 0; i < 2; i++) {
+      const corrected = await correctDelegation(first.taskRoot, "Change allowed.txt while preserving ignored.txt.");
+      assert.equal(corrected.review.executionResult.status, "completed");
+      assert.equal(corrected.review.executionResult.hostAcceptance.eligible, true);
+      assert.deepEqual(corrected.review.executionResult.changedPaths, ["allowed.txt", "ignored.txt"]);
+    }
+    assert.equal(await readFile(path.join(root, "ignored.txt"), "utf8"), "first attempt artifact\n");
+    const accepted = await decideDelegation(first.taskRoot, "accept", "fixture-host", path.join(privateRoot, "archive"));
+    assert.equal(accepted.lifecycleState, "accepted");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
 const execute = (root, scenario, options = {}) => runDelegation(makeEnvelope(root, {
   taskId: `cursor-${scenario}`
 }), { executorCommand: fakeCursor, ...options });
@@ -473,6 +580,62 @@ test("Cursor readiness does not publish ready after cancellation during final id
   assert.equal(readiness.state, "interrupted");
 });
 
+test("cancelling a cold embedded-runtime probe stops readiness without caching cancellation", async () => {
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-probe-abort-"));
+  const controller = new AbortController();
+  try {
+    const command = await nodeCursorFixture(privateRoot, source => source);
+    // A distinct fingerprint ensures this exercises the cold runtime probe.
+    await writeFile(command, `${await readFile(command, "utf8")}\n# cancellation fixture\n`);
+    const calls = [];
+    const interrupted = await discoverCursorCli({
+      executorCommand: command,
+      signal: controller.signal,
+      async runProcess(_command, args, options) {
+        calls.push(args);
+        assert.equal(options.signal, controller.signal);
+        assert.deepEqual(args, ["--use-system-ca", "--version"]);
+        controller.abort();
+        return { exitCode: null, signal: "SIGTERM", cancelled: true, stdout: "", stderr: "" };
+      }
+    });
+    assert.equal(interrupted.state, "interrupted");
+    assert.equal(calls.length, 1);
+    let retried = 0;
+    const identity = await resolveCursorExecutable(command, {
+      async runProcess(_command, args) {
+        assert.deepEqual(args, ["--use-system-ca", "--version"]);
+        retried++;
+        return { exitCode: 0, signal: null, stdout: process.version, stderr: "" };
+      }
+    });
+    assert.equal(retried, 1);
+    assert.deepEqual(identity.runtimeArguments, ["--use-system-ca"]);
+    const cancelled = new AbortController(); cancelled.abort();
+    assert.equal(await resolveCursorExecutable(command, { signal: cancelled.signal }), null);
+  } finally {
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor uses the long print flag admitted by readiness without requiring its short alias", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-print-contract-"));
+  try {
+    const command = await nodeCursorFixture(privateRoot, source => source.replace(
+      'const prompt = process.argv.at(-1) ?? "";',
+      'if (process.argv.includes("-p") || !process.argv.includes("--print")) process.exit(64);\nconst prompt = process.argv.at(-1) ?? "";'
+    ));
+    assert.equal((await discoverCursorCli({ executorCommand: command })).state, "ready");
+    const result = await runDelegation(makeEnvelope(root, { taskId: "cursor-success" }), { executorCommand: command });
+    assert.equal(result.status, "completed");
+    assert.deepEqual(result.changedPaths, ["allowed.txt"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
 test("Host cancellation reaches validation and prevents later validation launches", async () => {
   const root = await createGitRepository();
   const controller = new AbortController();
@@ -740,7 +903,7 @@ test("neutral direct lifecycle errors map to the Cursor session contract at the 
   }
 });
 
-test("interrupted prepared and running Cursor tasks can be explicitly abandoned", async () => {
+test("prepared tasks can be abandoned but unverified running or failed tasks retain state", async () => {
   for (const lifecycleState of ["prepared", "running"]) {
     const root = await createGitRepository();
     const privateRoot = await mkdtemp(path.join(os.tmpdir(), `relaypact-cursor-interrupted-${lifecycleState}-`));
@@ -755,7 +918,15 @@ test("interrupted prepared and running Cursor tasks can be explicitly abandoned"
         routeId: "codex-cursor",
         executorHarness: "cursor"
       });
-      if (lifecycleState === "running") prepared = await beginDirectDelegation(prepared);
+      if (lifecycleState === "running") {
+        prepared = await beginDirectDelegation(prepared);
+        await assert.rejects(decideDelegation(prepared.taskRoot, "abandon", "cursor-host-1", archiveRoot), error => error.code === "execution_stop_unverified");
+        await failDirectDelegation(prepared);
+        await assert.rejects(decideDelegation(prepared.taskRoot, "abandon", "cursor-host-1", archiveRoot), error => error.code === "execution_stop_unverified");
+        await access(prepared.statePath);
+        assert.deepEqual(await readdir(archiveRoot), []);
+        continue;
+      }
       const abandoned = await decideDelegation(prepared.taskRoot, "abandon", "cursor-host-1", archiveRoot);
       assert.equal(abandoned.lifecycleState, "abandoned");
       const receipt = JSON.parse(await readFile(abandoned.archive.receiptPath, "utf8"));
@@ -766,6 +937,41 @@ test("interrupted prepared and running Cursor tasks can be explicitly abandoned"
       await rm(root, { recursive: true, force: true });
       await rm(privateRoot, { recursive: true, force: true });
     }
+  }
+});
+
+test("legacy completion gaps and restarted running attempts cannot inherit cleanup authority", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-legacy-completion-"));
+  const stateRoot = path.join(privateRoot, "state"), archiveRoot = path.join(privateRoot, "archive");
+  await Promise.all([mkdir(stateRoot), mkdir(archiveRoot)]);
+  try {
+    const prepared = await beginDirectDelegation(await prepareDirectDelegation({
+      envelope: makeEnvelope(root), stateRoot, hostInstanceId: "fixture-host",
+      routeId: "codex-cursor", executorHarness: "cursor"
+    }));
+    // Create an authentic older-schema state with no execution-completion field.
+    const store = createSignedStateStore(prepared.statePath, value => value);
+    await store.withLock(async ({read, persist}) => {
+      const state = await read(); delete state.executionSettled;
+      await persist(state);
+    });
+    await assert.rejects(decideDelegation(prepared.taskRoot, "abandon", "other-host", archiveRoot), error => error.code === "execution_stop_unverified");
+    // A Host can die after completion but before review persistence. A restarted
+    // operation must invalidate that prior completion before invoking its work.
+    await store.withLock(async ({read, persist}) => persist({...await read(), executionSettled: true}));
+    const loaded = await loadDirectDelegation(prepared.taskRoot);
+    await assert.rejects(executeDirectDelegation(loaded, async active => {
+      assert.equal(active.state.executionSettled, false);
+      assert.equal((await loadDirectDelegation(prepared.taskRoot)).state.executionSettled, false);
+      throw new Error("fixture execution interrupted");
+    }), /fixture execution interrupted/u);
+    assert.equal((await loadDirectDelegation(prepared.taskRoot)).state.lifecycleState, "failed");
+    await assert.rejects(decideDelegation(prepared.taskRoot, "abandon", "other-host", archiveRoot), error => error.code === "execution_stop_unverified");
+    assert.deepEqual(await readdir(archiveRoot), []);
+  } finally {
+    await rm(root, {recursive: true, force: true});
+    await rm(privateRoot, {recursive: true, force: true});
   }
 });
 

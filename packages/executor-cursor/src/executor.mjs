@@ -271,7 +271,8 @@ async function fingerprintMatchedContent(file, expectedFingerprint, maxBytes) {
   }
 }
 
-async function cursorRuntimeArguments(launcher, launcherFingerprint, runtime, environment) {
+async function cursorRuntimeArguments(launcher, launcherFingerprint, runtime, environment, options = {}) {
+  options.signal?.throwIfAborted();
   const content = await fingerprintMatchedContent(launcher, launcherFingerprint, 64 * 1024);
   const cacheKey = `${launcherFingerprint}:${runtime.commandFingerprint}`;
   const cached = CURSOR_RUNTIME_ARGUMENT_CACHE.get(cacheKey);
@@ -286,11 +287,15 @@ async function cursorRuntimeArguments(launcher, launcherFingerprint, runtime, en
   try {
     const probeRuntime = path.join(probeRoot, CURSOR_BUNDLE_RUNTIME_COMMAND);
     await copyVerifiedExecutable(runtime.command, probeRuntime, runtime.commandFingerprint);
-    const result = await runProcess(probeRuntime, ["--use-system-ca", "--version"], {
+    options.signal?.throwIfAborted();
+    const result = await (options.runProcess ?? runProcess)(probeRuntime, ["--use-system-ca", "--version"], {
+      signal: options.signal,
       env: safeEnvironment(environment),
       timeoutMs: PROBE_TIMEOUT_MS,
       maxCaptureBytes: PROBE_CAPTURE_BYTES
     });
+    options.signal?.throwIfAborted();
+    if (result.cancelled) return [];
     const selected = result.exitCode === 0 && !result.signal && !result.timedOut &&
       !result.cancelled && !result.stdoutTruncated && !result.stderrTruncated
       ? ["--use-system-ca"]
@@ -487,6 +492,7 @@ export async function resolveCursorExecutable(command, options = {}) {
   const environment = safeEnvironment(options.environment ?? process.env);
   const baseDirectory = path.resolve(options.commandBaseDirectory ?? process.cwd());
   for (const candidate of commandCandidates(command, environment, baseDirectory)) {
+    if (options.signal?.aborted) return null;
     try {
       const launcher = await resolveExecutableFile(candidate);
       if (!launcher) continue;
@@ -515,7 +521,8 @@ export async function resolveCursorExecutable(command, options = {}) {
           launcher.command,
           launcher.fingerprint,
           bundle.runtime,
-          environment
+          environment,
+          options
         )
       };
       return {
@@ -562,7 +569,7 @@ export async function discoverCursorCli(options = {}) {
     if (options.signal?.aborted) return unavailableReadiness("interrupted");
     const resolvedIdentity = await resolveExecutable(
       typeof candidate === "string" ? candidate : candidate?.command,
-      { environment, commandBaseDirectory: options.commandBaseDirectory }
+      { environment, commandBaseDirectory: options.commandBaseDirectory, signal: options.signal, runProcess: options.runProcess }
     );
     if (options.signal?.aborted) return unavailableReadiness("interrupted");
     const identity = typeof candidate === "string" || sameExecutableIdentity(candidate, resolvedIdentity)
@@ -611,7 +618,9 @@ export async function discoverCursorCli(options = {}) {
       if (options.signal?.aborted) return unavailableReadiness("interrupted");
       const verifiedIdentity = await resolveExecutable(command, {
         environment,
-        commandBaseDirectory: options.commandBaseDirectory
+        commandBaseDirectory: options.commandBaseDirectory,
+        signal: options.signal,
+        runProcess: options.runProcess
       });
       if (options.signal?.aborted) return unavailableReadiness("interrupted");
       if (!sameExecutableIdentity(verifiedIdentity, identity)) continue;
@@ -778,7 +787,7 @@ function buildPrompt(envelope, correctionPrompt = null) {
 
 function buildCursorArgs(envelope, workingDirectory, options) {
   const args = [
-    "-p",
+    "--print",
     "--output-format", "stream-json",
     "--trust",
     "--sandbox", "enabled",
