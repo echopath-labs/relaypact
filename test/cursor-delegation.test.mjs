@@ -96,8 +96,9 @@ test("Host termination cannot erase state while its Cursor process is still writ
       for (const name of ["state", "archive", "home", "runtime"]) await mkdir(path.join(privateRoot, name));
       const marker = path.join(privateRoot, "executor.json");
       const command = await nodeCursorFixture(privateRoot, source => source.replace("  setInterval(() => {}, 1000);", [
+        "  let tick = 0; write('allowed.txt', String(tick));",
         `  writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid: process.pid}));`,
-        "  let tick = 0; setInterval(() => write('allowed.txt', String(++tick)), 40);",
+        "  setInterval(() => write('allowed.txt', String(++tick)), 40);",
         "  setTimeout(() => process.exit(0), 20000);"
       ].join("\n")));
       const envelope = makeEnvelope(root, { taskId: "cursor-hang", execution: { timeoutMs: 60_000 } });
@@ -127,8 +128,14 @@ test("Host termination cannot erase state while its Cursor process is still writ
         assert.deepEqual(await readdir(archiveRoot), []);
       }
       const before = await readFile(path.join(root, "allowed.txt"), "utf8");
-      await delay(150);
-      assert.notEqual(await readFile(path.join(root, "allowed.txt"), "utf8"), before);
+      const heartbeatDeadline = Date.now() + 5_000;
+      let after = before;
+      while (Date.now() < heartbeatDeadline) {
+        await delay(30);
+        after = await readFile(path.join(root, "allowed.txt"), "utf8");
+        if (after.length > 0 && after !== before) break;
+      }
+      assert.ok(after.length > 0 && after !== before, "The orphan fixture must continue writing after abandonment is refused");
     } finally {
       if (host && host.exitCode === null && host.signalCode === null) { host.kill("SIGKILL"); await exit; }
       if (executorPid && alive(executorPid)) {
