@@ -6,6 +6,12 @@ This guide takes a clean Git repository from installation to one bounded,
 reviewable Codex-to-Codex candidate. RelayPact uses an independent `codex exec`
 from the existing Codex CLI; there is no second executor package.
 
+RelayPact's shared purpose is to guide the Host's delegation and acceptance.
+This tutorial covers the published Codex capsule tooling. The current-source
+[Host guidance](../skills/relaypact/SKILL.md) separates common responsibilities
+from CLI setup; that revision is not part of the v0.1.2 installation below.
+The candidate in this tutorial remains unapplied until a later authorized action.
+
 Current release truth:
 
 - `v0.1.2` is the latest published release; `v0.1.1` remains available.

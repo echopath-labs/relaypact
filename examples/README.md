@@ -4,6 +4,10 @@ These examples illustrate the contract lifecycle. Replace placeholder
 repository paths and configured profile names locally; never add credentials to
 an envelope or commit them with an example.
 
+For Host decision behavior, use the [eight delegation review cases](host-delegation-cases.md).
+Those scenarios are evaluation inputs and expectations, not executed trial evidence.
+The CLI examples below retain their route-specific contracts.
+
 ## 1. Experimental Pi delegation
 
 Copy `task-envelope.json`, set `repository.root` to a clean disposable Git

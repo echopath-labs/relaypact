@@ -1,7 +1,10 @@
-# Agent-led private setup
+# RelayPact CLI setup
 
-Use this reference when the user supplies a goal and repository but has not
-prepared a task envelope, worker profile registry, or private state roots.
+Read this reference after selecting a RelayPact CLI route and only prepare the
+artifacts that route requires. The shared Host requirements do not require CLI
+setup. Codex uses an envelope, worker profile registry and private lifecycle
+roots; Cursor uses an envelope and optional persistent lifecycle roots; Pi uses
+an envelope. Cursor and Pi do not require a Codex profile registry.
 
 The Agent prepares configuration; the human or coordinating host owns material
 authority and final acceptance.
@@ -47,10 +50,10 @@ Show the user or host:
 - `forbiddenPaths`;
 - host-owned validation argument arrays and timeouts;
 - stop conditions and residual risk;
-- selected Codex profile type: native, direct Responses provider, or optional
+- for Codex, selected profile type: native, direct Responses provider, or optional
   loopback router;
-- absolute private locations for envelope, profile registry, task state, and
-  review archive;
+- absolute private locations for the envelope and, where the route uses them,
+  profile registry, task state and review archive;
 - any decision that cannot be safely inferred.
 
 For every read-only file, keep it in `readablePaths`, omit it from
@@ -62,9 +65,10 @@ availability, or reserved terminal authority is ambiguous.
 
 ## 4. Create private roots
 
-Use pre-existing real directories outside the target repository. If the user
-authorizes their creation, use restrictive permissions such as `0700` where
-supported. Suggested logical layout:
+Use pre-existing real directories outside the target repository. Where their
+creation is covered by existing user authority, use restrictive permissions such
+as `0700` where supported. Resolve missing authority only when needed. Create only the
+directories required by the selected route; a Codex lifecycle layout is:
 
 ```text
 <private-root>/
@@ -79,8 +83,8 @@ cloud-synchronized public directory, or a path intended for commit.
 
 ## 5. Prepare a credential-free envelope
 
-Read `task-envelope.md` and create a complete envelope. The envelope may name a
-worker profile but must not contain:
+Read [task-envelope.md](task-envelope.md) and create a complete envelope. It may
+name a worker profile but must not contain:
 
 - API keys, bearer tokens, session cookies, or authentication files;
 - personal proxy addresses or proxy credentials;
@@ -90,25 +94,31 @@ worker profile but must not contain:
 
 Keep readable and writable authority separate. Read-only context is readable,
 not writable, and not forbidden. Prefer the smallest focused dependency
-closure. If context discovery is uncertain, use bounded planned
-context and readiness rather than granting the complete repository by default.
+closure. For Codex, uncertain context discovery can use bounded planned context
+and readiness. For direct routes, resolve missing context before delegation; never
+grant the complete repository merely to avoid framing the task.
 
-## 6. Prepare or select a worker profile
+## 6. Configure only the selected route
 
-Prefer an existing host-approved named profile. If none is available, prepare
-credential-free metadata only:
+For Codex, default external routes to a sanitized capsule; never switch to
+`trusted-worktree` automatically. Prefer an existing host-approved named
+profile. If none is available, prepare credential-free metadata only:
 
 - native route: selected Codex profile, explicit model, reasoning, and minimal
   environment allowlist;
 - direct route: provider name, compatible `/v1` Responses base URL, explicit
   model, and credential environment-variable name;
 - router route: selected Codex profile plus a loopback health URL.
-- Cursor harness: no RelayPact model profile; use the model already configured
-  by the user inside Cursor and report only model metadata Cursor actually emits.
+
+For Cursor, use the model and authentication already configured by the user
+inside Cursor; never write Cursor model configuration or add a model flag.
+Report only model metadata Cursor actually emits. For Pi, use its existing
+adapter [configuration rules](../../../packages/adapter-codex-pi/README.md);
+no Codex profile registry is required.
 
 The actual credential remains in host-owned configuration or the named process
-environment. Ask whether it is available; do not ask the user to paste its
-value into chat or a file. Do not inspect unrelated Pi, OpenCode, MCP, provider,
+environment. Resolve availability only when it is unknown; do not ask the user
+to paste its value into chat or a file. Do not inspect unrelated Pi, OpenCode, MCP, provider,
 or global Codex configuration.
 
 Route failure is fail-closed. Never substitute another provider, model, router,
@@ -118,24 +128,32 @@ decision.
 ## 7. Confirm and invoke
 
 Present the final envelope/profile paths and a concise scope summary. After all
-material decisions are resolved, follow `invocation.md` and use the Skill-local
-wrapper. Retain the returned task root and bounded structured result.
+material decisions are resolved, follow [invocation.md](invocation.md) and use
+the Skill-local wrapper. Retain the bounded structured result and task root when the
+selected mode creates one. Reuse already resolved authority without a second
+confirmation.
 
 Do not edit task lifecycle state, task controls, or review evidence manually.
 
 ## 8. Explain evidence and decision choices
 
-Read the pending host review packet and candidate patch. Explain:
+Read the available review evidence and actual artifact: the Codex capsule
+candidate patch or the direct workspace changes for Cursor/Pi. Explain:
 
 - executor status versus host-observed eligibility;
 - actual changed paths and scope breaches;
 - host validation results;
 - credential-evidence safety and private-control status;
-- candidate patch identity and relevant diff;
+- artifact identity and relevant diff;
 - unresolved risks;
 - whether a same-session correction is still within authority or a new task is
   required.
 
 Present `accept`, `reject`, or `abandon` only when supported by current evidence
-and user-granted authority. A terminal decision archives evidence but never
-applies the patch or performs Git, release, publication, or deployment actions.
+and user-granted authority. For Codex and persistent Cursor, a supported terminal
+decision archives evidence but never applies a patch or performs Git, release,
+publication or
+deployment actions. Cursor/Pi execution can already have changed the workspace;
+rejection does not revert it. One-shot results remain pending at the tool level.
+For unsupported terminal commands, explain the Host review separately instead
+of fabricating a lifecycle decision.

@@ -25,3 +25,12 @@ candidate basis before and after the terminal state commit, and rolls back to th
 recoverable pending state if the post-commit basis changed. Failed- or
 interrupted-task abandon receipt creation and its terminal transition share the
 same signed-state lock.
+
+Runtime capability probes must conclusively confirm support or reject the
+optional system-CA flag before its choice becomes part of executor identity.
+Timeouts, signals, truncated output and other inconclusive outcomes are not
+cached as a no-flag identity. Readiness stays blocked; a correction reports
+`cursor_runtime_probe_unavailable` before modifying the protected task. Retry
+readiness after resolving the local condition. Actual executable or bundle
+changes still fail identity checks; existing signed state is never rewritten
+to conceal a mismatch.

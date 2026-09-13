@@ -143,6 +143,53 @@ test("malformed executor output is normalized as failed", async () => {
   assert.equal(result.executor.reportedStatus, "malformed");
 });
 
+const finalPayload = { status: "completed", summary: 'Braces { } and escaped "quotes" remain literal.', residualRisks: [] };
+const finalCompact = JSON.stringify(finalPayload);
+const finalPretty = JSON.stringify(finalPayload, null, 2);
+const finalOutputCases = [
+  ["compact JSON", ` \n${finalCompact}\n`, "completed"],
+  ["multiline JSON", finalPretty, "completed"],
+  ["JSON fence", `\`\`\`json\n${finalPretty}\n\`\`\``, "completed"],
+  ["unlabelled fence", `\`\`\`\r\n${finalPretty}\r\n\`\`\``, "completed"],
+  ["blocked fence", `\`\`\`json\n${JSON.stringify({ status: "blocked", summary: "Authority required." }, null, 2)}\n\`\`\``, "blocked"],
+  ["failed JSON", JSON.stringify({ status: "failed", summary: "Unable to finish." }), "failed"],
+  ["prose and multiline JSON", `Done.\n${finalPretty}`, "malformed"],
+  ["prose and compact JSON", `Done.\n${finalCompact}`, "malformed"],
+  ["prose and fenced JSON", `Done.\n\`\`\`json\n${finalPretty}\n\`\`\``, "malformed"],
+  ["conflicting JSON objects", `${JSON.stringify({ status: "blocked", summary: "Stop." })}\n${finalCompact}`, "malformed"],
+  ["multiple fences", `\`\`\`json\n${finalCompact}\n\`\`\`\n\`\`\`json\n${finalCompact}\n\`\`\``, "malformed"],
+  ["event wrapper", JSON.stringify({ type: "message_end", message: { content: [{ type: "text", text: finalPretty }] } }), "malformed"],
+  ["array", `[${finalCompact}]`, "malformed"],
+  ["incomplete JSON after result", `${finalCompact}\n{`, "malformed"],
+  ["unterminated fence", `\`\`\`json\n${finalCompact}`, "malformed"],
+  ["invalid status", '{"status":"accepted","summary":"Done"}', "malformed"],
+  ["missing summary", '{"status":"completed"}', "malformed"],
+  ["non-string summary", '{"status":"completed","summary":42}', "malformed"]
+];
+
+for (const [label, stdout, reportedStatus] of finalOutputCases) {
+  test(`Pi final output: ${label}`, async () => {
+    const root = await createGitRepository();
+    const result = await runDelegation(withFixturePiRoute(makeEnvelope(root)), {
+      executorCommand: fakePi,
+      executorEnv: { FAKE_PI_SCENARIO: "final-output", FAKE_PI_FINAL_OUTPUT: stdout }
+    });
+    assert.equal(result.executor.reportedStatus, reportedStatus);
+    assert.equal(result.status, reportedStatus === "malformed" ? "failed" : reportedStatus);
+    assert.equal(result.validations[0].status, reportedStatus === "completed" ? "passed" : "not_run");
+    assert.equal(result.hostAcceptance.eligible, reportedStatus === "completed");
+    assert.equal(result.hostAcceptance.status, "pending");
+    if (reportedStatus === "completed") assert.equal(result.executor.summary, finalPayload.summary);
+  });
+}
+
+test("Pi final output: prompt requires the complete object without prose", async () => {
+  const root = await createGitRepository();
+  const result = await execute(makeEnvelope(root), "final-output-prompt");
+  assert.equal(result.status, "completed");
+  assert.equal(result.hostAcceptance.eligible, true);
+});
+
 test("executor interruption is normalized as failed", async () => {
   const root = await createGitRepository();
   const envelope = makeEnvelope(root, { execution: { timeoutMs: 50 } });
@@ -556,3 +603,32 @@ test("credential-like validation arguments are rejected", () => {
   });
   assert.throws(() => validateTaskEnvelope(authorizationHeader), (error) => error.code === "credential_in_envelope");
 });
+
+
+test("Pi verbose progress does not displace its bounded final report", async () => {
+  const root = await createGitRepository();
+  try {
+    const result = await execute(makeEnvelope(root), "large-progress");
+    assert.equal(result.status, "completed");
+    assert.equal(result.validations[0].status, "passed");
+    assert.deepEqual(result.changedPaths, ["allowed.txt"]);
+    assert.deepEqual(result.hostAcceptance, { status: "pending", eligible: true, decidedBy: null });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+for (const scenario of ["oversized-final", "oversized-stderr"]) {
+  test(`Pi still rejects ${scenario} rather than accepting a clipped report`, async () => {
+    const root = await createGitRepository();
+    try {
+      const result = await execute(makeEnvelope(root), scenario);
+      assert.equal(result.status, "failed");
+      assert.match(result.executor.summary, /capture bound/u);
+      assert.equal(result.validations[0].status, "not_run");
+      assert.equal(result.hostAcceptance.eligible, false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}

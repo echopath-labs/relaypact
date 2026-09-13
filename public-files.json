@@ -31,6 +31,7 @@
     "examples/execution-result.completed.json",
     "examples/execution-result.failed.json",
     "examples/execution-result.rejected.json",
+    "examples/host-delegation-cases.md",
     "examples/host-review-packet.json",
     "examples/task-envelope.json",
     "package.json",

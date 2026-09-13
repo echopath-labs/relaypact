@@ -14,7 +14,9 @@ const PROBE_TIMEOUT_MS = 5_000;
 const PROBE_CAPTURE_BYTES = 256 * 1024;
 const EXECUTION_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_CURSOR_BUNDLE_FILES = 1_024;
-const MAX_CURSOR_BUNDLE_BYTES = 512 * 1024 * 1024;
+// Current Node-entry installations also ship standalone binaries. Preserve
+// their complete snapshot and identity within a finite aggregate budget.
+const MAX_CURSOR_BUNDLE_BYTES = 768 * 1024 * 1024;
 const MAX_CURSOR_BUNDLE_DEPTH = 16;
 const SUPPORTED_SHELL_INTERPRETERS = new Set(["bash", "dash", "ksh", "sh", "zsh"]);
 const CURSOR_BUNDLE_RUNTIME_COMMAND = "node";
@@ -295,11 +297,16 @@ async function cursorRuntimeArguments(launcher, launcherFingerprint, runtime, en
       maxCaptureBytes: PROBE_CAPTURE_BYTES
     });
     options.signal?.throwIfAborted();
-    if (result.cancelled) return [];
-    const selected = result.exitCode === 0 && !result.signal && !result.timedOut &&
-      !result.cancelled && !result.stdoutTruncated && !result.stderrTruncated
-      ? ["--use-system-ca"]
-      : [];
+    const complete = !result.signal && !result.timedOut && !result.cancelled &&
+      !result.stdoutTruncated && !result.stderrTruncated;
+    const supported = complete && result.exitCode === 0 &&
+      /^v\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test((result.stdout ?? "").trim());
+    const unsupported = complete && Number.isInteger(result.exitCode) && result.exitCode !== 0 &&
+      /^(?:[^\r\n]+: )?bad option: --use-system-ca$/u.test((result.stderr ?? "").trim());
+    if (!supported && !unsupported) {
+      throw new DelegationError("cursor_runtime_probe_unavailable", "Cursor runtime capabilities could not be verified. Preserve the task and retry readiness.");
+    }
+    const selected = supported ? ["--use-system-ca"] : [];
     CURSOR_RUNTIME_ARGUMENT_CACHE.set(cacheKey, selected);
     return [...selected];
   } finally {
@@ -548,7 +555,8 @@ export async function resolveCursorExecutable(command, options = {}) {
           runtime
         )
       };
-    } catch {
+    } catch (error) {
+      if (error?.code === "cursor_runtime_probe_unavailable") throw error;
       // Try the next explicit PATH candidate without exposing filesystem details.
     }
   }
@@ -567,10 +575,16 @@ export async function discoverCursorCli(options = {}) {
 
   for (const candidate of candidates) {
     if (options.signal?.aborted) return unavailableReadiness("interrupted");
-    const resolvedIdentity = await resolveExecutable(
-      typeof candidate === "string" ? candidate : candidate?.command,
-      { environment, commandBaseDirectory: options.commandBaseDirectory, signal: options.signal, runProcess: options.runProcess }
-    );
+    let resolvedIdentity;
+    try {
+      resolvedIdentity = await resolveExecutable(
+        typeof candidate === "string" ? candidate : candidate?.command,
+        { environment, commandBaseDirectory: options.commandBaseDirectory, signal: options.signal, runProcess: options.runProcess }
+      );
+    } catch (error) {
+      if (error?.code === "cursor_runtime_probe_unavailable") return unavailableReadiness();
+      throw error;
+    }
     if (options.signal?.aborted) return unavailableReadiness("interrupted");
     const identity = typeof candidate === "string" || sameExecutableIdentity(candidate, resolvedIdentity)
       ? resolvedIdentity

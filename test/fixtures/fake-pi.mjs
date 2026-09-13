@@ -10,6 +10,19 @@ const result = (status, summary, residualRisks = []) => {
 };
 
 switch (scenario) {
+  case "final-output":
+    write("allowed.txt", "delegated edit\n");
+    process.stdout.write(process.env.FAKE_PI_FINAL_OUTPUT);
+    break;
+  case "final-output-prompt": {
+    const prompt = process.argv.at(-1);
+    const mode = process.argv[process.argv.indexOf("--mode") + 1];
+    const explicit = mode === "text" && prompt.includes("must be exactly one JSON object") &&
+      prompt.includes("Do not add prose, Markdown fences, or additional JSON objects.");
+    if (explicit) write("allowed.txt", "delegated edit\n");
+    result(explicit ? "completed" : "failed", "Final-output instructions checked.");
+    break;
+  }
   case "environment": {
     write("allowed.txt", "delegated edit\n");
     const isolated = process.env.HOST_SECRET === undefined &&
@@ -20,6 +33,22 @@ switch (scenario) {
     result(isolated ? "completed" : "failed", isolated ? "Environment isolated." : "Environment exposed.");
     break;
   }
+  case "large-progress": {
+    const mode = process.argv[process.argv.indexOf("--mode") + 1];
+    // Model Pi's print behavior: JSON mode emits progress; text mode emits
+    // only the final assistant response, even when internal work is verbose.
+    if (mode === "json") process.stdout.write(`${JSON.stringify({ type: "message_update", text: "x".repeat(150_000) })}\n`);
+    write("allowed.txt", "delegated edit\n");
+    result("completed", "Bounded edit completed after verbose progress.");
+    break;
+  }
+  case "oversized-final":
+    result("completed", "x".repeat(150_000));
+    break;
+  case "oversized-stderr":
+    process.stderr.write("x".repeat(150_000));
+    result("completed", "Untrusted completion after oversized diagnostics.");
+    break;
   case "success":
     write("allowed.txt", "delegated edit\n");
     result("completed", "Bounded edit completed.");

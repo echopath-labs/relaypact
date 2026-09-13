@@ -1,4 +1,9 @@
-# Installed Invocation
+# RelayPact CLI invocation
+
+Read only for a selected RelayPact CLI route, after
+[agent-setup.md](agent-setup.md). Commands depend on the installed source version
+and [support matrix](../../../support-matrix.json); source documentation does
+not add commands to an older installation.
 
 Resolve `../scripts/relaypact.mjs` relative to this reference file,
 or `scripts/relaypact.mjs` relative to the directory containing the
@@ -9,6 +14,8 @@ Inspect support without loading an executor:
 ```text
 node <skill-directory>/scripts/relaypact.mjs support
 ```
+
+## Codex capsule lifecycle
 
 Start a Codex-to-Codex task only after the envelope and host-owned profile
 registry are ready. The state root must be a pre-existing real private
@@ -49,6 +56,12 @@ packet or candidate patch before it records the decision and archives evidence.
 Acceptance additionally requires current evidence to remain eligible. No
 terminal action applies the candidate patch to the source repository or
 commits, pushes, tags, publishes, or deploys.
+
+## Cursor direct workspace lifecycle
+
+Execution can write the target workspace immediately unless run in read-only
+mode. Acceptance does not apply a separate patch; rejection does not revert the
+workspace.
 
 For the explicitly selected experimental Cursor route, the one-shot form stays
 pending-only and can be read-only. `--executor` is optional when the compatible
@@ -95,3 +108,18 @@ For `run-cursor` and `correct-cursor`, completed or blocked execution returns
 exit code `0`; failed, rejected, or malformed execution returns exit code `1`.
 The JSON review remains the authoritative result and host acceptance stays
 pending until an explicit terminal decision.
+
+## Pi direct workspace execution
+
+For the explicitly selected experimental Pi route, use the adapter documented
+by the installed version; do not route Codex or Cursor failures to Pi. This
+route can write the target workspace and returns evidence for Host review;
+it does not provide the persistent correction/terminal commands above.
+
+```text
+node <skill-directory>/scripts/relaypact.mjs run-pi
+  --envelope <task-envelope.json>
+  [--executor <pi-path>]
+```
+
+A Host review of a one-shot result does not create a tool terminal record.

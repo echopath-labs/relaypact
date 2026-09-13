@@ -2,20 +2,30 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-RelayPact lets one Codex Agent Instance delegate bounded engineering work to an
-independent Codex executor while the coordinating Codex retains scope, evidence
-review, risk judgment, and final acceptance.
+RelayPact gives the Host Agent a stable reference for delegating bounded work
+and judging delivery. The Host defines the agreement, keeps authority explicit,
+checks actual evidence, handles deviations, and makes the acceptance decision
+within the user's authority. Executor integrations supply the compatible
+invocation and evidence tools for that work.
+
+The [Host Skill](skills/relaypact/SKILL.md) states those shared requirements;
+its references explain the selected tools only when needed. See
+[eight review cases](examples/host-delegation-cases.md) for concrete expectations.
+This guidance revision is in the current working source and is not included in
+the published v0.1.2 installation. General Host wording does not add support for
+other Host products; Codex remains the admitted Host in the support matrix.
 
 The first and only active Public Preview route is **Codex → Codex**. RelayPact
 provides the workflow, isolation, evidence, and acceptance controls; execution
 comes from an independent `codex exec` process in the user's existing Codex
 CLI. No second Codex installation or executor package is required.
 
-**No additional executor installation is required.**
+For this Codex-to-Codex route: **No additional executor installation is required.**
 
 ## Release status
 
-- Public source version: **0.1.2 Public Preview**.
+- Source package metadata: **0.1.2 Public Preview**; unreleased changes are
+  distinguished below from the published tag.
 - Latest published release: **v0.1.2**.
 - Support: `codex-codex` is `public-preview`; `codex-pi` remains
   `experimental` and inactive; `codex-cursor` is source-included,
@@ -31,7 +41,8 @@ fallbacks for the Codex-to-Codex path.
 Cursor's one-shot command remains pending-only. Its optional private state-root
 mode adds signed persistent review, protected same-session correction, and an
 explicit archived terminal decision without changing Cursor's model settings or
-applying source changes. Persistent correction preserves the original read-only
+applying or reverting changes at the decision step. Direct execution can already
+have modified the workspace. Persistent correction preserves the original read-only
 or write authority and verifies the bound absolute Cursor launcher plus any
 resolved shebang interpreter before resuming. A prepared task or a failed task with signed execution-completion evidence can
 be explicitly abandoned and privately cleaned. Cleanup refuses a live execution
@@ -112,7 +123,9 @@ cryptographic guarantee**. Compare a full commit SHA only when it came through
 a separate trusted channel.
 
 To dogfood mutable current source instead, keep the development-only path
-distinct from the released installation and record its exact commit:
+distinct from the released installation and record its exact commit. A `main`
+checkout includes only merged work, not every revision described by a candidate
+branch or uncommitted working tree:
 
 ```bash
 git clone --branch main --depth 1 \
@@ -121,6 +134,8 @@ git -C relaypact-current-source rev-parse HEAD
 ```
 
 ## The lifecycle in one minute
+
+For the Codex capsule route, the candidate stays separate from the source:
 
 `completed` != `accept` != `apply`:
 
@@ -133,7 +148,13 @@ git -C relaypact-current-source rev-parse HEAD
    archive and current source base are rechecked.
 
 Commit, push, tag, GitHub Release, package publication, and deployment are
-further separate actions. RelayPact never infers one authority from another.
+further separate actions. Acceptance grants none of these permissions; existing
+applicable user authorization can be reused without asking again.
+
+Cursor and Pi use direct workspace execution: changes may already exist before
+review. Acceptance does not apply a separate capsule patch and rejection does
+not revert the workspace. One-shot results remain pending at the tool level;
+only supported persistent modes can record a tool terminal decision.
 
 ## Safety and observability
 

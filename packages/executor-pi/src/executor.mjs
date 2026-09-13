@@ -296,51 +296,20 @@ async function verifyPiProjection(projection) {
   return true;
 }
 
-function findPayload(value, depth = 0) {
-  if (depth > 8 || value === null || value === undefined) return null;
-  if (typeof value === "string") {
-    try {
-      return findPayload(JSON.parse(value), depth + 1);
-    } catch {
-      return null;
-    }
-  }
-  if (Array.isArray(value)) {
-    for (let index = value.length - 1; index >= 0; index -= 1) {
-      const found = findPayload(value[index], depth + 1);
-      if (found) return found;
-    }
-    return null;
-  }
-  if (typeof value === "object") {
-    if (EXECUTOR_STATUSES.has(value.status) && typeof value.summary === "string") return value;
-    for (const key of ["result", "message", "content", "text", "data"]) {
-      const found = findPayload(value[key], depth + 1);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
 function parseExecutorPayload(stdout) {
   const trimmed = stdout.trim();
   if (!trimmed) return null;
+  // Text mode returns the final answer, not an event stream. Consume the whole
+  // answer so conflicting objects or trailing partial output cannot be ignored.
+  const fence = /^```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```$/u.exec(trimmed);
   try {
-    const found = findPayload(JSON.parse(trimmed));
-    if (found) return found;
+    const payload = JSON.parse(fence ? fence[1] : trimmed);
+    return payload && typeof payload === "object" && !Array.isArray(payload) &&
+      EXECUTOR_STATUSES.has(payload.status) && typeof payload.summary === "string"
+      ? payload : null;
   } catch {
-    // Pi JSON mode may emit one JSON object per line.
+    return null;
   }
-  const lines = trimmed.split(/\r?\n/);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    try {
-      const found = findPayload(JSON.parse(lines[index]));
-      if (found) return found;
-    } catch {
-      // Keep searching earlier event lines.
-    }
-  }
-  return null;
 }
 
 function buildPrompt(envelope) {
@@ -348,7 +317,8 @@ function buildPrompt(envelope) {
     "You are the Delegated Executor. Execute only within the following envelope.",
     "Stop with status blocked if information or authority is missing.",
     "Do not commit, push, widen scope, or expose credentials.",
-    "Your final response must contain a JSON object with status (completed|blocked|failed), summary, and optional residualRisks.",
+    "Your final response must be exactly one JSON object with status (completed|blocked|failed), a string summary, and optional residualRisks.",
+    "Do not add prose, Markdown fences, or additional JSON objects. Put any explanation inside summary or residualRisks.",
     JSON.stringify(envelope, null, 2)
   ].join("\n\n");
 }
@@ -356,7 +326,9 @@ function buildPrompt(envelope) {
 function buildPiArgs(envelope, route) {
   const args = [
     "--print",
-    "--mode", "json",
+    // Pi text mode emits only the final assistant response. JSON mode emits
+    // the whole event stream, which can exhaust the bounded evidence capture.
+    "--mode", "text",
     "--no-session",
     "--no-extensions",
     "--no-skills",
@@ -460,7 +432,7 @@ export async function runExecutor(envelope, options) {
 
   const payload = parseExecutorPayload(processResult.stdout);
   if (!payload) {
-    return finish({ reportedStatus: "malformed", summary: "Executor output did not contain the required structured result.", residualRisks: [], ...metadata, output: combinedOutput });
+    return finish({ reportedStatus: "malformed", summary: "Executor final output must be one JSON result object, bare or in a single JSON fence, without surrounding prose.", residualRisks: [], ...metadata, output: combinedOutput });
   }
   return finish({
     reportedStatus: payload.status,

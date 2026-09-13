@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { once } from "node:events";
 import path from "node:path";
@@ -1534,6 +1534,143 @@ test("Cursor correction refuses an executor command that differs from signed sta
     assert.equal(loaded.state.lifecycleState, "awaiting_review");
     assert.equal(loaded.state.executorCommand, await realpath(fakeCursor));
     assert.match(loaded.state.executorFingerprint, /^sha256:[a-f0-9]{64}$/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+
+for (const [label, outcome] of Object.entries({
+  timeout: { exitCode: null, timedOut: true },
+  signal: { exitCode: null, signal: "SIGKILL" },
+  cancellation: { exitCode: null, cancelled: true },
+  truncated: { exitCode: 0, stdout: process.version, stdoutTruncated: true },
+  failure: { exitCode: 1, stderr: "temporary runtime failure" },
+  missingVersion: { exitCode: 0 }
+})) {
+  test(`Cursor ${label} probe cannot become a cached no-flag identity`, async () => {
+    const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-probe-unknown-"));
+    try {
+      const command = await nodeCursorFixture(privateRoot, source => source);
+      await writeFile(command, `${await readFile(command, "utf8")}\n# indeterminate-${label}\n`);
+      const unavailableProbe = async () => ({ stdout: "", stderr: "", signal: null, ...outcome });
+      if (label === "timeout") {
+        const readiness = await discoverCursorCli({ executorCommand: command, runProcess: unavailableProbe });
+        assert.equal(readiness.state, "blocked");
+      }
+      await assert.rejects(resolveCursorExecutable(command, {
+        runProcess: unavailableProbe
+      }), error => error.code === "cursor_runtime_probe_unavailable");
+      let retries = 0;
+      const identity = await resolveCursorExecutable(command, {
+        async runProcess() { retries++; return { exitCode: 0, signal: null, stdout: process.version, stderr: "" }; }
+      });
+      assert.equal(retries, 1);
+      assert.deepEqual(identity.runtimeArguments, ["--use-system-ca"]);
+      const repeated = await resolveCursorExecutable(command, {
+        async runProcess() { throw new Error("conclusive result should already be cached"); }
+      });
+      assert.equal(repeated.fingerprint, identity.fingerprint);
+    } finally {
+      await rm(privateRoot, { recursive: true, force: true });
+    }
+  });
+}
+
+test("Cursor conclusively unsupported system CA flag retains the no-flag identity", async () => {
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-probe-unsupported-"));
+  try {
+    const command = await nodeCursorFixture(privateRoot, source => source);
+    await writeFile(command, `${await readFile(command, "utf8")}\n# explicit unsupported fixture\n`);
+    const identity = await resolveCursorExecutable(command, {
+      async runProcess() { return { exitCode: 9, signal: null, stdout: "", stderr: "node: bad option: --use-system-ca\n" }; }
+    });
+    assert.deepEqual(identity.runtimeArguments, []);
+    const repeated = await resolveCursorExecutable(command, {
+      async runProcess() { throw new Error("conclusive result should already be cached"); }
+    });
+    assert.equal(repeated.fingerprint, identity.fingerprint);
+  } finally {
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+
+test("Cursor larger static bundle preserves complete snapshot and companion identity", async () => {
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-large-bundle-"));
+  let materialized;
+  try {
+    const command = await nodeCursorFixture(privateRoot, source => source);
+    const companion = path.join(path.dirname(command), "cursor-agent-worker-sea");
+    await writeFile(companion, "");
+    await truncate(companion, 600 * 1024 * 1024);
+    await chmod(companion, 0o755);
+    const identity = await resolveCursorExecutable(command);
+    assert.ok(identity, "current larger installations must be admitted");
+    materialized = await materializeCursorExecutable(identity);
+    const copied = path.join(path.dirname(materialized.identity.launchCommand), "cursor-agent-worker-sea");
+    assert.equal((await stat(copied)).size, 600 * 1024 * 1024);
+    assert.notEqual(copied, companion);
+    await writeFile(companion, "changed static executable");
+    await assert.rejects(materializeCursorExecutable(identity), error => error.code === "cursor_executor_mismatch");
+    assert.equal((await stat(copied)).size, 600 * 1024 * 1024);
+  } finally {
+    await materialized?.cleanup();
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor static bundle above 768 MiB is refused before runtime probing", async () => {
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-oversized-bundle-"));
+  try {
+    const command = await nodeCursorFixture(privateRoot, source => source);
+    const companion = path.join(path.dirname(command), "cursor-agent-sea");
+    await writeFile(companion, "");
+    await truncate(companion, 768 * 1024 * 1024 + 1);
+    let probes = 0;
+    const identity = await resolveCursorExecutable(command, {
+      async runProcess() { probes++; throw new Error("oversized bundle must not execute"); }
+    });
+    assert.equal(identity, null);
+    assert.equal(probes, 0);
+  } finally {
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor cold correction probe failure preserves signed task state", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cold-correction-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: fakeCursor, stateRoot, hostInstanceId: "cursor-host-1"
+    });
+    const before = await readFile(first.statePath, "utf8");
+    const adapterUrl = new URL("../packages/adapter-codex-cursor/src/run-delegation.mjs", import.meta.url).href;
+    const script = `
+      const { correctDelegation } = await import(process.argv[1]);
+      let calls = 0;
+      try {
+        await correctDelegation(process.argv[2], "Keep the same task scope.", {
+          async runProcess(_command, args) {
+            calls++;
+            if (JSON.stringify(args) !== JSON.stringify(["--use-system-ca", "--version"])) {
+              throw new Error("unexpected executor launch");
+            }
+            return { exitCode: null, timedOut: true, stdout: "", stderr: "" };
+          }
+        });
+        throw new Error("correction unexpectedly started");
+      } catch (error) {
+        if (error.code !== "cursor_runtime_probe_unavailable") throw error;
+        console.log(JSON.stringify({ code: error.code, calls }));
+      }
+    `;
+    const { stdout } = await execFileAsync(process.execPath,
+      ["--input-type=module", "-e", script, adapterUrl, first.taskRoot]);
+    assert.deepEqual(JSON.parse(stdout), { code: "cursor_runtime_probe_unavailable", calls: 1 });
+    assert.equal(await readFile(first.statePath, "utf8"), before);
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(stateRoot, { recursive: true, force: true });

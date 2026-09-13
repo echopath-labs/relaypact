@@ -6,7 +6,12 @@ opt out of the recommended [Agent-first workflow](agent-quickstart.md).
 The same scope, credential, evidence, and acceptance rules apply. Manual control
 does not authorize broader access or automatic patch application.
 
-## Prerequisites
+The [Host Skill](../skills/relaypact/SKILL.md) defines the shared delegation and
+review requirements. Read this manual when using the CLI tools, whose schemas
+and lifecycle constraints remain required. The current-source guidance revision
+is not included in the published v0.1.2 installation.
+
+## Prerequisites for the published Codex capsule route
 
 - Node.js 20 or later
 - Git
@@ -19,10 +24,14 @@ does not authorize broader access or automatic patch application.
 Pi is required only for the explicitly selected experimental `codex-pi` route.
 A compatible authenticated Cursor CLI is required only for the explicitly
 selected experimental `codex-cursor` route. RelayPact does not configure Cursor
-authentication, provider, or model.
+authentication, provider, or model. Cursor and Pi do not need a Codex profile
+registry; Cursor needs lifecycle roots only in persistent mode. Direct execution
+can already have modified the workspace when review starts: acceptance does not
+apply a separate capsule patch and rejection does not revert those changes.
+Use the selected route's [invocation reference](../skills/relaypact/references/invocation.md).
 
-RelayPact supplies the delegation workflow, scope controls,
-execution isolation, evidence, and acceptance lifecycle. The delegated executor
+For Codex-to-Codex, RelayPact supplies scope controls, execution isolation,
+evidence and an acceptance lifecycle. The delegated executor
 is `codex exec` from the same Codex CLI installation. A second Codex installation
 or separate executor package is not required, but Codex Desktop alone does not
 guarantee that `codex` is callable from the shell.

@@ -1,6 +1,10 @@
-# Context Planning
+# Codex capsule context planning
 
-Choose one mode explicitly:
+Read this reference only when preparing context for the Codex capsule tooling.
+These planner fields are not prerequisites for the shared Host requirements or
+for Cursor/Pi direct execution.
+
+For the selected Codex task, choose one mode explicitly:
 
 - **Explicit:** omit `contextPlanning`; only literal `scope.readablePaths` are
   copied.
