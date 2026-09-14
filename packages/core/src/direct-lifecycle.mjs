@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import { evaluatePathScope } from "../../contracts/src/path-policy.mjs";
 import {
+  assertRepositoryLinks,
   assertFilesystemSnapshot,
   changedFilesystemPaths,
   snapshotFilesystem,
@@ -31,7 +32,7 @@ const STATE_KEYS = new Set([
   "executionMode", "sessionDigest", "sessionHandle", "executorCommand", "executorFingerprint",
   "reviewFingerprint", "reviewFilesystemFingerprint",
   "reviewGitControlFingerprint", "reviewGitIndexFingerprint", "correctionSequence",
-  "stateRevision", "integrity", "executionSettled", "executionContextFingerprint"
+  "stateRevision", "integrity", "executionSettled", "executionContextFingerprint", "correctionReviewBasis"
 ]);
 const REVIEW_KEYS = new Set([
   "schemaVersion", "taskId", "routeId", "executorHarness", "lifecycleState",
@@ -59,6 +60,12 @@ function nullableEvidenceFingerprint(value) {
   return value === null || (typeof value === "string" && /^[a-f0-9]{64}$/u.test(value));
 }
 
+function validCorrectionBasis(value) {
+  const keys = ["reviewFilesystemFingerprint", "reviewGitControlFingerprint", "reviewGitIndexFingerprint"];
+  return value && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).length === keys.length && keys.every(key => typeof value[key] === "string" && /^[a-f0-9]{64}$/u.test(value[key]));
+}
+
 function validateState(state) {
   if (!state || typeof state !== "object" || Array.isArray(state)) {
     throw new DelegationError("task_state_unavailable", "Direct delegation lifecycle state is missing or malformed.");
@@ -70,6 +77,7 @@ function validateState(state) {
     "initialGitControlFingerprint", "initialGitIndexFingerprint"
   ];
   if (
+    (state.correctionReviewBasis !== undefined && state.correctionReviewBasis !== null && !validCorrectionBasis(state.correctionReviewBasis)) ||
     (state.executionContextFingerprint !== undefined && !/^hmac-sha256:[a-f0-9]{64}$/u.test(state.executionContextFingerprint)) ||
     (state.executionSettled !== undefined && typeof state.executionSettled !== "boolean") ||
     unknown.length > 0 || state.schemaVersion !== "1.0.0" || !STATES.has(state.lifecycleState) ||
@@ -272,6 +280,7 @@ export async function prepareDirectDelegation({
     throw new DelegationError("repository_head_unavailable", "Persistent direct-worktree lifecycle requires an existing Git HEAD.");
   }
   enforceDirtyTreePolicy(baseline.git, envelope.repository.dirtyTree);
+  await assertRepositoryLinks(repository.gitRoot, baseline.filesystem);
   const taskRoot = path.join(resolvedStateRoot, `task-${randomUUID()}`);
   await mkdir(taskRoot, { mode: 0o700 });
   const [taskInfo, resolvedTaskRoot] = await Promise.all([lstat(taskRoot), realpath(taskRoot)]);
@@ -462,8 +471,22 @@ export async function executeDirectDelegation(prepared, operation) {
         stateRevision: current.stateRevision + 1
       }, { expectedRevision: current.stateRevision });
     };
-    const active = { ...prepared, state, markExecutionSettled };
+    const assertExecutionBasis = async () => {
+      try {
+        if (state.correctionSequence > 0) {
+          if (!validCorrectionBasis(state.correctionReviewBasis)) {
+            throw new DelegationError("stale_review", "Correction execution has no signed reviewed basis.");
+          }
+          await assertReviewBasis({ ...state, ...state.correctionReviewBasis });
+        }
+      } catch (error) {
+        await markExecutionSettled();
+        throw error;
+      }
+    };
+    const active = { ...prepared, state, markExecutionSettled, assertExecutionBasis };
     try {
+      await assertExecutionBasis();
       const attempt = await operation(active);
       await markExecutionSettled();
       return await recordDirectDelegationResultLocked(
@@ -498,7 +521,98 @@ export async function failDirectDelegation(prepared) {
   });
 }
 
+async function readCleanupRecord(statePath) {
+  const file = store(statePath).recoveryPath;
+  const info = await lstat(file).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+  if (!info) return null;
+  const signed = await readJson(file);
+  const { integrity, ...record } = signed;
+  if (integrity !== await keyedFingerprint(statePath, "direct-cleanup", record) ||
+      !["prepared", "ready", "complete"].includes(record.phase) ||
+      record.taskRoot !== path.dirname(statePath)) {
+    throw new DelegationError("cleanup_refused", "Cleanup recovery receipt failed integrity verification.");
+  }
+  return record;
+}
+
+async function writeCleanupRecord(statePath, record) {
+  const file = store(statePath).recoveryPath;
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  const integrity = await keyedFingerprint(statePath, "direct-cleanup", record);
+  await writeJson(temporary, { ...record, integrity });
+  await rename(temporary, file);
+  return record;
+}
+
+function cleanupRecord(prepared, state, action, actor, archiveRoot, outcome) {
+  const document = outcome.review ?? outcome.receipt;
+  return {
+    schemaVersion: "1.0.0", phase: "prepared", taskRoot: prepared.taskRoot,
+    taskRootDev: state.taskRootDev, taskRootIno: state.taskRootIno,
+    repositoryRoot: state.repositoryRoot, action, actor, archiveRoot,
+    documentFingerprint: sha256(canonicalize(document)),
+    outcome: { ...outcome, state: Object.fromEntries([
+      "schemaVersion", "taskId", "routeId", "executorHarness", "lifecycleState", "stateRevision", "resultIdentity"
+    ].map(key => [key, state[key]])) }
+  };
+}
+
+async function finishCleanup(prepared, record, options = {}) {
+  const { archive } = record.outcome;
+  const document = await readJson(archive.reviewPath ?? archive.receiptPath);
+  if (sha256(canonicalize(document)) !== record.documentFingerprint) {
+    throw new DelegationError("archive_verification_failed", "Cleanup requires the original verified archive document.");
+  }
+  if (record.phase === "prepared") {
+    const state = await store(prepared.statePath).read();
+    const expected = record.outcome.state;
+    if (state.lifecycleState !== expected.lifecycleState || state.stateRevision !== expected.stateRevision ||
+        state.resultIdentity !== expected.resultIdentity) {
+      throw new DelegationError("cleanup_refused", "Cleanup has no matching committed terminal decision.");
+    }
+    if (record.outcome.review) await assertReviewBasis(state);
+    record = await writeCleanupRecord(prepared.statePath, { ...record, phase: "ready" });
+  }
+  const info = await lstat(prepared.taskRoot).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+  if (info && (record.phase === "complete" || !info.isDirectory() || info.isSymbolicLink() ||
+      info.dev !== record.taskRootDev || info.ino !== record.taskRootIno)) {
+    throw new DelegationError("cleanup_refused", "Cleanup cannot remove a replacement task directory.");
+  }
+  if (info) await (options.removeTask ?? rm)(prepared.taskRoot, { recursive: true, force: true });
+  const remaining = await lstat(prepared.taskRoot).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+  if (remaining) throw new DelegationError("cleanup_refused", "Task directory removal did not complete.");
+  if (record.phase !== "complete") await writeCleanupRecord(prepared.statePath, { ...record, phase: "complete" });
+  // Keep the small signed receipt/key: retries never need deleted session or envelope files.
+  return record.outcome;
+}
+
+export async function retryDirectTerminalCleanup(prepared, action, actor, archiveRootInput) {
+  const archiveRoot = await validateDirectArchiveRoot(prepared, archiveRootInput);
+  return store(prepared.statePath).withLock(async () => {
+    const record = await readCleanupRecord(prepared.statePath);
+    if (!record || record.action !== action || record.actor !== actor || record.archiveRoot !== archiveRoot) {
+      throw new DelegationError("cleanup_refused", "Cleanup retry must retain the original action, actor and archive root.");
+    }
+    return finishCleanup(prepared, record);
+  });
+}
+
 export async function loadDirectDelegation(taskRootInput, { routeId, executorHarness } = {}) {
+  if (!path.isAbsolute(taskRootInput)) throw new DelegationError("task_state_unavailable", "An absolute task path is required.");
+  const parent = await requireRealDirectory(path.dirname(taskRootInput), "task_state_unavailable", "The original state root must remain available.");
+  const canonicalTaskRoot = path.join(parent, path.basename(taskRootInput));
+  const recoveryStatePath = path.join(canonicalTaskRoot, "state.json");
+  const recovery = await readCleanupRecord(recoveryStatePath);
+  if (recovery) {
+    const state = recovery.outcome.state;
+    if ((routeId && state.routeId !== routeId) || (executorHarness && state.executorHarness !== executorHarness)) {
+      throw new DelegationError("task_state_mismatch", "Cleanup receipt does not match the selected route.");
+    }
+    const live = recovery.phase === "prepared" ? await store(recoveryStatePath).read() : null;
+    if (!live || live.lifecycleState === state.lifecycleState) {
+      return { taskRoot: canonicalTaskRoot, statePath: recoveryStatePath, state, cleanupOnly: true, repository: { gitRoot: recovery.repositoryRoot } };
+    }
+  }
   const taskRoot = await requireRealDirectory(taskRootInput, "task_state_unavailable", "Direct lifecycle task root must be an absolute real directory.");
   const taskInfo = await lstat(taskRoot);
   const statePath = path.join(taskRoot, "state.json");
@@ -563,11 +677,17 @@ export async function authorizeDirectCorrection(prepared, prompt) {
     ) {
       throw new DelegationError("invalid_lifecycle_transition", `Cannot authorize correction while direct delegation is ${current.lifecycleState}.`);
     }
+    await assertReviewBasis(current);
     return persist({
       ...current,
       lifecycleState: "running",
       executionSettled: false,
       correctionSequence: current.correctionSequence + 1,
+      correctionReviewBasis: {
+        reviewFilesystemFingerprint: current.reviewFilesystemFingerprint,
+        reviewGitControlFingerprint: current.reviewGitControlFingerprint,
+        reviewGitIndexFingerprint: current.reviewGitIndexFingerprint
+      },
       reviewFingerprint: null,
       reviewFilesystemFingerprint: null,
       reviewGitControlFingerprint: null,
@@ -643,7 +763,7 @@ export async function validateDirectArchiveRoot(prepared, archiveRootInput) {
   return archiveRoot;
 }
 
-async function abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, allowedStates) {
+async function abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, allowedStates, options = {}) {
   if (!nonempty(actor)) {
     throw new DelegationError("host_actor_required", "A host or human decision-maker identity is required.");
   }
@@ -684,6 +804,7 @@ async function abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, al
     const archivePath = path.join(archiveRoot, `${failure ? "failure" : "interruption"}-${randomUUID()}`);
     const receiptPath = path.join(archivePath, `${failure ? "failure" : "interruption"}-receipt.json`);
     let terminal;
+    let recovery;
     try {
       await mkdir(archivePath, { mode: 0o700 });
       await writeJson(receiptPath, receipt);
@@ -691,11 +812,10 @@ async function abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, al
       if (canonicalize(persistedReceipt) !== canonicalize(receipt)) {
         throw new DelegationError("archive_verification_failed", "Archived direct-worktree abandonment receipt changed before cleanup.");
       }
-      terminal = await persist({
-        ...state,
-        lifecycleState: "abandoned",
-        stateRevision: state.stateRevision + 1
-      }, { expectedRevision: state.stateRevision });
+      const candidate = { ...state, lifecycleState: "abandoned", stateRevision: state.stateRevision + 1 };
+      recovery = cleanupRecord(prepared, candidate, "abandon", actor, archiveRoot, { receipt, archive: { archivePath, receiptPath } });
+      await writeCleanupRecord(prepared.statePath, recovery);
+      terminal = await persist(candidate, { expectedRevision: state.stateRevision });
       if (
         terminal.stateRevision !== receipt.stateRevision || terminal.resultIdentity !== receipt.resultIdentity ||
         receipt.fingerprint !== sha256(canonicalize(receiptIdentity))
@@ -706,25 +826,18 @@ async function abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, al
       if (!terminal) await rm(archivePath, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
-    const taskInfo = await lstat(prepared.taskRoot).catch(() => null);
-    if (
-      !taskInfo?.isDirectory() || taskInfo.isSymbolicLink() ||
-      taskInfo.dev !== initialTaskInfo.dev || taskInfo.ino !== initialTaskInfo.ino
-    ) {
-      throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before abandonment cleanup.");
-    }
-    await rm(prepared.taskRoot, { recursive: true, force: true });
-    await store(prepared.statePath).removeIntegrityAnchor();
-    return { state: terminal, receipt, archive: { archivePath, receiptPath } };
+    recovery = await writeCleanupRecord(prepared.statePath, { ...recovery, phase: "ready" });
+    const completed = await finishCleanup(prepared, recovery, options);
+    return { ...completed, state: terminal };
   });
 }
 
-export async function abandonAndCleanupFailedDirectTask(prepared, actor, archiveRootInput) {
-  return abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, new Set(["failed"]));
+export async function abandonAndCleanupFailedDirectTask(prepared, actor, archiveRootInput, options = {}) {
+  return abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, new Set(["failed"]), options);
 }
 
-export async function abandonAndCleanupInterruptedDirectTask(prepared, actor, archiveRootInput) {
-  return abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, new Set(["prepared", "running"]));
+export async function abandonAndCleanupInterruptedDirectTask(prepared, actor, archiveRootInput, options = {}) {
+  return abandonAndCleanupDirectTask(prepared, actor, archiveRootInput, new Set(["prepared", "running"]), options);
 }
 
 export async function finalizeDirectTerminalDecision(prepared, action, actor, archiveRootInput, options = {}) {
@@ -756,6 +869,7 @@ export async function finalizeDirectTerminalDecision(prepared, action, actor, ar
     const archivePath = path.join(archiveRoot, `review-${randomUUID()}`);
     const reviewFile = path.join(archivePath, "host-review.json");
     let terminal;
+    let recovery;
     try {
       await mkdir(archivePath, { mode: 0o700 });
       await writeJson(reviewFile, terminalReview);
@@ -768,6 +882,9 @@ export async function finalizeDirectTerminalDecision(prepared, action, actor, ar
       }
       await options.beforeFinalBasisCheck?.();
       await assertReviewBasis(state);
+      recovery = cleanupRecord(prepared, terminalCandidate, action, actor, archiveRoot,
+        { review: terminalReview, archive: { archivePath, reviewPath: reviewFile } });
+      await writeCleanupRecord(prepared.statePath, recovery);
       terminal = await persist(terminalCandidate, { expectedRevision: state.stateRevision });
       await options.afterTerminalStateCommit?.();
       await assertReviewBasis(state);
@@ -783,22 +900,12 @@ export async function finalizeDirectTerminalDecision(prepared, action, actor, ar
           );
         }
       }
+      await rm(store(prepared.statePath).recoveryPath, { force: true }).catch(() => {});
       await rm(archivePath, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
-    const finalTaskInfo = await lstat(prepared.taskRoot).catch(() => null);
-    if (
-      !finalTaskInfo?.isDirectory() || finalTaskInfo.isSymbolicLink() ||
-      finalTaskInfo.dev !== taskInfo.dev || finalTaskInfo.ino !== taskInfo.ino
-    ) {
-      throw new DelegationError("cleanup_refused", "Direct lifecycle task root identity changed before terminal cleanup.");
-    }
-    await rm(prepared.taskRoot, { recursive: true, force: true });
-    await store(prepared.statePath).removeIntegrityAnchor();
-    return {
-      state: terminal,
-      review: terminalReview,
-      archive: { archivePath, reviewPath: reviewFile }
-    };
+    recovery = await writeCleanupRecord(prepared.statePath, { ...recovery, phase: "ready" });
+    const completed = await finishCleanup(prepared, recovery, options);
+    return { ...completed, state: terminal };
   });
 }

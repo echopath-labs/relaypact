@@ -1,3 +1,4 @@
+import { assertRepositoryLinks } from "../../core/src/filesystem-evidence.mjs";
 import { minimalEnvironment } from "../../core/src/environment.mjs";
 import { runLocalDelegation } from "../../core/src/local-delegation.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
@@ -59,7 +60,7 @@ export async function runDelegation(input, options = {}) {
     ...ROUTE
   });
   const recorded = await executeDirectDelegation(prepared, async (active) => {
-    const attempt = await runCursorAttempt(active.envelope, { ...options, initialFilesystem: active.initialFilesystem, onExecutionSettled: active.markExecutionSettled });
+    const attempt = await runCursorAttempt(active.envelope, { ...options, initialFilesystem: active.initialFilesystem, onExecutionSettled: active.markExecutionSettled, assertExecutionBasis: active.assertExecutionBasis });
     await active.markExecutionSettled();
     return {
       executionResult: attempt.result,
@@ -83,6 +84,16 @@ async function runCursorAttempt(input, options = {}) {
       return runExecutor(envelope, {
         ...options,
         redactionValues: Object.values(options.validationEnv ?? {}),
+        async beforeVerifiedLaunch() {
+          await options.beforeVerifiedLaunch?.();
+          try {
+            await assertRepositoryLinks(runtime.repository.gitRoot);
+            await options.assertExecutionBasis?.();
+          } catch (error) {
+            await options.onExecutionSettled?.();
+            throw error;
+          }
+        },
         workingDirectory: runtime.workingDirectory,
         signal: runtime.signal
       }).then((value) => {
@@ -148,7 +159,8 @@ export async function correctDelegation(taskRoot, prompt, options = {}) {
       resumeSessionId: active.resumeSessionId,
       initialFilesystem: active.initialFilesystem,
       correctionPrompt: active.correctionPrompt,
-      onExecutionSettled: active.markExecutionSettled
+      onExecutionSettled: active.markExecutionSettled,
+      assertExecutionBasis: active.assertExecutionBasis
     });
     await active.markExecutionSettled();
     const nextSession = cursorPrivateSession(attempt.executor);

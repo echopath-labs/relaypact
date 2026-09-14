@@ -125,6 +125,21 @@ export async function snapshotFilesystem(root, options = {}) {
   return collect(await realpath(root), options);
 }
 
+export async function assertRepositoryLinks(repositoryRoot, snapshotInput) {
+  const root = await realpath(repositoryRoot);
+  const snapshot = snapshotInput ?? await snapshotFilesystem(root, { exclude: [".git"] });
+  for (const entry of assertFilesystemSnapshot(snapshot).entries) {
+    if (entry.type !== "symlink") continue;
+    const absolute = path.join(root, ...entry.path.split("/"));
+    try {
+      const target = await realpath(absolute);
+      if (!isInside(root, target) || await readlink(absolute) !== entry.target) throw new Error("unsafe link");
+    } catch {
+      throw new DelegationError("repository_link_unsafe", "Repository links must resolve to stable targets inside the delegated repository before execution.");
+    }
+  }
+}
+
 async function resolveGitDirectory(repositoryRoot) {
   const candidate = path.join(repositoryRoot, ".git");
   const info = await lstat(candidate);
@@ -144,7 +159,7 @@ async function resolveGitDirectory(repositoryRoot) {
 
 function isInside(root, candidate) {
   const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 async function readBoundedGitPointer(pointerPath, label, { optional = false } = {}) {

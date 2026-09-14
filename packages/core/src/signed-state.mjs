@@ -233,6 +233,7 @@ export function createSignedStateStore(statePath, validateState, options = {}) {
     read: readUnlocked,
     persist,
     withLock,
+    recoveryPath: `${integrityKeyPath(statePath)}.cleanup.json`,
     removeIntegrityAnchor: () => rm(integrityKeyPath(statePath), { force: true })
   };
 }
