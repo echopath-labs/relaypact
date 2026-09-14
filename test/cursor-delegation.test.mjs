@@ -864,6 +864,15 @@ test("persistent Cursor evidence never restores a validation secret embedded in 
     assert.doesNotMatch(JSON.stringify(result), new RegExp(secret, "u"));
     assert.doesNotMatch(await readFile(result.evidence.reviewPath, "utf8"), new RegExp(secret, "u"));
 
+    await assert.rejects(correctDelegation(result.taskRoot, "Inspect again.", { executorCommand: fakeCursor }), error => error.code === "execution_context_mismatch");
+    const corrected = await correctDelegation(result.taskRoot, "Inspect again.", {
+      executorCommand: fakeCursor, validationEnv: { RELAYPACT_VALIDATION_SECRET: secret }
+    });
+    assert.equal(corrected.review.executionResult.hostAcceptance.eligible, false);
+    assert.deepEqual(corrected.review.executionResult.changedPaths, []);
+    assert.doesNotMatch(JSON.stringify(corrected), new RegExp(secret, "u"));
+    assert.doesNotMatch(await readFile(corrected.evidence.reviewPath, "utf8"), new RegExp(secret, "u"));
+    assert.doesNotMatch(await readFile(result.statePath, "utf8"), new RegExp(secret, "u"));
     const rejected = await decideDelegation(result.taskRoot, "reject", "cursor-host-1", archiveRoot);
     assert.doesNotMatch(await readFile(rejected.archive.reviewPath, "utf8"), new RegExp(secret, "u"));
   } finally {
@@ -1310,7 +1319,7 @@ test("Cursor correction refuses shebang interpreter drift before session disclos
       correctDelegation(first.taskRoot, "Do not disclose the session through a changed interpreter.", {
         environment: { ...process.env, PATH: `${replacementBin}:${path.dirname(process.execPath)}:/usr/bin:/bin` }
       }),
-      (error) => error.code === "cursor_executor_mismatch"
+      (error) => error.code === "execution_context_mismatch"
     );
     const loaded = await loadDirectDelegation(first.taskRoot, {
       routeId: "codex-cursor",
@@ -1540,7 +1549,6 @@ test("Cursor correction refuses an executor command that differs from signed sta
   }
 });
 
-
 for (const [label, outcome] of Object.entries({
   timeout: { exitCode: null, timedOut: true },
   signal: { exitCode: null, signal: "SIGKILL" },
@@ -1596,6 +1604,141 @@ test("Cursor conclusively unsupported system CA flag retains the no-flag identit
   }
 });
 
+
+
+test("Cursor correction binds effective environments and grants before any probe", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-context-"));
+  try {
+    const stateRoot = path.join(privateRoot, "state");
+    await mkdir(stateRoot);
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), { executorCommand: fakeCursor, stateRoot, hostInstanceId: "host" });
+    const before = await readFile(first.statePath, "utf8");
+    for (const override of [
+      { environment: { ...process.env, HOME: privateRoot } },
+      { environment: { ...process.env, PATH: "/different/bin" } },
+      { validationEnvironment: { ...process.env, PATH: "/different/bin" } },
+      { validationEnv: { NEW_GRANT: "new-authority" } }
+    ]) {
+      await assert.rejects(correctDelegation(first.taskRoot, "Continue.", {
+        ...override, async runProcess() { assert.fail("must reject before probing"); }
+      }), error => error.code === "execution_context_mismatch");
+      assert.equal(await readFile(first.statePath, "utf8"), before);
+    }
+    const corrected = await correctDelegation(first.taskRoot, "Continue.", { environment: { ...process.env, NOT_FORWARDED: "ignored" } });
+    assert.equal(corrected.review.executionResult.hostAcceptance.eligible, true);
+  } finally { await rm(root, { recursive: true, force: true }); await rm(privateRoot, { recursive: true, force: true }); }
+});
+
+for (const phase of ["executor", "validation"]) {
+  test(`Cursor ${phase} settlement survives oversized postflight failure and permits abandon`, async () => {
+    const root = await createGitRepository();
+    const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-settlement-"));
+    try {
+      const stateRoot = path.join(privateRoot, "state"), archiveRoot = path.join(privateRoot, "archive");
+      await mkdir(stateRoot); await mkdir(archiveRoot);
+      const oversized = "require('node:fs').writeFileSync('allowed.txt', ''); require('node:fs').truncateSync('allowed.txt', 513 * 1024 * 1024)";
+      const command = phase === "executor" ? await nodeCursorFixture(privateRoot, source => source + "\nspawnSync(process.execPath, ['-e', " + JSON.stringify(oversized) + "]);\n") : fakeCursor;
+      await assert.rejects(runDelegation(makeEnvelope(root, {
+        taskId: "cursor-lifecycle",
+        ...(phase === "validation" ? { validation: [{ id: "oversized", argv: [process.execPath, "-e", oversized] }] } : {})
+      }), { executorCommand: command, stateRoot, hostInstanceId: "host" }));
+      const taskRoot = path.join(stateRoot, (await readdir(stateRoot)).find(name => name.startsWith("task-")));
+      const prepared = await loadDirectDelegation(taskRoot, { routeId: "codex-cursor", executorHarness: "cursor" });
+      assert.equal(prepared.state.lifecycleState, "failed");
+      assert.equal(prepared.state.executionSettled, true);
+      await abandonAndCleanupFailedDirectTask(prepared, "host", archiveRoot);
+      await assert.rejects(access(taskRoot), error => error.code === "ENOENT");
+    } finally { await rm(root, { recursive: true, force: true }); await rm(privateRoot, { recursive: true, force: true }); }
+  });
+}
+
+test("Cursor nonzero complete terminal stream retains its observed model", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-nonzero-model-"));
+  try {
+    const command = await nodeCursorFixture(privateRoot, source => source + "\nprocess.exitCode = 7;\n");
+    const result = await runExecutor(makeEnvelope(root, { taskId: "cursor-terminal-failure" }), { executorCommand: command, workingDirectory: root });
+    assert.equal(result.reportedStatus, "failed");
+    assert.equal(result.exitCode, 7);
+    assert.equal(result.modelObservation.state, "observed");
+    assert.equal(result.modelObservation.value, "fixture-cursor-model");
+    assert.throws(() => assertCursorResumeSession(result));
+  } finally { await rm(root, { recursive: true, force: true }); await rm(privateRoot, { recursive: true, force: true }); }
+});
+
+test("Cursor legacy context cannot resume but remains available for terminal review", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-legacy-context-"));
+  try {
+    const stateRoot = path.join(privateRoot, "state"), archiveRoot = path.join(privateRoot, "archive");
+    await mkdir(stateRoot); await mkdir(archiveRoot);
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), { executorCommand: fakeCursor, stateRoot, hostInstanceId: "host" });
+    await createSignedStateStore(first.statePath, state => state).withLock(async ({ read, persist }) => {
+      const state = await read();
+      delete state.executionContextFingerprint;
+      await persist(state, { expectedRevision: state.stateRevision });
+    });
+    await assert.rejects(correctDelegation(first.taskRoot, "Continue."), error => error.code === "execution_context_unavailable");
+    assert.equal((await decideDelegation(first.taskRoot, "reject", "host", archiveRoot)).lifecycleState, "rejected");
+  } finally { await rm(root, { recursive: true, force: true }); await rm(privateRoot, { recursive: true, force: true }); }
+});
+
+test("Cursor correction scope errors never expose validation grants in forbidden filenames", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-scope-secret-"));
+  const secret = "forbidden-validation-value";
+  try {
+    const stateRoot = path.join(privateRoot, "state"); await mkdir(stateRoot);
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle", validation: [{
+      id: "secret-file", argv: [process.execPath, "-e", "require('node:fs').writeFileSync(process.env.GRANT + '.txt', 'fixture')"]
+    }] }), { executorCommand: fakeCursor, stateRoot, hostInstanceId: "host", validationEnv: { GRANT: secret } });
+    await assert.rejects(correctDelegation(first.taskRoot, "Continue.", { validationEnv: { GRANT: secret } }), error => {
+      assert.equal(error.code, "scope_breach");
+      assert.ok(!JSON.stringify(error).includes(secret)); return true;
+    });
+  } finally { await rm(root, { recursive: true, force: true }); await rm(privateRoot, { recursive: true, force: true }); }
+});
+
+test("Cursor returned narratives and model values redact exact validation grants", async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-narrative-secret-"));
+  const secret = "opaque-narrative-value";
+  try {
+    const command = await nodeCursorFixture(privateRoot, source => source.replaceAll("fixture-cursor-model", "x".repeat(179) + secret).replace("Host authority is required.", "x".repeat(3979) + secret));
+    const result = await runDelegation(makeEnvelope(root, { taskId: "cursor-blocked" }), { executorCommand: command, validationEnv: { GRANT: secret } });
+    assert.equal(result.status, "blocked");
+    assert.ok(!JSON.stringify(result).includes(secret));
+    assert.equal(result.executor.modelObservation.state, "observed");
+    assert.ok(!JSON.stringify(result).includes(secret.slice(0, 10)));
+  } finally { await rm(root, { recursive: true, force: true }); await rm(privateRoot, { recursive: true, force: true }); }
+});
+
+test("Cursor validation settlement precedes isolated environment cleanup failure", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async () => {
+  const root = await createGitRepository();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-validation-cleanup-"));
+  let validationRoot;
+  try {
+    const stateRoot = path.join(privateRoot, "state"), archiveRoot = path.join(privateRoot, "archive");
+    await mkdir(stateRoot); await mkdir(archiveRoot);
+    await assert.rejects(runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: fakeCursor, stateRoot, hostInstanceId: "host",
+      async validationProcess(command, args, options) {
+        validationRoot = path.dirname(options.env.HOME);
+        await chmod(validationRoot, 0);
+        return { exitCode: 0, signal: null, stdout: "", stderr: "" };
+      }
+    }), error => error.code === "EACCES");
+    const taskRoot = path.join(stateRoot, (await readdir(stateRoot)).find(name => name.startsWith("task-")));
+    const prepared = await loadDirectDelegation(taskRoot, { routeId: "codex-cursor", executorHarness: "cursor" });
+    assert.equal(prepared.state.executionSettled, true);
+    await abandonAndCleanupFailedDirectTask(prepared, "host", archiveRoot);
+    await assert.rejects(access(taskRoot), error => error.code === "ENOENT");
+  } finally {
+    if (validationRoot) { await chmod(validationRoot, 0o700); await rm(validationRoot, { recursive: true, force: true }); }
+    await rm(root, { recursive: true, force: true }); await rm(privateRoot, { recursive: true, force: true });
+  }
+});
 
 test("Cursor larger static bundle preserves complete snapshot and companion identity", async () => {
   const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-large-bundle-"));

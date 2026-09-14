@@ -48,12 +48,14 @@ async function runValidations(commands, workingDirectory, options = {}) {
       }
       let processResult;
       try {
+        options.onValidationStarted?.();
         processResult = await runner(command.argv[0], command.argv.slice(1), {
           cwd: workingDirectory,
           env: isolated.env,
           timeoutMs: command.timeoutMs ?? 120_000,
           signal: options.signal
         });
+        options.onValidationSettled?.();
       } catch (error) {
         results.push({
           id: conciseOutput(command.id, 200, sensitiveValues),
@@ -180,102 +182,112 @@ export async function runLocalDelegation(input, options = {}) {
     repository,
     signal: options.signal
   });
-  const security = options.securityEvidence?.(executor) ?? {
-    sensitiveValues: [],
-    credentialEvidenceTrusted: true
-  };
-  const evidenceSensitiveValues = [...new Set([
-    ...(security.sensitiveValues ?? []),
-    ...validationSensitiveValues
-  ])];
+  let executionSettled = true;
+  try {
+    const security = options.securityEvidence?.(executor) ?? {
+      sensitiveValues: [],
+      credentialEvidenceTrusted: true
+    };
+    const evidenceSensitiveValues = [...new Set([
+      ...(security.sensitiveValues ?? []),
+      ...validationSensitiveValues
+    ])];
 
-  let postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore);
-  let after = postflight.after;
-  let changedPaths = mergePaths(after.dirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
-  const baselinePathEvidence = sanitizeChangedPathEvidence(before.dirtyPaths, security, validationSensitiveValues);
-  let pathEvidence = sanitizeChangedPathEvidence(changedPaths, security, validationSensitiveValues);
-  changedPaths = pathEvidence.paths;
-  let breaches = evaluatePathScope(changedPaths, envelope.scope);
-  if (baselinePathEvidence.breach) breaches.push(baselinePathEvidence.breach);
-  if (pathEvidence.breach) breaches.push(pathEvidence.breach);
-  const initialCredentialBreach = await inspectChangedFilesForSensitiveValues(
-    repository.gitRoot, changedPaths, security, validationSensitiveValues
-  );
-  if (initialCredentialBreach) breaches.push(initialCredentialBreach);
-  if (postflight.gitControlsChanged) breaches.push("git:metadata changed during delegated execution");
-  if (before.head !== after.head) breaches.push("git:HEAD changed during delegated execution");
-  if (before.branch !== after.branch) breaches.push("git:branch changed during delegated execution");
-  breaches = [...new Set(breaches)].sort();
-
-  let validations;
-  if (breaches.length > 0) {
-    validations = skippedValidations(envelope.validation, "scope_breach", evidenceSensitiveValues);
-  } else if (executor.reportedStatus !== "completed") {
-    validations = skippedValidations(envelope.validation, `executor_${executor.reportedStatus}`, evidenceSensitiveValues);
-  } else {
-    validations = await runValidations(envelope.validation, repository.workingDirectory, {
-      ...options,
-      validationEnv,
-      redactionValues: evidenceSensitiveValues
-    });
-    postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore);
-    after = postflight.after;
-    changedPaths = mergePaths(after.dirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
-    pathEvidence = sanitizeChangedPathEvidence(changedPaths, security, validationSensitiveValues);
+    let postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore);
+    let after = postflight.after;
+    let changedPaths = mergePaths(after.dirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
+    const baselinePathEvidence = sanitizeChangedPathEvidence(before.dirtyPaths, security, validationSensitiveValues);
+    let pathEvidence = sanitizeChangedPathEvidence(changedPaths, security, validationSensitiveValues);
     changedPaths = pathEvidence.paths;
-    breaches = evaluatePathScope(changedPaths, envelope.scope);
+    let breaches = evaluatePathScope(changedPaths, envelope.scope);
     if (baselinePathEvidence.breach) breaches.push(baselinePathEvidence.breach);
     if (pathEvidence.breach) breaches.push(pathEvidence.breach);
-    const finalCredentialBreach = await inspectChangedFilesForSensitiveValues(
+    const initialCredentialBreach = await inspectChangedFilesForSensitiveValues(
       repository.gitRoot, changedPaths, security, validationSensitiveValues
     );
-    if (finalCredentialBreach) breaches.push(finalCredentialBreach);
+    if (initialCredentialBreach) breaches.push(initialCredentialBreach);
     if (postflight.gitControlsChanged) breaches.push("git:metadata changed during delegated execution");
     if (before.head !== after.head) breaches.push("git:HEAD changed during delegated execution");
     if (before.branch !== after.branch) breaches.push("git:branch changed during delegated execution");
     breaches = [...new Set(breaches)].sort();
+
+    let validations;
+    if (breaches.length > 0) {
+      validations = skippedValidations(envelope.validation, "scope_breach", evidenceSensitiveValues);
+    } else if (executor.reportedStatus !== "completed") {
+      validations = skippedValidations(envelope.validation, `executor_${executor.reportedStatus}`, evidenceSensitiveValues);
+    } else {
+      validations = await runValidations(envelope.validation, repository.workingDirectory, {
+        ...options,
+        validationEnv,
+        redactionValues: evidenceSensitiveValues,
+        onValidationStarted() { executionSettled = false; },
+        onValidationSettled() { executionSettled = true; }
+      });
+      executionSettled = true;
+      postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore);
+      after = postflight.after;
+      changedPaths = mergePaths(after.dirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
+      pathEvidence = sanitizeChangedPathEvidence(changedPaths, security, validationSensitiveValues);
+      changedPaths = pathEvidence.paths;
+      breaches = evaluatePathScope(changedPaths, envelope.scope);
+      if (baselinePathEvidence.breach) breaches.push(baselinePathEvidence.breach);
+      if (pathEvidence.breach) breaches.push(pathEvidence.breach);
+      const finalCredentialBreach = await inspectChangedFilesForSensitiveValues(
+        repository.gitRoot, changedPaths, security, validationSensitiveValues
+      );
+      if (finalCredentialBreach) breaches.push(finalCredentialBreach);
+      if (postflight.gitControlsChanged) breaches.push("git:metadata changed during delegated execution");
+      if (before.head !== after.head) breaches.push("git:HEAD changed during delegated execution");
+      if (before.branch !== after.branch) breaches.push("git:branch changed during delegated execution");
+      breaches = [...new Set(breaches)].sort();
+    }
+
+    const validationFailed = validations.some((item) => item.status !== "passed");
+    let status;
+    if (breaches.length > 0) status = "rejected";
+    else if (executor.reportedStatus === "blocked") status = "blocked";
+    else if (executor.reportedStatus !== "completed" || validationFailed) status = "failed";
+    else status = "completed";
+
+    const safeText = (value) => conciseOutput(value, 4000, evidenceSensitiveValues);
+    const residualRisks = executor.residualRisks.map(safeText);
+    if (before.dirtyPaths.length > 0) residualRisks.push("Target repository began with explicitly acknowledged uncommitted changes.");
+    if (breaches.length > 0) residualRisks.push("Scope breach requires host review and explicit recovery instructions.");
+    if (validationFailed) residualRisks.push("One or more required validations did not pass or were not run.");
+
+    return {
+      schemaVersion: "1.0.0",
+      taskId: envelope.taskId,
+      status,
+      summary: status === "completed"
+        ? "Executor completed the bounded task; host acceptance is still pending."
+        : status === "rejected"
+          ? "Execution was rejected by independent postflight checks."
+          : safeText(executor.summary),
+      baseline: {
+        gitRoot: repository.gitRoot,
+        branch: before.branch,
+        headBefore: before.head,
+        headAfter: after.head,
+        dirtyPathsBefore: baselinePathEvidence.paths
+      },
+      changedPaths,
+      scope: { compliant: breaches.length === 0, breaches },
+      validations,
+      executor: {
+        reportedStatus: executor.reportedStatus,
+        exitCode: executor.exitCode,
+        signal: executor.signal,
+        summary: safeText(executor.summary),
+        ...(executor.failureCode ? { failureCode: executor.failureCode } : {}),
+        ...(executor.modelObservation ? { modelObservation: { ...executor.modelObservation, value: executor.modelObservation.value === null ? null : safeText(executor.modelObservation.value) } } : {})
+      },
+      hostAcceptance: { status: "pending", eligible: status === "completed", decidedBy: null },
+      residualRisks
+    };
+  } finally {
+    // No process is pending here only after both executor and validation phases returned.
+    if (executionSettled) await options.onExecutionSettled?.();
   }
-
-  const validationFailed = validations.some((item) => item.status !== "passed");
-  let status;
-  if (breaches.length > 0) status = "rejected";
-  else if (executor.reportedStatus === "blocked") status = "blocked";
-  else if (executor.reportedStatus !== "completed" || validationFailed) status = "failed";
-  else status = "completed";
-
-  const residualRisks = [...executor.residualRisks];
-  if (before.dirtyPaths.length > 0) residualRisks.push("Target repository began with explicitly acknowledged uncommitted changes.");
-  if (breaches.length > 0) residualRisks.push("Scope breach requires host review and explicit recovery instructions.");
-  if (validationFailed) residualRisks.push("One or more required validations did not pass or were not run.");
-
-  return {
-    schemaVersion: "1.0.0",
-    taskId: envelope.taskId,
-    status,
-    summary: status === "completed"
-      ? "Executor completed the bounded task; host acceptance is still pending."
-      : status === "rejected"
-        ? "Execution was rejected by independent postflight checks."
-        : executor.summary,
-    baseline: {
-      gitRoot: repository.gitRoot,
-      branch: before.branch,
-      headBefore: before.head,
-      headAfter: after.head,
-      dirtyPathsBefore: baselinePathEvidence.paths
-    },
-    changedPaths,
-    scope: { compliant: breaches.length === 0, breaches },
-    validations,
-    executor: {
-      reportedStatus: executor.reportedStatus,
-      exitCode: executor.exitCode,
-      signal: executor.signal,
-      summary: executor.summary,
-      ...(executor.failureCode ? { failureCode: executor.failureCode } : {}),
-      ...(executor.modelObservation ? { modelObservation: executor.modelObservation } : {})
-    },
-    hostAcceptance: { status: "pending", eligible: status === "completed", decidedBy: null },
-    residualRisks
-  };
 }

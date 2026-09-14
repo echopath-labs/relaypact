@@ -452,7 +452,14 @@ The state and archive roots must be pre-existing real directories outside the
 target repository. Correction refuses changed review evidence, new scope, new
 authority, executable path or fingerprint drift, or a missing original Cursor
 session. A run started with `--read-only` remains read-only during every
-correction. A terminal action rechecks the current filesystem, Git controls,
+correction. Use the same effective Cursor and validation environment for every
+correction. API callers must resupply identical `validationEnv` grants; changed
+or omitted grants fail with `execution_context_mismatch` before readiness or
+resume. RelayPact retains only a task-keyed fingerprint, so it cannot recover
+grants from private state. Legacy tasks without this binding refuse correction
+with `execution_context_unavailable` while preserving terminal review and safe
+abandonment. Changes to harness-owned credential files are outside this binding.
+A terminal action rechecks the current filesystem, Git controls,
 index, branch, and HEAD against the signed review basis. Acceptance additionally
 requires eligible pending evidence. If execution fails before a current review
 exists, or an interrupted owner leaves the task in `prepared` or `running`, use

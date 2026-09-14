@@ -34,3 +34,13 @@ cached as a no-flag identity. Readiness stays blocked; a correction reports
 readiness after resolving the local condition. Actual executable or bundle
 changes still fail identity checks; existing signed state is never rewritten
 to conceal a mismatch.
+
+Correction must receive the same effective Cursor environment, validation base
+environment, and exact `validationEnv` grants as the initial call. The adapter
+snapshots these inputs before asynchronous work and stores only a task-keyed
+fingerprint. Changed or omitted grants return `execution_context_mismatch`
+before readiness or resume; a task created without this binding returns
+`execution_context_unavailable`. Such tasks remain inspectable and eligible for
+their existing terminal review or safe abandonment paths. Start a new bounded
+task when different environment authority is needed. Harness-managed credential
+file contents are not covered by this environment binding.

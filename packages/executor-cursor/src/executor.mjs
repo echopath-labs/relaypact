@@ -30,10 +30,15 @@ const SAFE_ENVIRONMENT_NAMES = [
   "SSL_CERT_FILE", "SSL_CERT_DIR", "XDG_CONFIG_HOME", "PATHEXT"
 ];
 
-function safeEnvironment(source) {
-  return Object.fromEntries(SAFE_ENVIRONMENT_NAMES.flatMap((name) => (
-    source[name] === undefined ? [] : [[name, source[name]]]
-  )));
+export function safeEnvironment(source) {
+  return Object.fromEntries(SAFE_ENVIRONMENT_NAMES.flatMap((name) => {
+    const value = source[name];
+    if (value === undefined) return [];
+    if (typeof value !== "string" || value.includes("\0")) {
+      throw new DelegationError("invalid_execution_environment", "Cursor environment values must be strings without NUL bytes.");
+    }
+    return [[name, value]];
+  }));
 }
 
 function cursorEnvironment(source, command) {
@@ -745,7 +750,7 @@ function parseCursorEvents(stdout) {
   return { events, terminal: terminals[0] };
 }
 
-function modelObservation(events) {
+function modelObservation(events, sensitiveValues = []) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     const value = typeof event.model === "string" && event.model.trim()
@@ -757,7 +762,7 @@ function modelObservation(events) {
       if (value.toLowerCase() === "auto") {
         return {
           state: "harness_managed",
-          value: conciseOutput(value, 200),
+          value: conciseOutput(value, 200, sensitiveValues),
           source: "executor_event",
           assurance: "selector_alias",
           observedAt: new Date().toISOString()
@@ -765,7 +770,7 @@ function modelObservation(events) {
       }
       return {
         state: "observed",
-        value: conciseOutput(value, 200),
+        value: conciseOutput(value, 200, sensitiveValues),
         source: "executor_event",
         assurance: "reported",
         observedAt: new Date().toISOString()
@@ -923,16 +928,15 @@ export async function runExecutor(envelope, options = {}) {
   if (processResult.timedOut) {
     return { reportedStatus: "failed", summary: "Cursor executor timed out.", residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation([]) };
   }
-  if (processResult.exitCode !== 0 || processResult.signal) {
-    return { reportedStatus: "failed", summary: "Cursor executor process failed.", residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation([]) };
-  }
-
   const parsed = parseCursorEvents(processResult.stdout);
+  if (processResult.exitCode !== 0 || processResult.signal) {
+    return { reportedStatus: "failed", summary: "Cursor executor process failed.", residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation(parsed?.events ?? [], options.redactionValues) };
+  }
   if (!parsed) {
     return { reportedStatus: "malformed", summary: "Cursor output did not contain exactly one supported terminal result event.", residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation([]) };
   }
 
-  const observation = modelObservation(parsed.events);
+  const observation = modelObservation(parsed.events, options.redactionValues);
   const terminalSucceeded = parsed.terminal.subtype === "success" && parsed.terminal.is_error !== true;
   if (!terminalSucceeded) {
     return attachSession({
@@ -957,9 +961,9 @@ export async function runExecutor(envelope, options = {}) {
 
   return attachSession({
     reportedStatus: payload.status,
-    summary: conciseOutput(payload.summary, 4000),
+    summary: conciseOutput(payload.summary, 4000, options.redactionValues),
     residualRisks: residualRisks(Array.isArray(payload.residualRisks)
-      ? payload.residualRisks.map((item) => conciseOutput(item, 4000))
+      ? payload.residualRisks.map((item) => conciseOutput(item, 4000, options.redactionValues))
       : []),
     ...metadata,
     modelObservation: observation

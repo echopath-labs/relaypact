@@ -1,6 +1,8 @@
+import { minimalEnvironment } from "../../core/src/environment.mjs";
 import { runLocalDelegation } from "../../core/src/local-delegation.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import {
+  assertDirectExecutionContext,
   authorizeDirectCorrection,
   executeDirectDelegation,
   loadDirectDelegation,
@@ -12,7 +14,8 @@ import {
   cursorPrivateSession,
   discoverCursorCli,
   resolveCursorExecutable,
-  runExecutor
+  runExecutor,
+  safeEnvironment
 } from "../../executor-cursor/src/executor.mjs";
 
 const ROUTE = Object.freeze({ routeId: "codex-cursor", executorHarness: "cursor" });
@@ -31,7 +34,17 @@ function cursorLifecycleError(error) {
   return error;
 }
 
+function snapshotContext(options) {
+  const environment = Object.freeze(safeEnvironment(options.environment ?? process.env));
+  const validationEnv = Object.freeze(minimalEnvironment({}, { grants: options.validationEnv ?? {} }));
+  const validationBase = minimalEnvironment({}, { grants: minimalEnvironment(options.validationEnvironment ?? process.env) });
+  for (const name of Object.keys(validationEnv)) delete validationBase[name];
+  const validationEnvironment = Object.freeze(validationBase);
+  return { environment, validationEnvironment, validationEnv };
+}
+
 export async function runDelegation(input, options = {}) {
+  options = { ...options, ...snapshotContext(options) };
   if ((options.stateRoot || options.hostInstanceId) && !(options.stateRoot && options.hostInstanceId)) {
     throw new TypeError("Persistent Cursor execution requires both stateRoot and hostInstanceId.");
   }
@@ -41,11 +54,12 @@ export async function runDelegation(input, options = {}) {
     envelope: input,
     stateRoot: options.stateRoot,
     hostInstanceId: options.hostInstanceId,
+    executionContext: snapshotContext(options),
     executionMode: options.readOnly === true ? "read_only" : "write",
     ...ROUTE
   });
   const recorded = await executeDirectDelegation(prepared, async (active) => {
-    const attempt = await runCursorAttempt(active.envelope, { ...options, initialFilesystem: active.initialFilesystem });
+    const attempt = await runCursorAttempt(active.envelope, { ...options, initialFilesystem: active.initialFilesystem, onExecutionSettled: active.markExecutionSettled });
     await active.markExecutionSettled();
     return {
       executionResult: attempt.result,
@@ -68,6 +82,7 @@ async function runCursorAttempt(input, options = {}) {
     execute(envelope, runtime) {
       return runExecutor(envelope, {
         ...options,
+        redactionValues: Object.values(options.validationEnv ?? {}),
         workingDirectory: runtime.workingDirectory,
         signal: runtime.signal
       }).then((value) => {
@@ -80,10 +95,11 @@ async function runCursorAttempt(input, options = {}) {
 }
 
 export async function correctDelegation(taskRoot, prompt, options = {}) {
-  options.signal?.throwIfAborted();
-  let prepared = await loadDirectDelegation(taskRoot, ROUTE);
   const executorContextOverride = options.executorCommand !== undefined ||
     options.environment !== undefined || options.commandBaseDirectory !== undefined;
+  options = { ...options, ...snapshotContext(options) };
+  options.signal?.throwIfAborted();
+  let prepared = await loadDirectDelegation(taskRoot, ROUTE);
   if (!prepared.state.sessionHandle && !executorContextOverride) {
     try {
       requireDirectExecutorSession(prepared.state);
@@ -91,6 +107,7 @@ export async function correctDelegation(taskRoot, prompt, options = {}) {
       throw cursorLifecycleError(error);
     }
   }
+  await assertDirectExecutionContext(prepared, snapshotContext(options));
   const identity = await resolveCursorExecutable(
     options.executorCommand ?? prepared.state.executorCommand,
     {
@@ -130,7 +147,8 @@ export async function correctDelegation(taskRoot, prompt, options = {}) {
       readOnly: active.executionMode === "read_only",
       resumeSessionId: active.resumeSessionId,
       initialFilesystem: active.initialFilesystem,
-      correctionPrompt: active.correctionPrompt
+      correctionPrompt: active.correctionPrompt,
+      onExecutionSettled: active.markExecutionSettled
     });
     await active.markExecutionSettled();
     const nextSession = cursorPrivateSession(attempt.executor);
