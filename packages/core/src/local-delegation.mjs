@@ -4,7 +4,7 @@ import path from "node:path";
 import { validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
 import { evaluatePathScope } from "../../contracts/src/path-policy.mjs";
 import { createIsolatedEnvironment } from "./environment.mjs";
-import { assertFilesystemSnapshot, changedFilesystemPaths, snapshotFilesystem, snapshotGitControls } from "./filesystem-evidence.mjs";
+import { assertRepositoryLinks, assertFilesystemSnapshot, changedFilesystemPaths, snapshotFilesystem, snapshotGitControls } from "./filesystem-evidence.mjs";
 import {
   collectGitState,
   enforceDirtyTreePolicy,
@@ -48,6 +48,7 @@ async function runValidations(commands, workingDirectory, options = {}) {
       }
       let processResult;
       try {
+        await assertRepositoryLinks(options.repositoryRoot ?? workingDirectory);
         options.onValidationStarted?.();
         processResult = await runner(command.argv[0], command.argv.slice(1), {
           cwd: workingDirectory,
@@ -57,6 +58,7 @@ async function runValidations(commands, workingDirectory, options = {}) {
         });
         options.onValidationSettled?.();
       } catch (error) {
+        if (error?.code === "repository_link_unsafe") throw error;
         results.push({
           id: conciseOutput(command.id, 200, sensitiveValues),
           argv: command.argv.map((argument) => conciseOutput(argument, 1000, sensitiveValues)),
@@ -148,9 +150,13 @@ async function collectPostflight(repository, before, pathBaseline, gitControlsBe
     snapshotGitControls(repository.gitRoot, { excludeIndexes: true }),
     snapshotGitIndex(repository.gitRoot)
   ]);
+  let unsafeLinks = false;
+  try { await assertRepositoryLinks(repository.gitRoot, filesystemAfter); }
+  catch (error) { if (error?.code !== "repository_link_unsafe") throw error; unsafeLinks = true; }
   const committedPaths = await getCommittedDiffPaths(repository.gitRoot, before.head, after.head);
   return {
     after,
+    unsafeLinks,
     committedPaths,
     filesystemPaths: changedFilesystemPaths(pathBaseline, filesystemAfter),
     gitControlsChanged: gitControlsBefore.fingerprint !== gitControlsAfter.fingerprint ||
@@ -177,6 +183,13 @@ export async function runLocalDelegation(input, options = {}) {
     ? assertFilesystemSnapshot(options.initialFilesystem)
     : filesystemBefore;
 
+  try {
+    await assertRepositoryLinks(repository.gitRoot, filesystemBefore);
+    await options.assertExecutionBasis?.();
+  } catch (error) {
+    await options.onExecutionSettled?.();
+    throw error;
+  }
   const executor = await options.execute(envelope, {
     workingDirectory: repository.workingDirectory,
     repository,
@@ -206,6 +219,7 @@ export async function runLocalDelegation(input, options = {}) {
       repository.gitRoot, changedPaths, security, validationSensitiveValues
     );
     if (initialCredentialBreach) breaches.push(initialCredentialBreach);
+    if (postflight.unsafeLinks) breaches.push("evidence:repository link escapes or cannot be verified");
     if (postflight.gitControlsChanged) breaches.push("git:metadata changed during delegated execution");
     if (before.head !== after.head) breaches.push("git:HEAD changed during delegated execution");
     if (before.branch !== after.branch) breaches.push("git:branch changed during delegated execution");
@@ -220,6 +234,7 @@ export async function runLocalDelegation(input, options = {}) {
       validations = await runValidations(envelope.validation, repository.workingDirectory, {
         ...options,
         validationEnv,
+        repositoryRoot: repository.gitRoot,
         redactionValues: evidenceSensitiveValues,
         onValidationStarted() { executionSettled = false; },
         onValidationSettled() { executionSettled = true; }
@@ -237,6 +252,7 @@ export async function runLocalDelegation(input, options = {}) {
         repository.gitRoot, changedPaths, security, validationSensitiveValues
       );
       if (finalCredentialBreach) breaches.push(finalCredentialBreach);
+      if (postflight.unsafeLinks) breaches.push("evidence:repository link escapes or cannot be verified");
       if (postflight.gitControlsChanged) breaches.push("git:metadata changed during delegated execution");
       if (before.head !== after.head) breaches.push("git:HEAD changed during delegated execution");
       if (before.branch !== after.branch) breaches.push("git:branch changed during delegated execution");

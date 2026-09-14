@@ -44,3 +44,16 @@ before readiness or resume; a task created without this binding returns
 their existing terminal review or safe abandonment paths. Start a new bounded
 task when different environment authority is needed. Harness-managed credential
 file contents are not covered by this environment binding.
+
+A correction rechecks the current reviewed candidate inside authorization and
+again before execution. Concurrent external writers must still be coordinated
+by the Host: these filesystem observations are not an atomic filesystem lock.
+
+If terminal deletion fails, retry the same `decide-cursor` action, actor and
+archive root. A signed cleanup receipt outside the task directory recovers even
+when state/envelope files were partly removed. It verifies the original archive
+and directory identity and cannot grant a new decision. A small receipt and its
+Host integrity key remain after successful deletion for idempotent retries;
+they contain no raw Cursor session handle. A replacement directory at the old
+task path is never deleted by a completed receipt. Legacy terminal tasks without
+such a receipt cannot acquire cleanup authority retroactively.

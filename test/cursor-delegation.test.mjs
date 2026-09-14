@@ -1,6 +1,7 @@
+import { runLocalDelegation } from "../packages/core/src/local-delegation.mjs";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { once } from "node:events";
 import path from "node:path";
@@ -22,6 +23,7 @@ import {
 } from "../packages/executor-cursor/src/executor.mjs";
 import {
   abandonAndCleanupFailedDirectTask,
+  abandonAndCleanupInterruptedDirectTask,
   authorizeDirectCorrection,
   beginDirectDelegation,
   executeDirectDelegation,
@@ -1738,6 +1740,162 @@ test("Cursor validation settlement precedes isolated environment cleanup failure
     if (validationRoot) { await chmod(validationRoot, 0o700); await rm(validationRoot, { recursive: true, force: true }); }
     await rm(root, { recursive: true, force: true }); await rm(privateRoot, { recursive: true, force: true });
   }
+});
+
+for (const action of ["accept", "reject", "abandon"]) {
+  test(`Cursor ${action} cleanup retries partial removal without repeating the decision`, async () => {
+    const root = await createGitRepository(), stateRoot = await createDirectory(), archiveRoot = await createDirectory();
+    try {
+      const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), { executorCommand: fakeCursor, stateRoot, hostInstanceId: "host" });
+      const prepared = await loadDirectDelegation(first.taskRoot);
+      await assert.rejects(finalizeDirectTerminalDecision(prepared, action, "host", archiveRoot, {
+        async removeTask(taskRoot) {
+          await rm(path.join(taskRoot, "state.json"));
+          await rm(path.join(taskRoot, "task-envelope.json"));
+          throw Object.assign(new Error("injected partial removal"), { code: "EACCES" });
+        }
+      }), error => error.code === "EACCES");
+      await assert.rejects(decideDelegation(first.taskRoot, action, "other-host", archiveRoot), error => error.code === "cleanup_refused");
+      await assert.rejects(decideDelegation(first.taskRoot, action === "accept" ? "reject" : "accept", "host", archiveRoot), error => error.code === "cleanup_refused");
+      const archivePath = path.join(archiveRoot, (await readdir(archiveRoot))[0], "host-review.json");
+      const original = await readFile(archivePath, "utf8");
+      const altered = JSON.parse(original); altered.taskId = "other-task";
+      await writeFile(archivePath, JSON.stringify(altered));
+      await assert.rejects(decideDelegation(first.taskRoot, action, "host", archiveRoot), error => error.code === "archive_verification_failed");
+      await writeFile(archivePath, original);
+      const displaced = first.taskRoot + "-displaced";
+      await rename(first.taskRoot, displaced); await mkdir(first.taskRoot);
+      await assert.rejects(decideDelegation(first.taskRoot, action, "host", archiveRoot), error => error.code === "cleanup_refused");
+      await rm(first.taskRoot, { recursive: true }); await rename(displaced, first.taskRoot);
+      // A fresh CLI process must recover without the removed envelope/state files.
+      const { stdout } = await execFileAsync(process.execPath, [cli, "decide-cursor", "--task-root", first.taskRoot, "--action", action, "--actor", "host", "--archive-root", archiveRoot]);
+      const result = JSON.parse(stdout);
+      assert.equal(result.lifecycleState, action === "accept" ? "accepted" : action === "reject" ? "rejected" : "abandoned");
+      assert.equal((await readdir(archiveRoot)).length, 1);
+      assert.deepEqual(await decideDelegation(first.taskRoot, action, "host", archiveRoot), result);
+      await assert.rejects(access(first.taskRoot), error => error.code === "ENOENT");
+      const recoveryFile = path.join(stateRoot, ".relaypact-integrity", (await readdir(path.join(stateRoot, ".relaypact-integrity"))).find(name => name.endsWith(".cleanup.json")));
+      assert.doesNotMatch(await readFile(recoveryFile, "utf8"), /fixture-cursor-session/u);
+      await mkdir(first.taskRoot); await writeFile(path.join(first.taskRoot, "keep.txt"), "replacement");
+      await assert.rejects(decideDelegation(first.taskRoot, action, "host", archiveRoot), error => error.code === "cleanup_refused");
+      assert.equal(await readFile(path.join(first.taskRoot, "keep.txt"), "utf8"), "replacement");
+    } finally { await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); await rm(archiveRoot, { recursive: true, force: true }); }
+  });
+}
+
+for (const lifecycle of ["prepared", "failed"]) {
+  test(`Cursor ${lifecycle} abandonment receipt supports partial cleanup recovery`, async () => {
+    const root = await createGitRepository(), stateRoot = await createDirectory(), archiveRoot = await createDirectory();
+    try {
+      let prepared = await prepareDirectDelegation({ envelope: makeEnvelope(root), stateRoot, hostInstanceId: "host", routeId: "codex-cursor", executorHarness: "cursor" });
+      if (lifecycle === "failed") {
+        await assert.rejects(executeDirectDelegation(prepared, async active => { await active.markExecutionSettled(); throw new Error("fixture failure"); }));
+        prepared = await loadDirectDelegation(prepared.taskRoot);
+      }
+      const abandon = lifecycle === "failed" ? abandonAndCleanupFailedDirectTask : abandonAndCleanupInterruptedDirectTask;
+      await assert.rejects(abandon(prepared, "host", archiveRoot, { async removeTask(taskRoot) { await rm(path.join(taskRoot, "state.json")); throw new Error("partial deletion"); } }));
+      const completed = await decideDelegation(prepared.taskRoot, "abandon", "host", archiveRoot);
+      assert.equal(completed.lifecycleState, "abandoned");
+      assert.ok(completed.archive.receiptPath.endsWith(`${lifecycle === "failed" ? "failure" : "interruption"}-receipt.json`));
+      assert.deepEqual(await decideDelegation(prepared.taskRoot, "abandon", "host", archiveRoot), completed);
+    } finally { await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); await rm(archiveRoot, { recursive: true, force: true }); }
+  });
+}
+
+test("Cursor correction refuses reviewed-content drift after authorization and before launch", async () => {
+  for (const phase of ["authorized", "reloaded", "launch"]) {
+    const root = await createGitRepository(), stateRoot = await createDirectory();
+    try {
+      const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), { executorCommand: fakeCursor, stateRoot, hostInstanceId: "host" });
+      if (phase !== "launch") {
+        const authorized = await authorizeDirectCorrection(await loadDirectDelegation(first.taskRoot), "Correct this task.");
+        await writeFile(path.join(root, "allowed.txt"), "external edit");
+        await assert.rejects(executeDirectDelegation(phase === "reloaded" ? await loadDirectDelegation(first.taskRoot) : authorized, async () => { assert.fail("executor cannot receive stale candidate"); }), error => error.code === "stale_review");
+      } else {
+        await assert.rejects(correctDelegation(first.taskRoot, "Correct this task.", { beforeVerifiedLaunch: () => writeFile(path.join(root, "allowed.txt"), "external edit") }), error => error.code === "stale_review");
+      }
+      assert.equal(await readFile(path.join(root, "allowed.txt"), "utf8"), "external edit");
+      assert.equal((await loadDirectDelegation(first.taskRoot)).state.executionSettled, true);
+    } finally { await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); }
+  }
+});
+
+const completedLocalExecutor = () => ({ reportedStatus: "completed", summary: "fixture", residualRisks: [], exitCode: 0, signal: null });
+for (const variant of ["absolute-file", "relative-file", "directory", "chain", "dangling", "cycle"]) {
+  test(`local execution refuses pre-existing ${variant} escaping repository link`, async () => {
+    const root = await createGitRepository(), outside = await createDirectory();
+    try {
+      const victim = path.join(outside, "victim.txt"); await writeFile(victim, "unchanged");
+      const target = variant === "directory" ? outside : variant === "dangling" ? path.join(outside, "missing") : variant === "cycle" ? "allowed.txt" : variant === "relative-file" ? path.relative(root, victim) : victim;
+      if (variant === "chain") { await symlink(victim, path.join(root, "middle")); await symlink("middle", path.join(root, "allowed.txt")); }
+      else await symlink(target, path.join(root, "allowed.txt"));
+      await execFileAsync("git", ["add", "."], { cwd: root }); await execFileAsync("git", ["commit", "-m", "fixture link"], { cwd: root });
+      await assert.rejects(runLocalDelegation(makeEnvelope(root), {
+        execute() { assert.fail("unsafe link must block executor"); }, validationProcess() { assert.fail("unsafe link must block validation"); }
+      }), error => error.code === "repository_link_unsafe");
+      assert.equal(await readFile(victim, "utf8"), "unchanged");
+    } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
+  });
+}
+
+test("local repository link checks preserve internal aliases and stop later validations", async () => {
+  const root = await createGitRepository(), outside = await createDirectory();
+  try {
+    await symlink("README.md", path.join(root, "allowed.txt"));
+    await execFileAsync("git", ["add", "."], { cwd: root }); await execFileAsync("git", ["commit", "-m", "fixture internal link"], { cwd: root });
+    const legitimate = await runLocalDelegation(makeEnvelope(root), { async execute() { await writeFile(path.join(root, "allowed.txt"), "internal edit"); return completedLocalExecutor(); } });
+    assert.equal(legitimate.hostAcceptance.eligible, true); assert.deepEqual(legitimate.changedPaths, ["README.md"]);
+    await execFileAsync("git", ["add", "."], { cwd: root }); await execFileAsync("git", ["commit", "-m", "fixture internal edit"], { cwd: root });
+    const victim = path.join(outside, "victim.txt"); await writeFile(victim, "unchanged");
+    const envelope = makeEnvelope(root, { validation: [
+      { id: "create-link", argv: [process.execPath, "-e", "require('node:fs').unlinkSync('allowed.txt');require('node:fs').symlinkSync(process.env.LINK_TARGET,'allowed.txt')"] },
+      { id: "must-not-write", argv: [process.execPath, "-e", "require('node:fs').writeFileSync('allowed.txt','unsafe')"] }
+    ] });
+    await assert.rejects(runLocalDelegation(envelope, { execute: completedLocalExecutor, validationEnv: { LINK_TARGET: victim } }), error => error.code === "repository_link_unsafe");
+    assert.equal(await readFile(victim, "utf8"), "unchanged");
+  } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
+});
+
+test("local repository link checks admit dot-prefixed internal target directories", async () => {
+  const root = await createGitRepository();
+  try {
+    await mkdir(path.join(root, "..internal"));
+    await writeFile(path.join(root, "..internal", "file.txt"), "before");
+    await symlink("..internal", path.join(root, "alias"));
+    await execFileAsync("git", ["add", "."], { cwd: root }); await execFileAsync("git", ["commit", "-m", "fixture dotted internal directory"], { cwd: root });
+    const result = await runLocalDelegation(makeEnvelope(root, { scope: { allowedPaths: ["..internal/**", "alias/**"] } }), {
+      async execute() { await writeFile(path.join(root, "alias", "file.txt"), "after"); return completedLocalExecutor(); }
+    });
+    assert.equal(result.hostAcceptance.eligible, true);
+    assert.deepEqual(result.changedPaths, ["..internal/file.txt"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("Cursor correction rechecks candidate bytes inside authorization lock", async () => {
+  const root = await createGitRepository(), stateRoot = await createDirectory();
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: fakeCursor, stateRoot, hostInstanceId: "host"
+    });
+    const prepared = await loadDirectDelegation(first.taskRoot);
+    const before = await readFile(first.statePath, "utf8");
+    const allowedPaths = prepared.envelope.scope.allowedPaths;
+    let injected = false;
+    Object.defineProperty(prepared.envelope.scope, "allowedPaths", {
+      get() {
+        // Scope evaluation follows the initial basis read but precedes lock acquisition.
+        if (!injected) {
+          injected = true;
+          execFileSync(process.execPath, ["-e", "require('node:fs').writeFileSync('allowed.txt', 'external edit')"], { cwd: root });
+        }
+        return allowedPaths;
+      }
+    });
+    await assert.rejects(authorizeDirectCorrection(prepared, "Continue."), error => error.code === "stale_review");
+    assert.equal(injected, true);
+    assert.equal(await readFile(first.statePath, "utf8"), before);
+    assert.equal(await readFile(path.join(root, "allowed.txt"), "utf8"), "external edit");
+  } finally { await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); }
 });
 
 test("Cursor larger static bundle preserves complete snapshot and companion identity", async () => {

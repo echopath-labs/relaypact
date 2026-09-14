@@ -902,6 +902,7 @@ export async function runExecutor(envelope, options = {}) {
       }
     );
   } catch (error) {
+    if (error instanceof DelegationError && ["stale_review", "repository_link_unsafe"].includes(error.code)) throw error;
     const identityMismatch = error instanceof DelegationError && error.code === "cursor_executor_mismatch";
     return {
       reportedStatus: "failed",
