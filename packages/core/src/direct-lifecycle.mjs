@@ -16,7 +16,7 @@ import {
   resolveRepository,
   snapshotGitIndex
 } from "./git.mjs";
-import { canonicalize, createSignedStateStore } from "./signed-state.mjs";
+import { canonicalize, createSignedStateStore, keyedFingerprint } from "./signed-state.mjs";
 
 const STATES = new Set([
   "prepared", "running", "awaiting_review", "correction_requested",
@@ -31,7 +31,7 @@ const STATE_KEYS = new Set([
   "executionMode", "sessionDigest", "sessionHandle", "executorCommand", "executorFingerprint",
   "reviewFingerprint", "reviewFilesystemFingerprint",
   "reviewGitControlFingerprint", "reviewGitIndexFingerprint", "correctionSequence",
-  "stateRevision", "integrity", "executionSettled"
+  "stateRevision", "integrity", "executionSettled", "executionContextFingerprint"
 ]);
 const REVIEW_KEYS = new Set([
   "schemaVersion", "taskId", "routeId", "executorHarness", "lifecycleState",
@@ -70,6 +70,7 @@ function validateState(state) {
     "initialGitControlFingerprint", "initialGitIndexFingerprint"
   ];
   if (
+    (state.executionContextFingerprint !== undefined && !/^hmac-sha256:[a-f0-9]{64}$/u.test(state.executionContextFingerprint)) ||
     (state.executionSettled !== undefined && typeof state.executionSettled !== "boolean") ||
     unknown.length > 0 || state.schemaVersion !== "1.0.0" || !STATES.has(state.lifecycleState) ||
     required.some((key) => !nonempty(state[key])) ||
@@ -252,7 +253,8 @@ export async function prepareDirectDelegation({
   hostInstanceId,
   routeId,
   executorHarness,
-  executionMode = "write"
+  executionMode = "write",
+  executionContext
 }) {
   const envelope = validateTaskEnvelope(input);
   if (!nonempty(hostInstanceId) || !nonempty(routeId) || !nonempty(executorHarness)) {
@@ -284,7 +286,7 @@ export async function prepareDirectDelegation({
     writeJson(path.join(taskRoot, "initial-filesystem.json"), baseline.filesystem)
   ]);
   const statePath = path.join(taskRoot, "state.json");
-  const state = await store(statePath).create({
+  let state = await store(statePath).create({
     schemaVersion: "1.0.0",
     taskId: envelope.taskId,
     routeId,
@@ -316,7 +318,24 @@ export async function prepareDirectDelegation({
     stateRevision: 0,
     integrity: "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000000"
   });
+  if (executionContext !== undefined) {
+    const executionContextFingerprint = await keyedFingerprint(statePath, "direct-execution-context", executionContext);
+    state = await store(statePath).withLock(async ({ read, persist }) => {
+      const current = await read();
+      return persist({ ...current, executionContextFingerprint, stateRevision: current.stateRevision + 1 }, { expectedRevision: current.stateRevision });
+    });
+  }
   return { taskRoot, statePath, envelope, initialFilesystem: baseline.filesystem, repository, state };
+}
+
+export async function assertDirectExecutionContext(prepared, executionContext) {
+  if (!prepared.state.executionContextFingerprint) {
+    throw new DelegationError("execution_context_unavailable", "This task has no bound execution context and cannot be corrected. Preserve it for review or terminal cleanup.");
+  }
+  const observed = await keyedFingerprint(prepared.statePath, "direct-execution-context", executionContext);
+  if (observed !== prepared.state.executionContextFingerprint) {
+    throw new DelegationError("execution_context_mismatch", "Correction requires the original execution environment and validation grants.");
+  }
 }
 
 export async function beginDirectDelegation(prepared) {
@@ -530,7 +549,7 @@ export async function authorizeDirectCorrection(prepared, prompt) {
   ])].sort();
   const breaches = evaluatePathScope(changedPaths, prepared.envelope.scope);
   if (breaches.length > 0) {
-    throw new DelegationError("scope_breach", "Correction cannot resume while the current candidate exceeds its original scope.", { paths: breaches });
+    throw new DelegationError("scope_breach", "Correction cannot resume while the current candidate exceeds its original scope.");
   }
   if (prepared.state.correctionSequence >= MAX_CORRECTIONS) {
     throw new DelegationError("correction_sequence_exhausted", "Correction sequence limit has been reached.");

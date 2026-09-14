@@ -28,10 +28,15 @@ const SAFE_ENVIRONMENT_NAMES = [
   "SSL_CERT_FILE", "SSL_CERT_DIR", "XDG_CONFIG_HOME", "PATHEXT"
 ];
 
-function safeEnvironment(source) {
-  return Object.fromEntries(SAFE_ENVIRONMENT_NAMES.flatMap((name) => (
-    source[name] === undefined ? [] : [[name, source[name]]]
-  )));
+export function safeEnvironment(source) {
+  return Object.fromEntries(SAFE_ENVIRONMENT_NAMES.flatMap((name) => {
+    const value = source[name];
+    if (value === undefined) return [];
+    if (typeof value !== "string" || value.includes("\0")) {
+      throw new DelegationError("invalid_execution_environment", "Cursor environment values must be strings without NUL bytes.");
+    }
+    return [[name, value]];
+  }));
 }
 
 function cursorEnvironment(source, command) {
@@ -295,11 +300,16 @@ async function cursorRuntimeArguments(launcher, launcherFingerprint, runtime, en
       maxCaptureBytes: PROBE_CAPTURE_BYTES
     });
     options.signal?.throwIfAborted();
-    if (result.cancelled) return [];
-    const selected = result.exitCode === 0 && !result.signal && !result.timedOut &&
-      !result.cancelled && !result.stdoutTruncated && !result.stderrTruncated
-      ? ["--use-system-ca"]
-      : [];
+    const complete = !result.signal && !result.timedOut && !result.cancelled &&
+      !result.stdoutTruncated && !result.stderrTruncated;
+    const supported = complete && result.exitCode === 0 &&
+      /^v\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/u.test((result.stdout ?? "").trim());
+    const unsupported = complete && Number.isInteger(result.exitCode) && result.exitCode !== 0 &&
+      /^(?:[^\r\n]+: )?bad option: --use-system-ca$/u.test((result.stderr ?? "").trim());
+    if (!supported && !unsupported) {
+      throw new DelegationError("cursor_runtime_probe_unavailable", "Cursor runtime capabilities could not be verified. Preserve the task and retry readiness.");
+    }
+    const selected = supported ? ["--use-system-ca"] : [];
     CURSOR_RUNTIME_ARGUMENT_CACHE.set(cacheKey, selected);
     return [...selected];
   } finally {
@@ -548,7 +558,8 @@ export async function resolveCursorExecutable(command, options = {}) {
           runtime
         )
       };
-    } catch {
+    } catch (error) {
+      if (error?.code === "cursor_runtime_probe_unavailable") throw error;
       // Try the next explicit PATH candidate without exposing filesystem details.
     }
   }
@@ -567,10 +578,16 @@ export async function discoverCursorCli(options = {}) {
 
   for (const candidate of candidates) {
     if (options.signal?.aborted) return unavailableReadiness("interrupted");
-    const resolvedIdentity = await resolveExecutable(
-      typeof candidate === "string" ? candidate : candidate?.command,
-      { environment, commandBaseDirectory: options.commandBaseDirectory, signal: options.signal, runProcess: options.runProcess }
-    );
+    let resolvedIdentity;
+    try {
+      resolvedIdentity = await resolveExecutable(
+        typeof candidate === "string" ? candidate : candidate?.command,
+        { environment, commandBaseDirectory: options.commandBaseDirectory, signal: options.signal, runProcess: options.runProcess }
+      );
+    } catch (error) {
+      if (error?.code === "cursor_runtime_probe_unavailable") return unavailableReadiness();
+      throw error;
+    }
     if (options.signal?.aborted) return unavailableReadiness("interrupted");
     const identity = typeof candidate === "string" || sameExecutableIdentity(candidate, resolvedIdentity)
       ? resolvedIdentity
@@ -731,7 +748,7 @@ function parseCursorEvents(stdout) {
   return { events, terminal: terminals[0] };
 }
 
-function modelObservation(events) {
+function modelObservation(events, sensitiveValues = []) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     const value = typeof event.model === "string" && event.model.trim()
@@ -743,7 +760,7 @@ function modelObservation(events) {
       if (value.toLowerCase() === "auto") {
         return {
           state: "harness_managed",
-          value: conciseOutput(value, 200),
+          value: conciseOutput(value, 200, sensitiveValues),
           source: "executor_event",
           assurance: "selector_alias",
           observedAt: new Date().toISOString()
@@ -751,7 +768,7 @@ function modelObservation(events) {
       }
       return {
         state: "observed",
-        value: conciseOutput(value, 200),
+        value: conciseOutput(value, 200, sensitiveValues),
         source: "executor_event",
         assurance: "reported",
         observedAt: new Date().toISOString()
@@ -909,16 +926,15 @@ export async function runExecutor(envelope, options = {}) {
   if (processResult.timedOut) {
     return { reportedStatus: "failed", summary: "Cursor executor timed out.", residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation([]) };
   }
-  if (processResult.exitCode !== 0 || processResult.signal) {
-    return { reportedStatus: "failed", summary: "Cursor executor process failed.", residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation([]) };
-  }
-
   const parsed = parseCursorEvents(processResult.stdout);
+  if (processResult.exitCode !== 0 || processResult.signal) {
+    return { reportedStatus: "failed", summary: "Cursor executor process failed.", residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation(parsed?.events ?? [], options.redactionValues) };
+  }
   if (!parsed) {
     return { reportedStatus: "malformed", summary: "Cursor output did not contain exactly one supported terminal result event.", residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation([]) };
   }
 
-  const observation = modelObservation(parsed.events);
+  const observation = modelObservation(parsed.events, options.redactionValues);
   const terminalSucceeded = parsed.terminal.subtype === "success" && parsed.terminal.is_error !== true;
   if (!terminalSucceeded) {
     return attachSession({
@@ -943,9 +959,9 @@ export async function runExecutor(envelope, options = {}) {
 
   return attachSession({
     reportedStatus: payload.status,
-    summary: conciseOutput(payload.summary, 4000),
+    summary: conciseOutput(payload.summary, 4000, options.redactionValues),
     residualRisks: residualRisks(Array.isArray(payload.residualRisks)
-      ? payload.residualRisks.map((item) => conciseOutput(item, 4000))
+      ? payload.residualRisks.map((item) => conciseOutput(item, 4000, options.redactionValues))
       : []),
     ...metadata,
     modelObservation: observation

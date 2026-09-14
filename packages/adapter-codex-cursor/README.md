@@ -25,3 +25,13 @@ candidate basis before and after the terminal state commit, and rolls back to th
 recoverable pending state if the post-commit basis changed. Failed- or
 interrupted-task abandon receipt creation and its terminal transition share the
 same signed-state lock.
+
+Correction must receive the same effective Cursor environment, validation base
+environment, and exact `validationEnv` grants as the initial call. The adapter
+snapshots these inputs before asynchronous work and stores only a task-keyed
+fingerprint. Changed or omitted grants return `execution_context_mismatch`
+before readiness or resume; a task created without this binding returns
+`execution_context_unavailable`. Such tasks remain inspectable and eligible for
+their existing terminal review or safe abandonment paths. Start a new bounded
+task when different environment authority is needed. Harness-managed credential
+file contents are not covered by this environment binding.
