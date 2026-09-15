@@ -1,7 +1,7 @@
 import { runLocalDelegation } from "../packages/core/src/local-delegation.mjs";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { access, chmod, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { once } from "node:events";
 import path from "node:path";
@@ -36,6 +36,7 @@ import {
 } from "../packages/core/src/direct-lifecycle.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 import { createSignedStateStore } from "../packages/core/src/signed-state.mjs";
+import { assertRepositoryLinks, snapshotFilesystem } from "../packages/core/src/filesystem-evidence.mjs";
 
 const fakeCursorLauncherSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.sh", import.meta.url));
 const fakeCursorImplementationSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.mjs", import.meta.url));
@@ -1897,3 +1898,112 @@ test("Cursor correction rechecks candidate bytes inside authorization lock", asy
     assert.equal(await readFile(path.join(root, "allowed.txt"), "utf8"), "external edit");
   } finally { await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); }
 });
+
+for (const targetLocation of ["outside", "inside"]) {
+  test(`local execution refuses ${targetLocation} hard links before any process`, async () => {
+    const root = await createGitRepository(), outside = await createDirectory();
+    try {
+      const victim = path.join(targetLocation === "outside" ? outside : root, "victim.txt");
+      await writeFile(victim, "unchanged");
+      await link(victim, path.join(root, "allowed.txt"));
+      await execFileAsync("git", ["add", "."], { cwd: root });
+      await execFileAsync("git", ["commit", "-m", "fixture hard link"], { cwd: root });
+      let launched = false;
+      await assert.rejects(runLocalDelegation(makeEnvelope(root, { validation: [] }), {
+        async execute() { launched = true; await writeFile(path.join(root, "allowed.txt"), "outside mutation"); return completedLocalExecutor(); }
+      }), error => error.code === "repository_link_unsafe");
+      assert.equal(launched, false);
+      assert.equal(await readFile(victim, "utf8"), "unchanged");
+    } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
+  });
+}
+
+test("repository hard-link checks use current metadata for an older snapshot", async () => {
+  const root = await createGitRepository(), outside = await createDirectory();
+  try {
+    const snapshot = await snapshotFilesystem(root, { exclude: [".git"] });
+    await link(path.join(root, "README.md"), path.join(outside, "alias.txt"));
+    await assert.rejects(assertRepositoryLinks(root, snapshot), error => error.code === "repository_link_unsafe");
+    await rm(path.join(outside, "alias.txt"));
+    await assertRepositoryLinks(root, snapshot);
+  } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
+});
+
+test("local hard-link checks stop validation after executor introduces an alias", async () => {
+  const root = await createGitRepository(), outside = await createDirectory();
+  try {
+    const victim = path.join(outside, "victim.txt"); await writeFile(victim, "unchanged");
+    const result = await runLocalDelegation(makeEnvelope(root), {
+      async execute() { await link(victim, path.join(root, "allowed.txt")); return completedLocalExecutor(); },
+      validationProcess() { assert.fail("hard link must block validation"); }
+    });
+    assert.equal(result.hostAcceptance.eligible, false);
+    assert.equal(await readFile(victim, "utf8"), "unchanged");
+  } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
+});
+
+test("local hard-link checks stop later validations after an alias is introduced", async () => {
+  const root = await createGitRepository(), outside = await createDirectory();
+  try {
+    const victim = path.join(outside, "victim.txt"); await writeFile(victim, "unchanged");
+    const envelope = makeEnvelope(root, { validation: [
+      { id: "create-hard-link", argv: [process.execPath, "-e", "require('node:fs').linkSync(process.env.LINK_TARGET,'allowed.txt')"] },
+      { id: "must-not-write", argv: [process.execPath, "-e", "require('node:fs').writeFileSync('allowed.txt','unsafe')"] }
+    ] });
+    await assert.rejects(runLocalDelegation(envelope, { execute: completedLocalExecutor, validationEnv: { LINK_TARGET: victim } }), error => error.code === "repository_link_unsafe");
+    assert.equal(await readFile(victim, "utf8"), "unchanged");
+  } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
+});
+
+for (const action of ["accept", "reject", "abandon"]) {
+  test(`Cursor ${action} cleanup ignores later candidate edits after receipt promotion failure`, { skip: process.platform === "win32" || process.getuid?.() === 0 }, async () => {
+    const root = await createGitRepository(), stateRoot = await createDirectory(), archiveRoot = await createDirectory();
+    const integrityRoot = path.join(stateRoot, ".relaypact-integrity");
+    try {
+      const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), { executorCommand: fakeCursor, stateRoot, hostInstanceId: "host" });
+      const prepared = await loadDirectDelegation(first.taskRoot);
+      await assert.rejects(finalizeDirectTerminalDecision(prepared, action, "host", archiveRoot, {
+        // The existing key remains readable; only cleanup-receipt promotion cannot write.
+        afterTerminalStateCommit: () => chmod(integrityRoot, 0o500)
+      }), error => error.code === "EACCES");
+      await chmod(integrityRoot, 0o700);
+      const receiptName = (await readdir(integrityRoot)).find(name => name.endsWith(".cleanup.json"));
+      assert.equal(JSON.parse(await readFile(path.join(integrityRoot, receiptName), "utf8")).phase, "prepared");
+      await writeFile(path.join(root, "allowed.txt"), "legitimate later work");
+      const completed = await decideDelegation(first.taskRoot, action, "host", archiveRoot);
+      assert.equal(completed.lifecycleState, action === "accept" ? "accepted" : action === "reject" ? "rejected" : "abandoned");
+      assert.equal(await readFile(path.join(root, "allowed.txt"), "utf8"), "legitimate later work");
+      assert.equal((await readdir(archiveRoot)).length, 1);
+      await assert.rejects(access(first.taskRoot), error => error.code === "ENOENT");
+      assert.deepEqual(await decideDelegation(first.taskRoot, action, "host", archiveRoot), completed);
+    } finally { await chmod(integrityRoot, 0o700).catch(() => {}); await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); await rm(archiveRoot, { recursive: true, force: true }); }
+  });
+}
+
+for (const proof of ["missing", "different-archive", "different-revision"]) {
+  test(`Cursor cleanup refuses ${proof} authorization after repository drift`, { skip: process.platform === "win32" || process.getuid?.() === 0 }, async () => {
+    const root = await createGitRepository(), stateRoot = await createDirectory(), archiveRoot = await createDirectory();
+    const integrityRoot = path.join(stateRoot, ".relaypact-integrity");
+    try {
+      const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), { executorCommand: fakeCursor, stateRoot, hostInstanceId: "host" });
+      await assert.rejects(finalizeDirectTerminalDecision(await loadDirectDelegation(first.taskRoot), "accept", "host", archiveRoot, {
+        afterTerminalStateCommit: () => chmod(integrityRoot, 0o500)
+      }), error => error.code === "EACCES");
+      await chmod(integrityRoot, 0o700);
+      const signedStore = createSignedStateStore(first.statePath, () => {});
+      const authorized = await signedStore.read();
+      const incomplete = { ...authorized };
+      if (proof === "missing") { delete incomplete.cleanupAuthorization; incomplete.stateRevision -= 1; }
+      if (proof === "different-archive") incomplete.cleanupAuthorization = `sha256:${"0".repeat(64)}`;
+      if (proof === "different-revision") incomplete.stateRevision += 1;
+      await signedStore.persist(incomplete);
+      await writeFile(path.join(root, "allowed.txt"), "legitimate later work");
+      await assert.rejects(decideDelegation(first.taskRoot, "accept", "host", archiveRoot), error => error.code === (proof === "missing" ? "stale_review" : "cleanup_refused"));
+      await access(first.taskRoot);
+      assert.equal((await readdir(archiveRoot)).length, 1);
+      await signedStore.persist(authorized);
+      assert.equal((await decideDelegation(first.taskRoot, "accept", "host", archiveRoot)).lifecycleState, "accepted");
+      assert.equal(await readFile(path.join(root, "allowed.txt"), "utf8"), "legitimate later work");
+    } finally { await chmod(integrityRoot, 0o700).catch(() => {}); await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); await rm(archiveRoot, { recursive: true, force: true }); }
+  });
+}

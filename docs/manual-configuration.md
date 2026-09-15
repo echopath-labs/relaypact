@@ -469,10 +469,18 @@ only the small receipt and its Host integrity key remain for idempotent retries;
 the raw session and task directory are removed. A replacement directory at the
 old path is refused. Legacy terminal states without a receipt are not upgraded
 to cleanup authority.
+If cleanup-receipt promotion fails after the terminal review basis was verified,
+the signed terminal state binds that completed check to the archived decision.
+A retry can then finish cleanup after later repository edits, without repeating
+acceptance. A prepared receipt without that proof still requires a current
+review-basis check.
 
 Local execution refuses repository symlinks that resolve outside the repository,
-are dangling, cyclic, or change during the check. Checks run before execution,
-before each validation, and during postflight. Resolvable internal links remain
+are dangling, cyclic, or change during the check. It also refuses regular files
+with multiple hard links, including internal aliases, because another name for
+the same inode cannot be proven to stay inside the repository. Checks read the
+current link count before execution, before each validation, and during
+postflight. Resolvable internal symlinks remain
 supported, and their real target changes are included in repository evidence.
 These checks do not provide an OS sandbox or prevent arbitrary writes by another
 process; the Host must coordinate concurrent writers and the execution boundary.

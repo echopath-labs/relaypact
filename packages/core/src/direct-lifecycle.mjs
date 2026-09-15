@@ -32,7 +32,7 @@ const STATE_KEYS = new Set([
   "executionMode", "sessionDigest", "sessionHandle", "executorCommand", "executorFingerprint",
   "reviewFingerprint", "reviewFilesystemFingerprint",
   "reviewGitControlFingerprint", "reviewGitIndexFingerprint", "correctionSequence",
-  "stateRevision", "integrity", "executionSettled", "executionContextFingerprint", "correctionReviewBasis"
+  "stateRevision", "integrity", "executionSettled", "executionContextFingerprint", "correctionReviewBasis", "cleanupAuthorization"
 ]);
 const REVIEW_KEYS = new Set([
   "schemaVersion", "taskId", "routeId", "executorHarness", "lifecycleState",
@@ -77,6 +77,9 @@ function validateState(state) {
     "initialGitControlFingerprint", "initialGitIndexFingerprint"
   ];
   if (
+    (state.cleanupAuthorization !== undefined && (typeof state.cleanupAuthorization !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/u.test(state.cleanupAuthorization) ||
+      !new Set(["accepted", "rejected", "abandoned"]).has(state.lifecycleState))) ||
     (state.correctionReviewBasis !== undefined && state.correctionReviewBasis !== null && !validCorrectionBasis(state.correctionReviewBasis)) ||
     (state.executionContextFingerprint !== undefined && !/^hmac-sha256:[a-f0-9]{64}$/u.test(state.executionContextFingerprint)) ||
     (state.executionSettled !== undefined && typeof state.executionSettled !== "boolean") ||
@@ -566,11 +569,16 @@ async function finishCleanup(prepared, record, options = {}) {
   if (record.phase === "prepared") {
     const state = await store(prepared.statePath).read();
     const expected = record.outcome.state;
-    if (state.lifecycleState !== expected.lifecycleState || state.stateRevision !== expected.stateRevision ||
+    const authorized = state.cleanupAuthorization === record.documentFingerprint &&
+      state.stateRevision === expected.stateRevision + 1;
+    if (state.lifecycleState !== expected.lifecycleState ||
+        (state.cleanupAuthorization !== undefined ? !authorized : state.stateRevision !== expected.stateRevision) ||
         state.resultIdentity !== expected.resultIdentity) {
       throw new DelegationError("cleanup_refused", "Cleanup has no matching committed terminal decision.");
     }
-    if (record.outcome.review) await assertReviewBasis(state);
+    // A signed authorization records the successful post-commit basis check.
+    // Older/incomplete decisions must still prove their mutable review basis.
+    if (record.outcome.review && !authorized) await assertReviewBasis(state);
     record = await writeCleanupRecord(prepared.statePath, { ...record, phase: "ready" });
   }
   const info = await lstat(prepared.taskRoot).catch(error => { if (error.code === "ENOENT") return null; throw error; });
@@ -888,6 +896,11 @@ export async function finalizeDirectTerminalDecision(prepared, action, actor, ar
       terminal = await persist(terminalCandidate, { expectedRevision: state.stateRevision });
       await options.afterTerminalStateCommit?.();
       await assertReviewBasis(state);
+      terminal = await persist({
+        ...terminal,
+        cleanupAuthorization: recovery.documentFingerprint,
+        stateRevision: terminal.stateRevision + 1
+      }, { expectedRevision: terminal.stateRevision });
     } catch (error) {
       if (terminal) {
         try {
