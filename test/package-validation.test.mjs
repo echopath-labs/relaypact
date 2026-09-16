@@ -156,7 +156,7 @@ test("public package rejects published-install tag verification and metric guida
   );
   const errors = await validatePackage(root);
   assert(errors.some((item) => item.includes("README.md must include \"git clone --branch v0.1.2\"")));
-  assert(errors.some((item) => item.includes("README.md must include \"v0.1.2^{}\"")));
+  assert(errors.some((item) => item.startsWith("README.md must include") && item.includes("git -C relaypact-v0.1.2 rev-parse") && item.includes("v0.1.2^{}")));
   assert(errors.some((item) => item.includes("README.md must include \"Latest published release: **v0.1.2**\"")));
   assert(errors.some((item) => item.includes("README.zh-CN.md must include \"relaypactDeclaredInputBytes\"")));
   assert(errors.some((item) => item.includes("docs/manual-configuration.md must include \"relaypactDeclaredInputBytes\"")));
@@ -208,22 +208,45 @@ test("versioned documentation requires complete install identity without publica
       .replaceAll("`v0.2.0` is not released", "`v0.2.0` is the release target")
       .replaceAll("`v0.2.0` 尚未发布", "`v0.2.0` 为安装目标版本")
       .replaceAll("0.1.2", "0.2.0")
+      .replaceAll("Install the latest published release", "Install the release target")
+      .replaceAll("Install and verify the latest published release:", "Install and verify the release target:")
       .replace("Latest published release: **v0.2.0**", "Release target: **v0.2.0**")
       .replace("最新已发布版本：**v0.2.0**", "安装目标版本：**v0.2.0**")
       .replaceAll("latest published release is \u0060v0.2.0\u0060", "installation target is \u0060v0.2.0\u0060")
       .replaceAll("\u0060v0.2.0\u0060 is the latest published release", "\u0060v0.2.0\u0060 is the installation target")
       .replaceAll("\u0060v0.2.0\u0060 是最新已发布版本", "\u0060v0.2.0\u0060 是安装目标版本")
+      .replaceAll("最新已发布版本", "安装目标版本")
       + "\nPrevious release: v0.1.2. Check https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0 before installation.\n";
     await writeFile(target, content);
   }
   const changelog = path.join(root, "CHANGELOG.md");
   await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.2.0] - Unreleased - Public Preview", "## [0.2.0] - 2026-01-01 - Public Preview"));
+  const comparisonLink = "[0.2.0]: https://github.com/echopath-labs/relaypact/compare/v0.1.2...v0.2.0";
+  const datedChangelog = await readFile(changelog, "utf8");
+  await writeFile(changelog, `${datedChangelog}\n${comparisonLink}\n`);
   assert.deepEqual(await validateReleased(root), []);
+  for (const invalidLink of ["", comparisonLink.replace("v0.1.2...", "v0.1.1...")]) {
+    await writeFile(changelog, `${datedChangelog}\n${invalidLink}\n`);
+    assert((await validateReleased(root)).some((item) => item.startsWith("CHANGELOG.md must include") && item.includes("compare/v0.1.2...v0.2.0")));
+  }
+  await writeFile(changelog, `${datedChangelog}\n${comparisonLink}\n`);
+  for (const [file, claim] of [
+    ["README.md", "Install the latest published release"],
+    ["docs/manual-configuration.md", "Install and verify the latest published release:"],
+    ["README.zh-CN.md", "安装最新已发布版本"]
+  ]) {
+    const target = path.join(root, file);
+    const valid = await readFile(target, "utf8");
+    await writeFile(target, `${valid}\n${claim}\n`);
+    assert((await validateReleased(root)).some((item) => item === `${file} must not claim the installation target is the latest published release.`));
+    await writeFile(target, valid);
+  }
   const manual = path.join(root, "docs/manual-configuration.md");
   const validManual = await readFile(manual, "utf8");
   for (const [from, to, expected] of [
     ['p.version!=="0.2.0"', 'p.version!=="0.1.2"', 'if(p.version'],
-    ['cd relaypact-v0.2.0', 'cd relaypact-v0.1.2', 'cd relaypact-v0.2.0']
+    ['cd relaypact-v0.2.0', 'cd relaypact-v0.1.2', 'cd relaypact-v0.2.0'],
+    ["git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}'", "git -C relaypact-v0.1.2 rev-parse 'v0.2.0^{}'", "git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}'"]
   ]) {
     await writeFile(manual, validManual.replaceAll(from, to));
     const invalid = await validateReleased(root);
