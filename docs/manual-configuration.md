@@ -8,8 +8,8 @@ does not authorize broader access or automatic patch application.
 
 The [Host Skill](../skills/relaypact/SKILL.md) defines the shared delegation and
 review requirements. Read this manual when using the CLI tools, whose schemas
-and lifecycle constraints remain required. The current-source guidance revision
-is not included in the published v0.1.2 installation.
+and lifecycle constraints remain required. Version 0.2.0 includes the shared
+Host guidance and the experimental Cursor adapter.
 
 ## Prerequisites for the published Codex capsule route
 
@@ -47,27 +47,26 @@ codex exec --help
 
 ## Release state and version verification
 
-This checkout is a **0.2.0 Public Preview source candidate**, not a published
-release. The latest published release is `v0.1.2`. Package and Plugin version fields
+The latest published release is `v0.2.0`. Package and Plugin version fields
 alone are not release identity; verify the official tag's peeled commit.
 
 Install and verify the latest published release:
 
 ```bash
-git clone --branch v0.1.2 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.1.2
-checkout_commit="$(git -C relaypact-v0.1.2 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.1.2 rev-parse 'v0.1.2^{}')"
+git clone --branch v0.2.0 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
+checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.1.2
+cd relaypact-v0.2.0
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
 ```
 
 For current-source dogfood, clone the mutable `main` branch, record its exact
-commit, and inspect its aligned source metadata. The remote branch may not yet
-contain this local 0.2.0 candidate; do not infer candidate identity from `main`:
+commit, and inspect its aligned source metadata. A mutable branch can differ
+from the tagged release; do not infer release identity from `main`:
 
 ```bash
 set -e
@@ -327,12 +326,16 @@ Do not overwrite an installation while an active task depends on its Skill
 files. Existing private task archives are versioned evidence and do not need to
 be rewritten for a plugin upgrade.
 
-Tasks prepared by v0.1.1 do not contain the preparation-time semantic Git index
-baseline required by 0.1.2. Do not retry, accept, migrate, or infer trust for an
-old pending task after upgrading; preserve its private evidence unchanged and
-prepare a new task with the verified `v0.1.2` release. To roll back this
-installation, remove its Plugin/marketplace registration and reinstall the verified
-`v0.1.1` tag in a separate tools directory. Rollback does not rewrite task state.
+Version 0.2.0 adds Host guidance and experimental Cursor support; it does not
+automatically migrate existing task state. Finish active tasks with their
+original verified installation where possible, preserve evidence, and prepare
+new tasks after upgrading. Never bypass a lifecycle or evidence refusal.
+Tasks prepared by v0.1.1 lack the semantic Git index baseline introduced in
+v0.1.2 and remain ineligible for migration or terminal decisions under newer
+versions. To roll back the installation, remove its Plugin/marketplace
+registration and reinstall the verified `v0.1.2` tag in a separate tools
+directory. Cursor tasks cannot be resumed by that older release. Rollback
+does not rewrite task state.
 
 ## Uninstall
 

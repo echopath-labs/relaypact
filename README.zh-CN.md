@@ -7,8 +7,8 @@ RelayPact 给 Host Agent（甲方）一套稳定的委派与验收参考。Host 
 调用方式与证据工具。
 
 [Host Skill](skills/relaypact/SKILL.md) 说明这些通用要求，具体工具参考按需读取。
-[八个审查案例](examples/host-delegation-cases.md) 给出可观察的行为预期。本次规约修订
-位于当前工作源码，尚未包含在已发布的 v0.1.2 安装物中。通用 Host 措辞不代表新增
+[八个审查案例](examples/host-delegation-cases.md) 给出可观察的行为预期。
+0.2.0 包含这份规约与实验性 Cursor 路线。通用 Host 措辞不代表新增
 其他 Host 产品支持；支持矩阵中接纳的 Host 仍为 Codex。
 
 首个且唯一 active Public Preview 路线是 **Codex → Codex**。RelayPact 提供流程、
@@ -21,10 +21,8 @@ RelayPact 给 Host Agent（甲方）一套稳定的委派与验收参考。Host 
 
 ## 发布状态
 
-- 源码包元数据：**0.2.0 Public Preview source candidate**。
-  `v0.2.0` 尚未发布；新版 Host 规约与 Cursor 改动仅在经审核的源码中，
-  不包含在下文安装的 v0.1.2 中。
-- 最新已发布版本：**v0.1.2**。
+- 源码包元数据：**0.2.0 Public Preview**。
+- 最新已发布版本：**v0.2.0**。
 - 支持状态：`codex-codex` 是 `public-preview`；`codex-pi` 保持
   `experimental`、inactive；`codex-cursor` 已包含源码，但仍是
   `experimental`，且不在根 Plugin 中激活。
@@ -49,16 +47,18 @@ Node.js 20 或更高版本、Git、Codex CLI 0.147.0 或更高版本，并且
 某个版本的精确候选通过公开 CI 后才声明该版本通过 Ubuntu 验证。暂不声明支持
 Windows。
 
-## 用 v0.1.2 release 在五分钟内开始
+## 用 v0.2.0 release 在五分钟内开始
 
-使用版本化 `v0.1.2` tag 完成可复现的 release 安装。
+使用版本化 `v0.2.0` tag 完成可复现的 release 安装。安装前确认
+[GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) 已可见；
+包版本元数据或 PR 本身不代表已发布。
 
 把下面的提示词交给一个协调 Codex：
 
 ```text
-请把 https://github.com/echopath-labs/relaypact 的版本化 v0.1.2 release tag
+请把 https://github.com/echopath-labs/relaypact 的版本化 v0.2.0 release tag
 克隆到目标仓库之外的本地工具目录。记录精确 checkout commit，将它与 peel 后的
-v0.1.2 tag commit 做精确比较，并确认 package.json 和 plugin.json 都报告 0.1.2。
+v0.2.0 tag commit 做精确比较，并确认 package.json 和 plugin.json 都报告 0.2.0。
 读取 README.md 与最近的 AGENTS.md。验证 Node.js 20 或更高版本、Git、
 Codex CLI 0.147.0 或更高版本和 `codex exec --help`。通过 local marketplace
 安装根 Agent Plugin，不启动 worker，然后运行安装后 Skill-local 的 `support`
@@ -70,13 +70,13 @@ apply、commit、push、tag、publish、release 或 deploy 任何内容。
 等价的 release 命令是：
 
 ```bash
-git clone --branch v0.1.2 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.1.2
-checkout_commit="$(git -C relaypact-v0.1.2 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.1.2 rev-parse 'v0.1.2^{}')"
+git clone --branch v0.2.0 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
+checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.1.2
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.1.2"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.2.0
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.2.0"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -88,17 +88,17 @@ codex plugin list --marketplace relaypact-local --json
 
 ## 安装最新已发布版本
 
-最新已发布版本是 `v0.1.2`：
+最新已发布版本是 `v0.2.0`：
 
-此前的 `v0.1.1` 与 `v0.1.0` release 仍可用于精确的历史版本安装。
+此前的 `v0.1.2`、`v0.1.1` 与 `v0.1.0` release 仍可用于精确的历史版本安装。
 
 ```bash
-git clone --branch v0.1.2 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.1.2
-checkout_commit="$(git -C relaypact-v0.1.2 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.1.2 rev-parse 'v0.1.2^{}')"
+git clone --branch v0.2.0 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
+checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.1.2
+cd relaypact-v0.2.0
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json

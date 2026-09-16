@@ -11,8 +11,8 @@ invocation and evidence tools for that work.
 The [Host Skill](skills/relaypact/SKILL.md) states those shared requirements;
 its references explain the selected tools only when needed. See
 [eight review cases](examples/host-delegation-cases.md) for concrete expectations.
-This guidance revision is in the current working source and is not included in
-the published v0.1.2 installation. General Host wording does not add support for
+Version 0.2.0 includes this guidance and the experimental Cursor route.
+General Host wording does not add support for
 other Host products; Codex remains the admitted Host in the support matrix.
 
 The first and only active Public Preview route is **Codex → Codex**. RelayPact
@@ -24,10 +24,8 @@ For this Codex-to-Codex route: **No additional executor installation is required
 
 ## Release status
 
-- Source package metadata: **0.2.0 Public Preview source candidate**.
-  `v0.2.0` is not released; its Host guidance and Cursor changes are available
-  only in reviewed source, not in the v0.1.2 installation below.
-- Latest published release: **v0.1.2**.
+- Source package metadata: **0.2.0 Public Preview**.
+- Latest published release: **v0.2.0**.
 - Support: `codex-codex` is `public-preview`; `codex-pi` remains
   `experimental` and inactive; `codex-cursor` is source-included,
   `experimental`, and inactive at the root Plugin.
@@ -59,18 +57,20 @@ and Codex CLI 0.147.0 or later with both `codex --version` and
 for a release only after its exact candidate passes public CI. Windows support
 is not yet claimed.
 
-## Five-minute start with the v0.1.2 release
+## Five-minute start with the v0.2.0 release
 
-Use the versioned `v0.1.2` tag for a reproducible release installation.
+Use the versioned `v0.2.0` tag for a reproducible release installation.
+Confirm the [GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0)
+is available before installing; package metadata or a PR alone is not publication.
 
 Give a coordinating Codex instance this prompt:
 
 ```text
-Clone the versioned v0.1.2 release tag from
+Clone the versioned v0.2.0 release tag from
 https://github.com/echopath-labs/relaypact into a local tools directory outside
 my target repository. Record the exact checkout commit, verify it against the
-peeled v0.1.2 tag commit, and verify that package.json and plugin.json both
-report 0.1.2.
+peeled v0.2.0 tag commit, and verify that package.json and plugin.json both
+report 0.2.0.
 Read README.md and the nearest AGENTS.md. Verify Node.js 20 or later, Git,
 Codex CLI 0.147.0 or later, and `codex exec --help`. Install the root Agent
 Plugin through its local marketplace, start no worker, then run the installed
@@ -83,13 +83,13 @@ push, tag, publish, release, or deploy anything.
 The equivalent release commands are:
 
 ```bash
-git clone --branch v0.1.2 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.1.2
-checkout_commit="$(git -C relaypact-v0.1.2 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.1.2 rev-parse 'v0.1.2^{}')"
+git clone --branch v0.2.0 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
+checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.1.2
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.1.2"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.2.0
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.2.0"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -102,18 +102,18 @@ documentation file.
 
 ## Install the latest published release
 
-The latest published release is `v0.1.2`:
+The latest published release is `v0.2.0`:
 
-The previous `v0.1.1` and `v0.1.0` releases remain available for exact
+The previous `v0.1.2`, `v0.1.1` and `v0.1.0` releases remain available for exact
 historical installs.
 
 ```bash
-git clone --branch v0.1.2 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.1.2
-checkout_commit="$(git -C relaypact-v0.1.2 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.1.2 rev-parse 'v0.1.2^{}')"
+git clone --branch v0.2.0 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
+checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.1.2
+cd relaypact-v0.2.0
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json

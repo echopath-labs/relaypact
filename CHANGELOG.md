@@ -2,7 +2,7 @@
 
 All notable public changes to RelayPact are recorded here.
 
-## [0.2.0] - Unreleased - Public Preview
+## [0.2.0] - 2026-09-16 - Public Preview
 
 ### Added
 
@@ -28,8 +28,9 @@ All notable public changes to RelayPact are recorded here.
 
 ### Compatibility
 
-- This is an unreleased source candidate. The latest published release remains
-  v0.1.2; no v0.2.0 tag or GitHub Release is implied by package metadata.
+- Install v0.2.0 from its versioned GitHub tag and verify the peeled commit.
+  Package metadata alone is not release identity; verify the visible GitHub
+  Release before installing.
 - Codex-to-Codex remains the only active Public Preview route. Cursor and Pi
   remain experimental, explicitly selected and inactive at the root Plugin.
   Models, providers and authentication remain owned by the selected harness.
@@ -53,7 +54,7 @@ All notable public changes to RelayPact are recorded here.
 
 ### Compatibility
 
-- `v0.1.2` is the latest published release. npm publication remains out of
+- At this release, `v0.1.2` became the latest published version. npm publication remained out of
   scope; installation uses the versioned GitHub release tag.
 - Tasks prepared by v0.1.1 lack the new preparation-time semantic index
   baseline and remain ineligible for migration or terminal decision under
@@ -184,3 +185,5 @@ All notable public changes to RelayPact are recorded here.
 [0.1.1]: https://github.com/echopath-labs/relaypact/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/echopath-labs/relaypact/releases/tag/v0.1.0
 [0.1.2]: https://github.com/echopath-labs/relaypact/compare/v0.1.1...v0.1.2
+
+[0.2.0]: https://github.com/echopath-labs/relaypact/compare/v0.1.2...v0.2.0
