@@ -1,6 +1,6 @@
 # Public Preview Release Checklist
 
-This checklist prepares a human-authorized `0.1.x` GitHub Public Preview. It
+This checklist prepares a human-authorized `0.2.0` GitHub Public Preview. It
 does not authorize a commit, remote change, push, tag, GitHub release, npm
 publish, or deployment.
 
@@ -37,54 +37,53 @@ The candidate `LICENSE` must contain the reviewed Apache License 2.0 text,
 `plugin.json`, both README language entries, and contribution guidance must use
 the exact SPDX identifier `Apache-2.0`. License drift is a release blocker.
 
-## 0.1.2 release-time documentation closeout
+## 0.2.0 release-time documentation closeout
 
-The checked-in source state is intentionally `candidate`: package and Plugin
-metadata report `0.1.2`, while public onboarding says that `v0.1.2` is not
-yet released and keeps `v0.1.1` as the latest published installation. Never
-merge released-state documentation to `main` while the tag or GitHub Release
-is absent.
+The checked-in state is a 0.2.0 source candidate. Package and Plugin metadata
+report 0.2.0; v0.1.2 remains the latest published installation. The release date
+is intentionally unset. Candidate readiness does not establish publication.
+Merge the reviewed preparation PR before closing out the release documents.
+Then merge the reviewed release-documentation PR before tagging its verified main
+commit. Release metadata describes that version; installation still requires a
+visible official tag and GitHub Release.
 
-This closeout is a later, separately authorized release operation:
+1. Start a clean release branch from the then-current live main. Confirm the
+   exact repository is echopath-labs/relaypact and record the reviewed candidate
+   commit/tree and the complete diff from that main baseline.
+2. Confirm the authenticated GitHub identity is exactly chasechou007.
+3. Obtain the human-supplied release date and explicit authorization for the
+   final commit, branch push/review, annotated tag, GitHub Release and main
+   integration. Preparation alone does not grant these operations.
+4. Prepare one scoped release-state commit:
+   - Set PROJECT_RELEASE_STATE in scripts/validate-package.mjs to released;
+     keep PROJECT_VERSION at 0.2.0 and the previous published version at 0.1.2.
+   - Update README.md, README.zh-CN.md, docs/agent-quickstart.md,
+     docs/agent-quickstart.zh-CN.md and docs/manual-configuration.md to name
+     v0.2.0 as the latest published installation and verify the peeled
+     v0.2.0^{} commit. Remove candidate-only statements and the guidance caveat
+     that applies to the older installation; retain explicitly historical notes.
+   - Date the 0.2.0 changelog entry, update its compatibility paragraph to the
+     released state, and add the v0.1.2...v0.2.0 comparison link.
+   - Update this checklist's current-state paragraph and version-sensitive
+     validation fixtures so the release itself does not retain a stale
+     candidate-state description. Keep route status and known limits accurate.
+5. Validate the exact final commit: full candidate checks above, allowlist,
+   privacy/history, ordinary source-backed review, and no-object-sharing clean
+   clone with isolated Plugin discovery. Inspect the final package contents.
+   Run the required Validate CI on the final release-documentation PR. Merge the
+   reviewed PR before creating the release tag, then verify the merged main tree
+   matches the reviewed content and its post-merge CI passes. Earlier main CI is
+   not final release-candidate CI.
+6. Under the explicit remote authorization, create the annotated v0.2.0 tag at
+   that verified merged main commit, push only the approved tag and create a
+   GitHub prerelease. Verify the peeled tag and the visible GitHub Release.
+7. Recheck main, tag identity, Release visibility, bilingual links and install
+   commands. Record the resulting commit identities and post-integration CI.
 
-1. Start a clean release branch from the then-current live `main`. Record the
-   exact commit and confirm the remote owner is `echopath-labs/relaypact`.
-2. Confirm the authenticated GitHub identity is exactly `chasechou007`.
-   Identity configuration changes are out of scope; stop on mismatch.
-3. Obtain the human-supplied release date and explicit approval for commit,
-   tag, push, GitHub Release, and main integration. Do not infer a date from
-   package metadata, commit time, CI, or this checklist.
-4. In one scoped release-state commit:
-   - change `PROJECT_RELEASE_STATE` in `scripts/validate-package.mjs` from
-     `candidate` to `released`;
-   - update `README.md`, `README.zh-CN.md`,
-     `docs/agent-quickstart.md`, `docs/agent-quickstart.zh-CN.md`, and
-     `docs/manual-configuration.md` so `v0.1.2` is the latest published
-     install and every tag checkout verifies `HEAD` against the peeled
-     `v0.1.2^{}` commit;
-   - change the changelog heading to
-     `## [0.1.2] - <human-supplied YYYY-MM-DD> - Public Preview` and restore
-     the `v0.1.1...v0.1.2` comparison link;
-   - update focused validation fixtures only as required by the released-state
-     branch of the package validator.
-5. Run the full candidate validation, exact public allowlist, privacy/history
-   and security scans, no-object-sharing clean-clone validation, and Plugin
-   discovery. Confirm the release-state commit is clean and approved.
-6. Under the separate remote authorization, create the annotated `v0.1.2` tag
-   at that exact release-state commit, push only the approved tag, and create
-   the GitHub Release. Verify the remote tag peels to the approved commit and
-   the GitHub Release is visible before changing live `main`.
-7. Only after both remote objects exist, integrate that same release-state
-   commit to `main` through the separately approved path. Re-fetch and verify
-   live `main`, tag identity, Release visibility, bilingual links, and install
-   commands.
-
-If authorization, identity, human-supplied date, commit identity, remote tag,
-Release visibility, CI, or validation is absent or mismatched, stop. Before any
-remote operation, discard the release branch to return to candidate state.
-After a tag or Release is public, never rewrite the tag; leave `main` in its
-last truthful state, withdraw the Release if explicitly authorized, and publish
-a corrected version.
+If authority, date, identity, validation or remote state is missing or
+mismatched, stop the affected publication action and preserve the local
+candidate for review. After publication, never rewrite the tag; use a separately
+authorized withdrawal or corrected version. Do not discard unrelated work.
 
 ## Manual GitHub Gates
 
@@ -104,9 +103,11 @@ Before the first public preview:
 
 ## Release Positioning
 
-Describe `0.1.x` as a human-reviewed Codex-to-Codex Public Preview for
-experienced Codex, Node.js, and Git users. Describe Codex-to-Pi separately as
-experimental and optional. Do not claim unattended, production-ready, complete
+Describe 0.2.0 as a human-reviewed Public Preview that provides shared Host
+delegation guidance with Codex as the admitted Host. Codex-to-Codex is the
+only active Public Preview route. Describe Codex-to-Pi and Codex-to-Cursor
+separately as experimental, optional and explicitly selected.
+Do not claim unattended, production-ready, complete
 cross-platform, provider-neutral live reliability, or operating-system sandbox
 guarantees beyond the documented contracts.
 

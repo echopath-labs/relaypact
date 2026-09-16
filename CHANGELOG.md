@@ -2,6 +2,44 @@
 
 All notable public changes to RelayPact are recorded here.
 
+## [0.2.0] - Unreleased - Public Preview
+
+### Added
+
+- A shared Host delegation reference covering bounded authority, task context,
+  evidence, correction and acceptance, with eight review cases. Harness-specific
+  setup and invocation remain in conditional references. Codex remains the
+  admitted Host; this does not admit additional Host products.
+- An explicitly selected experimental Codex-to-Cursor route using the local
+  Cursor CLI. Optional private lifecycle state supports signed review,
+  same-session correction, terminal decisions and guarded private-state cleanup.
+  Direct execution may already change files; decisions do not apply or revert
+  workspace changes.
+
+### Fixed
+
+- Pi review uses the final assistant response instead of concatenating earlier
+  output. Capability probes fail closed on inconclusive CLI evidence.
+- Cursor discovery supports the current bundled launcher layout and validates
+  launcher/interpreter identity before correction.
+- Strengthened lifecycle ownership, lock reclamation and evidence checks,
+  including linked-file cleanup and conservative handling of execution whose
+  termination cannot be verified.
+
+### Compatibility
+
+- This is an unreleased source candidate. The latest published release remains
+  v0.1.2; no v0.2.0 tag or GitHub Release is implied by package metadata.
+- Codex-to-Codex remains the only active Public Preview route. Cursor and Pi
+  remain experimental, explicitly selected and inactive at the root Plugin.
+  Models, providers and authentication remain owned by the selected harness.
+- Existing task state is not automatically migrated. Finish tasks with their
+  original verified installation where possible and prepare new tasks for the
+  new version; never bypass an evidence or lifecycle refusal. Automatic recovery
+  of orphaned Cursor execution remains unsupported.
+- Distribution remains a GitHub Public Preview with private npm metadata. No
+  unattended, production-critical or Windows support is claimed.
+
 ## [0.1.2] - 2026-08-21 - Public Preview
 
 ### Fixed

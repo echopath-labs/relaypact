@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 const CANONICAL_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const PROJECT_NAME = "relaypact";
 const PROJECT_DISPLAY_NAME = "RelayPact";
-const PROJECT_VERSION = "0.1.2";
-const PROJECT_RELEASE_STATE = "released";
-const LATEST_PUBLISHED_VERSION = "0.1.1";
+const PROJECT_VERSION = "0.2.0";
+const PROJECT_RELEASE_STATE = "candidate";
+const LATEST_PUBLISHED_VERSION = "0.1.2";
 const PROJECT_LICENSE = "Apache-2.0";
 const PROJECT_REPOSITORY = "https://github.com/echopath-labs/relaypact";
 const PROJECT_MARKETPLACE = "relaypact-local";
@@ -144,13 +144,14 @@ async function validateProjectOnboarding(root, errors) {
     ...SKILL_REFERENCES.map((name) => `skills/relaypact/references/${name}`),
     "CONTRIBUTING.md",
     "RELEASING.md",
+    "CHANGELOG.md",
     "LICENSE",
     "NOTICE"
   ].map(async (relative) => [relative, await readRequiredText(root, relative, errors)])));
 
   const sharedReadmeFacts = [
     PROJECT_DISPLAY_NAME, PROJECT_REPOSITORY, PROJECT_MARKETPLACE,
-    "0.1.2", "codex-codex", "public-preview", "Codex CLI 0.147.0",
+    PROJECT_VERSION, "codex-codex", "public-preview", "Codex CLI 0.147.0",
     "Node.js 20", "Apache License 2.0", "SECURITY.md", "v0.1.2", "v0.1.1",
     "v0.1.0", "docs/manual-configuration.md", "codex exec --help", "doctor",
     "`completed` != `accept` != `apply`"
@@ -181,7 +182,7 @@ async function validateProjectOnboarding(root, errors) {
   const sharedQuickStartFacts = [
     "$relaypact", "manual-configuration.md", "opencode-go-luna.md", "accept",
     "reject", "abandon", "Apache License 2.0", "codex exec", "doctor",
-    "v0.1.2", "v0.1.1", "patch", "commit SHA",
+    PROJECT_VERSION, "v0.1.2", "v0.1.1", "patch", "commit SHA",
     "git clone --branch main --depth 1", "docs/relaypact-first-delegation.md",
     "`completed` != `accept` != `apply`", "relaypactDeclaredInputBytes"
   ];
@@ -214,7 +215,7 @@ async function validateProjectOnboarding(root, errors) {
   ], "skills/relaypact/references/agent-setup.md", errors);
 
   requireText(files["docs/manual-configuration.md"], [
-    "0.1.2", "v0.1.2", "v0.1.1", "doctor", "needs_setup", "codex exec --help",
+    PROJECT_VERSION, "v0.1.2", "v0.1.1", "doctor", "needs_setup", "codex exec --help",
     "Release state and version verification", "git clone --branch main --depth 1",
     "Apply an accepted candidate separately", "Upgrade or replace an installation",
     "## Uninstall", "private archives", "additional tokens", "## Glossary",
@@ -223,9 +224,9 @@ async function validateProjectOnboarding(root, errors) {
     "`completed` != `accept` != `apply`", "relaypactDeclaredInputBytes"
   ], "docs/manual-configuration.md", errors);
   requireText(files["RELEASING.md"], [
-    "0.1.2 release-time documentation closeout", "PROJECT_RELEASE_STATE",
-    "chasechou007", "human-supplied release date", "v0.1.2^{}",
-    "GitHub Release is visible before changing live `main`"
+    `${PROJECT_VERSION} release-time documentation closeout`, "PROJECT_RELEASE_STATE",
+    "chasechou007", "human-supplied release date", `v${PROJECT_VERSION}^{}`,
+    "reviewed PR before creating the release tag"
   ], "RELEASING.md", errors);
 
   const candidateOnboardingFiles = [
@@ -235,27 +236,43 @@ async function validateProjectOnboarding(root, errors) {
     "docs/agent-quickstart.zh-CN.md",
     "docs/manual-configuration.md"
   ];
+  const installVersion = PROJECT_RELEASE_STATE === "candidate" ? LATEST_PUBLISHED_VERSION : PROJECT_VERSION;
+  for (const relative of candidateOnboardingFiles) {
+    requireText(files[relative], [
+      `git clone --branch v${installVersion}`,
+      `v${installVersion}^{}`
+    ], relative, errors);
+  }
+  requireText(files["README.md"], [`Latest published release: **v${installVersion}**`], "README.md", errors);
+  requireText(files["README.zh-CN.md"], [`最新已发布版本：**v${installVersion}**`], "README.zh-CN.md", errors);
   if (PROJECT_RELEASE_STATE === "candidate") {
     for (const relative of candidateOnboardingFiles) {
-      requireText(files[relative], ["source candidate", `v${LATEST_PUBLISHED_VERSION}`], relative, errors);
-      forbidText(files[relative], ["git clone --branch v0.1.2"], relative, errors);
-    }
-    requireText(files["README.md"], [
-      "Latest published release: **v0.1.1**",
-      "`v0.1.2` is not released"
-    ], "README.md", errors);
-    requireText(files["README.zh-CN.md"], [
-      "最新已发布版本：**v0.1.1**",
-      "`v0.1.2` 尚未发布"
-    ], "README.zh-CN.md", errors);
-  } else if (PROJECT_RELEASE_STATE === "released") {
-    for (const relative of candidateOnboardingFiles) {
-      requireText(files[relative], [
-        "git clone --branch v0.1.2",
-        "v0.1.2^{}"
+      requireText(files[relative], [`${PROJECT_VERSION} Public Preview source candidate`, `v${LATEST_PUBLISHED_VERSION}`], relative, errors);
+      forbidText(files[relative], [
+        `git clone --branch v${PROJECT_VERSION}`,
+        `Latest published release: **v${PROJECT_VERSION}**`,
+        `最新已发布版本：**v${PROJECT_VERSION}**`
       ], relative, errors);
     }
-    requireText(files["README.md"], ["Latest published release: **v0.1.2**"], "README.md", errors);
+    requireText(files["README.md"], [
+      `\`v${PROJECT_VERSION}\` is not released`
+    ], "README.md", errors);
+    requireText(files["README.zh-CN.md"], [
+      `\`v${PROJECT_VERSION}\` 尚未发布`
+    ], "README.zh-CN.md", errors);
+    requireText(files["CHANGELOG.md"], [`## [${PROJECT_VERSION}] - Unreleased - Public Preview`], "CHANGELOG.md", errors);
+  } else if (PROJECT_RELEASE_STATE === "released") {
+    for (const relative of candidateOnboardingFiles) {
+      forbidText(files[relative], [
+        `${PROJECT_VERSION} Public Preview source candidate`,
+        `\`v${PROJECT_VERSION}\` is not released`,
+        `\`v${PROJECT_VERSION}\` 尚未发布`
+      ], relative, errors);
+    }
+    const heading = files["CHANGELOG.md"]?.split("\n").find((line) => line.startsWith(`## [${PROJECT_VERSION}]`));
+    if (!heading || !/^## \[[0-9.]+\] - \d{4}-\d{2}-\d{2} - Public Preview$/u.test(heading)) {
+      errors.push("CHANGELOG.md must include the dated Public Preview release heading.");
+    }
   } else {
     errors.push("scripts/validate-package.mjs PROJECT_RELEASE_STATE must be candidate or released.");
   }

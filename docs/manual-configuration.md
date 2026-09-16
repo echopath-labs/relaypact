@@ -47,7 +47,8 @@ codex exec --help
 
 ## Release state and version verification
 
-The latest published release is `v0.1.2`. Package and Plugin version fields
+This checkout is a **0.2.0 Public Preview source candidate**, not a published
+release. The latest published release is `v0.1.2`. Package and Plugin version fields
 alone are not release identity; verify the official tag's peeled commit.
 
 Install and verify the latest published release:
@@ -65,15 +66,16 @@ codex plugin list --marketplace relaypact-local --json
 ```
 
 For current-source dogfood, clone the mutable `main` branch, record its exact
-commit, and verify aligned source metadata:
+commit, and inspect its aligned source metadata. The remote branch may not yet
+contain this local 0.2.0 candidate; do not infer candidate identity from `main`:
 
 ```bash
 set -e
 git clone --branch main --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-0.1.2-source
-cd relaypact-0.1.2-source
+  https://github.com/echopath-labs/relaypact.git relaypact-current-source
+cd relaypact-current-source
 git rev-parse HEAD
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.1.2"||q.version!==p.version) process.exit(1)'
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(!p.version||q.version!==p.version) process.exit(1); console.log(p.version)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json

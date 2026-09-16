@@ -24,8 +24,9 @@ For this Codex-to-Codex route: **No additional executor installation is required
 
 ## Release status
 
-- Source package metadata: **0.1.2 Public Preview**; unreleased changes are
-  distinguished below from the published tag.
+- Source package metadata: **0.2.0 Public Preview source candidate**.
+  `v0.2.0` is not released; its Host guidance and Cursor changes are available
+  only in reviewed source, not in the v0.1.2 installation below.
 - Latest published release: **v0.1.2**.
 - Support: `codex-codex` is `public-preview`; `codex-pi` remains
   `experimental` and inactive; `codex-cursor` is source-included,

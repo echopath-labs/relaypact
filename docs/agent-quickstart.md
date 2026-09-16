@@ -14,6 +14,8 @@ The candidate in this tutorial remains unapplied until a later authorized action
 
 Current release truth:
 
+- Current source: **0.2.0 Public Preview source candidate**, unreleased.
+  The release installation below does not include these candidate changes.
 - `v0.1.2` is the latest published release; `v0.1.1` remains available.
 - This guide installs the versioned tag and verifies its peeled commit SHA.
 - Pi is experimental and inactive; it is not installed, loaded, or used here.
