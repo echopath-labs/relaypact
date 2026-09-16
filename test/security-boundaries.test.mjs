@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { chmod, lstat, mkdir, readFile, realpath, symlink, utimes, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { chmod, lstat, mkdir, readFile, readdir, realpath, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import test from "node:test";
@@ -28,6 +28,7 @@ import { changedFilesystemPaths, snapshotFilesystem, snapshotGitControls } from 
 import { getStatusPaths, snapshotGitIndex } from "../packages/core/src/git.mjs";
 import { evaluatePathScope } from "../packages/contracts/src/path-policy.mjs";
 import { runProcess } from "../packages/core/src/process.mjs";
+import { createSignedStateStore } from "../packages/core/src/signed-state.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
@@ -64,6 +65,165 @@ test("process capture reports truncation and hard timeout settlement", async () 
   assert.ok(performance.now() - started < 2500);
 });
 
+test("process termination remains single-reason while timeout and cancellation overlap", async () => {
+  const controller = new AbortController();
+  const execution = runProcess(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {
+    timeoutMs: 300,
+    terminationGraceMs: 200,
+    hardSettleGraceMs: 30,
+    signal: controller.signal
+  });
+  setTimeout(() => controller.abort(), 350);
+  const result = await execution;
+  assert.equal(result.timedOut, true);
+  assert.equal(result.cancelled, false);
+  assert.equal(result.hardKilled, true);
+});
+
+test("signed state recovers a lock whose owning process has exited", async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const statePath = path.join(taskRoot, "state.json");
+  const stateStore = createSignedStateStore(statePath, () => {});
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  await stateStore.withLock(async () => {});
+
+  const integrityRoot = path.join(root, ".relaypact-integrity");
+  const keyName = (await readdir(integrityRoot)).find((name) => name.endsWith(".key"));
+  const lockPath = path.join(integrityRoot, "locks", keyName.replace(/\.key$/u, ".lock"));
+  const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  const deadPid = child.pid;
+  await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  await writeFile(lockPath, `${JSON.stringify({ pid: deadPid, acquiredAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+
+  const observed = await stateStore.withLock(async ({ read }) => read());
+  assert.equal(observed.stateRevision, 0);
+  await assert.rejects(lstat(lockPath), (error) => error.code === "ENOENT");
+});
+
+test("signed state never reclaims a lock owned by a live process", async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const statePath = path.join(taskRoot, "state.json");
+  const stateStore = createSignedStateStore(statePath, () => {});
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  await stateStore.withLock(async () => {});
+
+  const integrityRoot = path.join(root, ".relaypact-integrity");
+  const keyName = (await readdir(integrityRoot)).find((name) => name.endsWith(".key"));
+  const lockPath = path.join(integrityRoot, "locks", keyName.replace(/\.key$/u, ".lock"));
+  await writeFile(lockPath, `${JSON.stringify({ pid: process.pid, acquiredAt: new Date(0).toISOString() })}\n`, { mode: 0o600 });
+
+  await assert.rejects(
+    stateStore.withLock(async () => {}),
+    (error) => error.code === "task_state_busy"
+  );
+});
+
+test("signed state reclaims a lock when the PID belongs to a different process identity", async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const statePath = path.join(taskRoot, "state.json");
+  const stateStore = createSignedStateStore(statePath, () => {}, {
+    processIdentity: async () => "process-start:new-owner"
+  });
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  await stateStore.withLock(async () => {});
+
+  const integrityRoot = path.join(root, ".relaypact-integrity");
+  const keyName = (await readdir(integrityRoot)).find((name) => name.endsWith(".key"));
+  const lockPath = path.join(integrityRoot, "locks", keyName.replace(/\.key$/u, ".lock"));
+  await writeFile(lockPath, `${JSON.stringify({
+    pid: process.pid,
+    processIdentity: "process-start:old-owner",
+    acquiredAt: new Date().toISOString()
+  })}\n`, { mode: 0o600 });
+
+  const observed = await stateStore.withLock(async ({ read }) => read());
+  assert.equal(observed.stateRevision, 0);
+  await assert.rejects(lstat(lockPath), (error) => error.code === "ENOENT");
+});
+
+test("signed state age-bounds a live lock when process identity is unavailable", async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const statePath = path.join(taskRoot, "state.json");
+  const stateStore = createSignedStateStore(statePath, () => {}, {
+    processIdentity: async () => null
+  });
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  await stateStore.withLock(async () => {});
+
+  const integrityRoot = path.join(root, ".relaypact-integrity");
+  const keyName = (await readdir(integrityRoot)).find((name) => name.endsWith(".key"));
+  const lockPath = path.join(integrityRoot, "locks", keyName.replace(/\.key$/u, ".lock"));
+  await writeFile(lockPath, `${JSON.stringify({
+    pid: process.pid,
+    processIdentity: null,
+    acquiredAt: new Date().toISOString()
+  })}\n`, { mode: 0o600 });
+
+  await assert.rejects(
+    stateStore.withLock(async () => {}),
+    (error) => error.code === "task_state_busy"
+  );
+  const stale = new Date(Date.now() - 16 * 60_000);
+  await utimes(lockPath, stale, stale);
+  const observed = await stateStore.withLock(async ({ read }) => read());
+  assert.equal(observed.stateRevision, 0);
+  await assert.rejects(lstat(lockPath), (error) => error.code === "ENOENT");
+});
+
+test("signed state renews an unidentified live owner's lock lease", async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const statePath = path.join(taskRoot, "state.json");
+  const stateStore = createSignedStateStore(statePath, () => {}, {
+    processIdentity: async () => null,
+    lockLeaseMs: 40,
+    lockHeartbeatMs: 10
+  });
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  let release;
+  const held = stateStore.withLock(() => new Promise((resolve) => { release = resolve; }));
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await assert.rejects(
+    stateStore.withLock(async () => {}),
+    (error) => error.code === "task_state_busy"
+  );
+  release();
+  await held;
+});
+
+async function processIsExecuting(pid) {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+  if (process.platform === "linux") {
+    try {
+      const value = await readFile(`/proc/${pid}/stat`, "utf8");
+      const commandEnd = value.lastIndexOf(")");
+      const state = commandEnd >= 0 ? value.slice(commandEnd + 1).trim().split(/\s+/u)[0] : null;
+      if (state === "Z") return false;
+    } catch (error) {
+      if (new Set(["ENOENT", "ESRCH"]).has(error?.code)) return false;
+      throw error;
+    }
+  }
+  return true;
+}
+
 test("process runner terminates same-group descendants after the leader exits", async () => {
   const source = [
     "const { spawn } = require('node:child_process');",
@@ -78,13 +238,8 @@ test("process runner terminates same-group descendants after the leader exits", 
     const pid = Number(result.stdout);
     let alive = true;
     for (let attempt = 0; attempt < 30 && alive; attempt += 1) {
-      try {
-        process.kill(pid, 0);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      } catch (error) {
-        if (error?.code === "ESRCH") alive = false;
-        else throw error;
-      }
+      alive = await processIsExecuting(pid);
+      if (alive) await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert.equal(alive, false);
   }

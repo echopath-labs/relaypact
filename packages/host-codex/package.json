@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./actions": "./src/actions.mjs",
+    "./direct-actions": "./src/direct-actions.mjs",
     "./review": "./src/review.mjs"
   }
 }

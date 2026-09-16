@@ -88,3 +88,12 @@ not every self-directed or already-privileged local action is a vulnerability.
 
 Please read the complete safety limits in [README.md](README.md) before filing
 a report or deploying the preview in a sensitive environment.
+
+Local direct execution checks existing repository symlinks before launching work
+and validation commands. External, unresolved and unstable links are refused;
+internal target changes remain part of whole-repository evidence. This does not
+confine arbitrary absolute-path writes or concurrent link replacement: the Host
+must still select a trusted execution environment and coordinate other writers.
+Terminal cleanup retries use a minimal signed Host receipt, retained with its
+integrity key outside the deleted task directory; it holds no raw session handle
+and authorizes only completion of the already committed decision.

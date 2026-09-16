@@ -34,6 +34,22 @@
       ],
       "deterministicCheck": "npm run check:codex-pi",
       "liveSmoke": "npm run smoke:pi"
+    },
+    {
+      "id": "codex-cursor",
+      "hostPackage": "packages/host-codex",
+      "executorPackage": "packages/executor-cursor",
+      "adapterPackage": "packages/adapter-codex-cursor",
+      "executionHarness": "cursor",
+      "status": "experimental",
+      "sourceIncluded": true,
+      "rootPluginActivation": false,
+      "prerequisites": [
+        "Node.js 20 or later",
+        "an explicit compatible authenticated Cursor CLI installation"
+      ],
+      "deterministicCheck": "npm run check:codex-cursor",
+      "liveSmoke": "npm run smoke:cursor"
     }
   ]
 }

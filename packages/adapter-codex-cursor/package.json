@@ -1,0 +1,9 @@
+{
+  "name": "@relaypact/adapter-codex-cursor",
+  "version": "0.1.2",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/run-delegation.mjs"
+  }
+}

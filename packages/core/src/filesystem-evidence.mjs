@@ -125,6 +125,28 @@ export async function snapshotFilesystem(root, options = {}) {
   return collect(await realpath(root), options);
 }
 
+export async function assertRepositoryLinks(repositoryRoot, snapshotInput) {
+  const root = await realpath(repositoryRoot);
+  const snapshot = snapshotInput ?? await snapshotFilesystem(root, { exclude: [".git"] });
+  for (const entry of assertFilesystemSnapshot(snapshot).entries) {
+    if (entry.type !== "symlink" && entry.type !== "file") continue;
+    const absolute = path.join(root, ...entry.path.split("/"));
+    try {
+      if (entry.type === "file") {
+        // A snapshot cannot prove that other names for an inode stay in scope.
+        // Read the current link count even when the caller supplies an older snapshot.
+        const info = await lstat(absolute);
+        if (!info.isFile() || info.nlink !== 1) throw new Error("unsafe link");
+        continue;
+      }
+      const target = await realpath(absolute);
+      if (!isInside(root, target) || await readlink(absolute) !== entry.target) throw new Error("unsafe link");
+    } catch {
+      throw new DelegationError("repository_link_unsafe", "Repository files must have a single link and symlinks must resolve to stable targets inside the delegated repository before execution.");
+    }
+  }
+}
+
 async function resolveGitDirectory(repositoryRoot) {
   const candidate = path.join(repositoryRoot, ".git");
   const info = await lstat(candidate);
@@ -144,7 +166,7 @@ async function resolveGitDirectory(repositoryRoot) {
 
 function isInside(root, candidate) {
   const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 async function readBoundedGitPointer(pointerPath, label, { optional = false } = {}) {

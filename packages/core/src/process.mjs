@@ -53,7 +53,9 @@ export function runProcess(command, args, options = {}) {
     terminationGraceMs = DEFAULT_TERMINATION_GRACE_MS,
     hardSettleGraceMs = DEFAULT_HARD_SETTLE_GRACE_MS,
     processGroup = process.platform !== "win32",
-    outputEncoding = "utf8"
+    outputEncoding = "utf8",
+    argv0 = undefined,
+    signal: abortSignal = undefined
   } = options;
 
   return new Promise((resolve, reject) => {
@@ -62,15 +64,18 @@ export function runProcess(command, args, options = {}) {
       env,
       detached: processGroup,
       shell: false,
+      ...(argv0 === undefined ? {} : { argv0 }),
       stdio: ["pipe", "pipe", "pipe"]
     });
 
     const stdoutCapture = capture(maxCaptureBytes, outputEncoding);
     const stderrCapture = capture(maxCaptureBytes, outputEncoding);
     let timedOut = false;
+    let cancelled = false;
     let hardKilled = false;
     let groupCleanupAttempted = false;
     let settled = false;
+    let terminationStarted = false;
     let forceTimer;
     let hardSettleTimer;
 
@@ -78,6 +83,7 @@ export function runProcess(command, args, options = {}) {
       clearTimeout(timer);
       if (forceTimer) clearTimeout(forceTimer);
       if (hardSettleTimer) clearTimeout(hardSettleTimer);
+      abortSignal?.removeEventListener("abort", abort);
     };
     const finish = (exitCode, signal) => {
       if (settled) return;
@@ -93,20 +99,30 @@ export function runProcess(command, args, options = {}) {
         stdoutTruncated: stdout.truncated,
         stderrTruncated: stderr.truncated,
         timedOut,
+        cancelled,
         hardKilled,
         groupCleanupAttempted
       });
     };
 
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const terminate = (reason) => {
+      if (settled || terminationStarted) return;
+      terminationStarted = true;
+      if (reason === "timeout") timedOut = true;
+      if (reason === "cancel") cancelled = true;
       signalProcess(child, "SIGTERM", processGroup);
       forceTimer = setTimeout(() => {
         hardKilled = true;
         signalProcess(child, "SIGKILL", processGroup);
         hardSettleTimer = setTimeout(() => finish(null, "SIGKILL"), hardSettleGraceMs);
       }, terminationGraceMs);
-    }, timeoutMs);
+    };
+    const timer = setTimeout(() => terminate("timeout"), timeoutMs);
+    const abort = () => terminate("cancel");
+    if (abortSignal) {
+      if (abortSignal.aborted) abort();
+      else abortSignal.addEventListener("abort", abort, { once: true });
+    }
 
     child.stdout.on("data", (chunk) => {
       stdoutCapture.append(chunk);
