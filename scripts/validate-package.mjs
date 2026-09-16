@@ -240,7 +240,7 @@ async function validateProjectOnboarding(root, errors) {
   for (const relative of candidateOnboardingFiles) {
     requireText(files[relative], [
       `git clone --branch v${installVersion}`,
-      `v${installVersion}^{}`,
+      `git -C relaypact-v${installVersion} rev-parse 'v${installVersion}^{}'`,
       `https://github.com/echopath-labs/relaypact.git relaypact-v${installVersion}`,
       `git -C relaypact-v${installVersion} rev-parse HEAD`,
       `cd relaypact-v${installVersion}`,
@@ -270,6 +270,9 @@ async function validateProjectOnboarding(root, errors) {
     requireText(files["README.zh-CN.md"], [`安装目标版本：**v${PROJECT_VERSION}**`], "README.zh-CN.md", errors);
     for (const relative of candidateOnboardingFiles) {
       requireText(files[relative], [`releases/tag/v${PROJECT_VERSION}`], relative, errors);
+      if (/latest published release|最新已发布版本/iu.test(files[relative] ?? "")) {
+        errors.push(`${relative} must not claim the installation target is the latest published release.`);
+      }
       forbidText(files[relative], [
         `Latest published release: **v${PROJECT_VERSION}**`,
         `最新已发布版本：**v${PROJECT_VERSION}**`,
@@ -281,6 +284,9 @@ async function validateProjectOnboarding(root, errors) {
         `\`v${PROJECT_VERSION}\` 尚未发布`
       ], relative, errors);
     }
+    requireText(files["CHANGELOG.md"], [
+      `[${PROJECT_VERSION}]: https://github.com/echopath-labs/relaypact/compare/v${LATEST_PUBLISHED_VERSION}...v${PROJECT_VERSION}`
+    ], "CHANGELOG.md", errors);
     const heading = files["CHANGELOG.md"]?.split("\n").find((line) => line.startsWith(`## [${PROJECT_VERSION}]`));
     if (!heading || !/^## \[[0-9.]+\] - \d{4}-\d{2}-\d{2} - Public Preview$/u.test(heading)) {
       errors.push("CHANGELOG.md must include the dated Public Preview release heading.");

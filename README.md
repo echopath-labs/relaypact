@@ -107,6 +107,8 @@ documentation file.
 
 ## Install the versioned release
 
+Before running this block, confirm the official [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) is visible. If it is unavailable, stop and use [v0.1.2](https://github.com/echopath-labs/relaypact/tree/v0.1.2). A tag alone does not satisfy this precondition.
+
 The installation target is `v0.2.0`:
 
 The previous `v0.1.2`, `v0.1.1` and `v0.1.0` releases remain available for exact
@@ -120,6 +122,7 @@ checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
 release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
 test "$checkout_commit" = "$release_commit"
 cd relaypact-v0.2.0
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.2.0"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json

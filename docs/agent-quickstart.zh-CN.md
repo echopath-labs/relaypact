@@ -6,7 +6,7 @@
 Codex-to-Codex candidate。RelayPact 使用现有 Codex CLI 中的独立
 `codex exec`，不需要第二个 executor package。
 
-RelayPact 的通用目标是指导 Host 委派与验收。本教程演示已发布的 Codex capsule
+RelayPact 的通用目标是指导 Host 委派与验收。本教程演示安装目标版本的 Codex capsule
 工具流程。v0.2.0 的 [Host 规约](../skills/relaypact/SKILL.md) 区分通用责任与 CLI
 配置。本教程的候选要到后续获得授权的应用步骤才会写入源码。
 

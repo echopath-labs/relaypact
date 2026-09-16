@@ -156,7 +156,7 @@ test("public package rejects published-install tag verification and metric guida
   );
   const errors = await validatePackage(root);
   assert(errors.some((item) => item.includes("README.md must include \"git clone --branch v0.2.0\"")));
-  assert(errors.some((item) => item.includes("README.md must include \"v0.2.0^{}\"")));
+  assert(errors.some((item) => item.startsWith("README.md must include") && item.includes("git -C relaypact-v0.2.0 rev-parse") && item.includes("v0.2.0^{}")));
   assert(errors.some((item) => item.includes("README.md must include \"Release target: **v0.2.0**\"")));
   assert(errors.some((item) => item.includes("README.zh-CN.md must include \"relaypactDeclaredInputBytes\"")));
   assert(errors.some((item) => item.includes("docs/manual-configuration.md must include \"relaypactDeclaredInputBytes\"")));
@@ -214,11 +214,33 @@ test("candidate rejects stale versioned status and missing unreleased changelog"
 test("versioned documentation requires complete install identity without publication claims", async (t) => {
   const root = await copyCurrentPublicPackage();
   t.after(() => rm(root, { recursive: true, force: true }));
+  const comparisonLink = "[0.2.0]: https://github.com/echopath-labs/relaypact/compare/v0.1.2...v0.2.0";
+  const linkChangelog = path.join(root, "CHANGELOG.md");
+  const datedChangelog = (await readFile(linkChangelog, "utf8")).replace(comparisonLink, "");
+  await writeFile(linkChangelog, `${datedChangelog}\n${comparisonLink}\n`);
+  assert.deepEqual(await validatePackage(root), []);
+  for (const invalidLink of ["", comparisonLink.replace("v0.1.2...", "v0.1.1...")]) {
+    await writeFile(linkChangelog, `${datedChangelog}\n${invalidLink}\n`);
+    assert((await validatePackage(root)).some((item) => item.startsWith("CHANGELOG.md must include") && item.includes("compare/v0.1.2...v0.2.0")));
+  }
+  await writeFile(linkChangelog, `${datedChangelog}\n${comparisonLink}\n`);
+  for (const [file, claim] of [
+    ["README.md", "Install the latest published release"],
+    ["docs/manual-configuration.md", "Install and verify the latest published release:"],
+    ["README.zh-CN.md", "安装最新已发布版本"]
+  ]) {
+    const target = path.join(root, file);
+    const valid = await readFile(target, "utf8");
+    await writeFile(target, `${valid}\n${claim}\n`);
+    assert((await validatePackage(root)).some((item) => item === `${file} must not claim the installation target is the latest published release.`));
+    await writeFile(target, valid);
+  }
   const manual = path.join(root, "docs/manual-configuration.md");
   const validManual = await readFile(manual, "utf8");
   for (const [from, to, expected] of [
     ['p.version!=="0.2.0"', 'p.version!=="0.1.2"', 'if(p.version'],
-    ['cd relaypact-v0.2.0', 'cd relaypact-v0.1.2', 'cd relaypact-v0.2.0']
+    ['cd relaypact-v0.2.0', 'cd relaypact-v0.1.2', 'cd relaypact-v0.2.0'],
+    ["git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}'", "git -C relaypact-v0.1.2 rev-parse 'v0.2.0^{}'", "git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}'"]
   ]) {
     await writeFile(manual, validManual.replaceAll(from, to));
     const errors = await validatePackage(root);

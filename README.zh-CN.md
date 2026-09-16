@@ -93,6 +93,8 @@ codex plugin list --marketplace relaypact-local --json
 
 ## 安装目标版本
 
+执行本节命令前，确认官方 [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) 已可见；若不可见，请停止并使用 [v0.1.2](https://github.com/echopath-labs/relaypact/tree/v0.1.2)。仅有 tag 不满足安装前提。
+
 安装目标版本是 `v0.2.0`：
 
 此前的 `v0.1.2`、`v0.1.1` 与 `v0.1.0` release 仍可用于精确的历史版本安装。
@@ -105,6 +107,7 @@ checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
 release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
 test "$checkout_commit" = "$release_commit"
 cd relaypact-v0.2.0
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.2.0"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
