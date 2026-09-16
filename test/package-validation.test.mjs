@@ -239,8 +239,14 @@ test("versioned documentation requires complete install identity without publica
     const target = path.join(root, file);
     const valid = await readFile(target, "utf8");
     const releaseUrl = "https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0";
-    await writeFile(target, valid.replaceAll(releaseUrl, "(release link moved)") + `\nCheck ${releaseUrl} before installation.\n`);
-    assert((await validatePackage(root)).some((item) => item === `${file} must put the Release availability precondition before installation commands.`));
+    const sections = valid.split(/(?=^#{1,6} )/mu);
+    for (let index = 0; index < sections.length; index += 1) {
+      if (!sections[index].includes("git clone --branch v0.2.0")) continue;
+      const altered = [...sections];
+      altered[index] = altered[index].replaceAll(releaseUrl, "(release link moved)") + `\nCheck ${releaseUrl} before installation.\n`;
+      await writeFile(target, altered.join(""));
+      assert((await validatePackage(root)).some((item) => item === `${file} must put the Release availability precondition before installation commands in each install section.`));
+    }
     await writeFile(target, valid + "\nThis checkout is not a published release.\n");
     assert((await validatePackage(root)).some((item) => item === `${file} must not retain candidate-only release status.`));
     await writeFile(target, valid);
@@ -255,6 +261,16 @@ test("versioned documentation requires complete install identity without publica
     assert((await validatePackage(root)).some((item) => item.startsWith(expected)));
     await writeFile(target, valid);
   }
+  const security = path.join(root, "SECURITY.md");
+  const validSecurity = await readFile(security, "utf8");
+  for (const policy of [
+    "Security fixes apply only to the latest published `0.1.x` release.",
+    "Security fixes apply only to the latest published `0.2.x` release. Older previews are unsupported."
+  ]) {
+    await writeFile(security, validSecurity.replace(/## Supported Versions[\s\S]*?(?=## Reporting)/u, `## Supported Versions\n\n${policy}\n\n`));
+    assert((await validatePackage(root)).some((item) => item.startsWith("SECURITY.md must include")));
+  }
+  await writeFile(security, validSecurity);
   const manual = path.join(root, "docs/manual-configuration.md");
   const validManual = await readFile(manual, "utf8");
   for (const [from, to, expected] of [
