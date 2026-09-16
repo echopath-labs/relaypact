@@ -44,6 +44,9 @@
     "packages/adapter-codex-pi/README.md",
     "packages/adapter-codex-pi/package.json",
     "packages/adapter-codex-pi/src/run-delegation.mjs",
+    "packages/adapter-codex-workbuddy/README.md",
+    "packages/adapter-codex-workbuddy/package.json",
+    "packages/adapter-codex-workbuddy/src/run-delegation.mjs",
     "packages/cli/README.md",
     "packages/cli/package.json",
     "packages/cli/src/doctor.mjs",
@@ -88,6 +91,9 @@
     "packages/executor-pi/README.md",
     "packages/executor-pi/package.json",
     "packages/executor-pi/src/executor.mjs",
+    "packages/executor-workbuddy/README.md",
+    "packages/executor-workbuddy/package.json",
+    "packages/executor-workbuddy/src/executor.mjs",
     "packages/host-codex/README.md",
     "packages/host-codex/package.json",
     "packages/host-codex/src/actions.mjs",
@@ -105,6 +111,7 @@
     "skills/relaypact/references/invocation.md",
     "skills/relaypact/references/scope-breach.md",
     "skills/relaypact/references/task-envelope.md",
+    "skills/relaypact/references/workbuddy.md",
     "skills/relaypact/scripts/relaypact.mjs",
     "support-matrix.json",
     "test/codex-capsule.test.mjs",
@@ -130,8 +137,10 @@
     "test/integration/cursor-smoke.test.mjs",
     "test/integration/pi-smoke.test.mjs",
     "test/integration/smoke-helpers.mjs",
+    "test/integration/workbuddy-smoke.test.mjs",
     "test/package-validation.test.mjs",
     "test/run-delegation.test.mjs",
-    "test/security-boundaries.test.mjs"
+    "test/security-boundaries.test.mjs",
+    "test/workbuddy-delegation.test.mjs"
   ]
 }

@@ -19,6 +19,15 @@ RelayPact 给 Host Agent（甲方）一套稳定的委派与验收参考。Host 
 
 > 英文 `README.md` 是规范性默认版本；如中英文冲突，以英文为准。
 
+## 开发分支新增能力
+
+当前分支新增实验性 **Codex → WorkBuddy 大陆版**、**Codex → WorkBuddy AI 国际版**
+乙方路线。这些改动属于当前开发分支，已发布的 v0.2.0 不含这些新能力。
+每次显式选择版本，复用各自桌面原生配置。
+首版限定 macOS、内置 CLI 2.137.1，以及 Read/Write 文件任务；由 Host 独立检查和验收。
+修正通过新的有界任务完成，暂不接纳 shell 执行和同会话续跑。详见
+[WorkBuddy 调用参考](skills/relaypact/references/workbuddy.md)。
+
 ## 发布状态
 
 - 源码包元数据：**0.2.0 Public Preview**。

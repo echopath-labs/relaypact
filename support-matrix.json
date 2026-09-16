@@ -50,6 +50,42 @@
       ],
       "deterministicCheck": "npm run check:codex-cursor",
       "liveSmoke": "npm run smoke:cursor"
+    },
+    {
+      "id": "codex-workbuddy",
+      "hostPackage": "packages/host-codex",
+      "executorPackage": "packages/executor-workbuddy",
+      "adapterPackage": "packages/adapter-codex-workbuddy",
+      "executionHarness": "workbuddy",
+      "status": "experimental",
+      "sourceIncluded": true,
+      "rootPluginActivation": false,
+      "prerequisites": [
+        "Node.js 20 or later",
+        "macOS",
+        "explicit mainland edition with authenticated WorkBuddy desktop configuration",
+        "bundled CLI 2.137.1; bounded Read/Write tasks only"
+      ],
+      "deterministicCheck": "npm run check:codex-workbuddy",
+      "liveSmoke": "npm run smoke:workbuddy"
+    },
+    {
+      "id": "codex-workbuddy-ai",
+      "hostPackage": "packages/host-codex",
+      "executorPackage": "packages/executor-workbuddy",
+      "adapterPackage": "packages/adapter-codex-workbuddy",
+      "executionHarness": "workbuddy",
+      "status": "experimental",
+      "sourceIncluded": true,
+      "rootPluginActivation": false,
+      "prerequisites": [
+        "Node.js 20 or later",
+        "macOS",
+        "explicit international edition with authenticated WorkBuddy AI desktop configuration",
+        "bundled CLI 2.137.1; bounded Read/Write tasks only"
+      ],
+      "deterministicCheck": "npm run check:codex-workbuddy",
+      "liveSmoke": "npm run smoke:workbuddy"
     }
   ]
 }

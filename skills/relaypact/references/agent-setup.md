@@ -3,8 +3,9 @@
 Read this reference after selecting a RelayPact CLI route and only prepare the
 artifacts that route requires. The shared Host requirements do not require CLI
 setup. Codex uses an envelope, worker profile registry and private lifecycle
-roots; Cursor uses an envelope and optional persistent lifecycle roots; Pi uses
-an envelope. Cursor and Pi do not require a Codex profile registry.
+roots; Cursor uses an envelope and optional persistent lifecycle roots; Pi and
+WorkBuddy use an envelope. WorkBuddy also requires an explicit mainland or
+international edition. These direct executors do not require a Codex profile registry.
 
 The Agent prepares configuration; the human or coordinating host owns material
 authority and final acceptance.
@@ -22,6 +23,10 @@ node <skill-directory>/scripts/relaypact.mjs doctor
 Do not load Pi, Cursor, a provider, a router, or credentials during default
 support discovery. Probe Cursor only after explicit route selection with
 `doctor --route codex-cursor`; that diagnostic must not invoke a model.
+For WorkBuddy, explicitly select `doctor --route codex-workbuddy --edition
+mainland|international`; it checks distribution identity and configuration presence,
+not authentication. See [workbuddy.md](workbuddy.md) for native configuration and
+bounded file-task limits.
 Use `support-matrix.json` as the route-status authority. Treat doctor as local
 readiness only: report the Codex CLI version, `codex exec`, packaged Skill,
 marketplace/plugin visibility, aggregate state, and remediation. `needs_setup`
@@ -138,7 +143,7 @@ Do not edit task lifecycle state, task controls, or review evidence manually.
 ## 8. Explain evidence and decision choices
 
 Read the available review evidence and actual artifact: the Codex capsule
-candidate patch or the direct workspace changes for Cursor/Pi. Explain:
+candidate patch or the direct workspace changes for Cursor/Pi/WorkBuddy. Explain:
 
 - executor status versus host-observed eligibility;
 - actual changed paths and scope breaches;
@@ -153,7 +158,7 @@ Present `accept`, `reject`, or `abandon` only when supported by current evidence
 and user-granted authority. For Codex and persistent Cursor, a supported terminal
 decision archives evidence but never applies a patch or performs Git, release,
 publication or
-deployment actions. Cursor/Pi execution can already have changed the workspace;
+deployment actions. Cursor/Pi/WorkBuddy execution can already have changed the workspace;
 rejection does not revert it. One-shot results remain pending at the tool level.
 For unsupported terminal commands, explain the Host review separately instead
 of fabricating a lifecycle decision.

@@ -37,3 +37,10 @@ returns exit code `1`. The JSON review is still authoritative, and a successful
 process exit never implies host acceptance.
 
 The CLI never falls back from one execution harness to another.
+
+`run-workbuddy --edition mainland|international` selects the corresponding
+experimental desktop executor. `--read-only` narrows tools to Read; otherwise
+Read/Write use native per-invocation path grants. `doctor --route codex-workbuddy --edition ...`
+checks identity and configuration presence without starting the harness or
+claiming authenticated readiness. The route is single-shot and leaves Host
+acceptance pending; failed/rejected/malformed results return exit code 1.

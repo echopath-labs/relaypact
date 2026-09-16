@@ -7,6 +7,8 @@ const EXPECTED_PACKAGES = new Map([
   ["adapter-codex-codex", "@relaypact/adapter-codex-codex"],
   ["adapter-codex-cursor", "@relaypact/adapter-codex-cursor"],
   ["adapter-codex-pi", "@relaypact/adapter-codex-pi"],
+  ["adapter-codex-workbuddy", "@relaypact/adapter-codex-workbuddy"],
+  ["executor-workbuddy", "@relaypact/executor-workbuddy"],
   ["cli", "@relaypact/cli"],
   ["contracts", "@relaypact/contracts"],
   ["core", "@relaypact/core"],
@@ -37,6 +39,8 @@ const ALLOWED_DEPENDENCIES = new Map([
   ["adapter-codex-codex", new Set(["contracts", "core", "executor-codex", "host-codex"])],
   ["adapter-codex-cursor", new Set(["contracts", "core", "executor-cursor", "host-codex"])],
   ["adapter-codex-pi", new Set(["contracts", "core", "executor-pi", "host-codex"])],
+  ["executor-workbuddy", new Set(["contracts", "core"])],
+  ["adapter-codex-workbuddy", new Set(["contracts", "core", "executor-workbuddy", "host-codex"])],
   ["cli", new Set([...EXPECTED_PACKAGES.keys()].filter((name) => name !== "cli"))]
 ]);
 
@@ -86,6 +90,40 @@ const ROUTE_EXPECTATIONS = new Map([
     ],
     deterministicCheck: "npm run check:codex-cursor",
     liveSmoke: "npm run smoke:cursor"
+  }],
+  ["codex-workbuddy", {
+    hostPackage: "packages/host-codex",
+    executorPackage: "packages/executor-workbuddy",
+    adapterPackage: "packages/adapter-codex-workbuddy",
+    executionHarness: "workbuddy",
+    status: "experimental",
+    sourceIncluded: true,
+    rootPluginActivation: false,
+    prerequisites: [
+      "Node.js 20 or later",
+      "macOS",
+      "explicit mainland edition with authenticated WorkBuddy desktop configuration",
+      "bundled CLI 2.137.1; bounded Read/Write tasks only"
+    ],
+    deterministicCheck: "npm run check:codex-workbuddy",
+    liveSmoke: "npm run smoke:workbuddy"
+  }],
+  ["codex-workbuddy-ai", {
+    hostPackage: "packages/host-codex",
+    executorPackage: "packages/executor-workbuddy",
+    adapterPackage: "packages/adapter-codex-workbuddy",
+    executionHarness: "workbuddy",
+    status: "experimental",
+    sourceIncluded: true,
+    rootPluginActivation: false,
+    prerequisites: [
+      "Node.js 20 or later",
+      "macOS",
+      "explicit international edition with authenticated WorkBuddy AI desktop configuration",
+      "bundled CLI 2.137.1; bounded Read/Write tasks only"
+    ],
+    deterministicCheck: "npm run check:codex-workbuddy",
+    liveSmoke: "npm run smoke:workbuddy"
   }]
 ]);
 

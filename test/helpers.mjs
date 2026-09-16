@@ -6,12 +6,12 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export async function createGitRepository() {
+export async function createGitRepository(readme = "# Fixture\n") {
   const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-test-"));
   await execFileAsync("git", ["init", "-b", "main"], { cwd: root });
   await execFileAsync("git", ["config", "user.email", "tests@example.invalid"], { cwd: root });
   await execFileAsync("git", ["config", "user.name", "RelayPact Tests"], { cwd: root });
-  await writeFile(path.join(root, "README.md"), "# Fixture\n", "utf8");
+  await writeFile(path.join(root, "README.md"), readme, "utf8");
   await execFileAsync("git", ["add", "README.md"], { cwd: root });
   await execFileAsync("git", ["commit", "-m", "test: baseline"], { cwd: root });
   return root;

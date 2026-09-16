@@ -15,7 +15,7 @@
     "relaypact": "./bin/relaypact.mjs"
   },
   "scripts": {
-    "test": "npm run test:contracts && npm run test:core && npm run test:codex-codex && npm run test:codex-pi && npm run test:codex-cursor && npm run test:boundaries",
+    "test": "npm run test:contracts && npm run test:core && npm run test:codex-codex && npm run test:codex-pi && npm run test:codex-cursor && npm run test:boundaries && npm run check:codex-workbuddy",
     "test:contracts": "node --test test/context-contract.test.mjs",
     "test:core": "node --test test/context-planner.test.mjs",
     "test:codex-codex": "node --test test/codex-*.test.mjs",
@@ -36,6 +36,8 @@
     "check:codex-pi": "npm run test:codex-pi",
     "check:codex-cursor": "npm run test:codex-cursor",
     "check:package": "npm run validate:architecture && npm run validate:package && npm run test:boundaries",
-    "check": "npm run validate:architecture && npm run validate:package && npm test"
+    "check": "npm run validate:architecture && npm run validate:package && npm test",
+    "check:codex-workbuddy": "node --test test/workbuddy-delegation.test.mjs",
+    "smoke:workbuddy": "node --test test/integration/workbuddy-smoke.test.mjs"
   }
 }
