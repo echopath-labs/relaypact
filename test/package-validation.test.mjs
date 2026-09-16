@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/pr
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { validatePackage } from "../scripts/validate-package.mjs";
 import { validateArchitecture } from "../scripts/validate-architecture.mjs";
 import { makeMinimalPlugin } from "./helpers.mjs";
@@ -131,7 +131,7 @@ test("public package rejects first-use readiness and lifecycle guidance drift", 
   await rm(root, { recursive: true });
 });
 
-test("public package rejects released-state tag verification and metric guidance drift", async () => {
+test("public package rejects published-install tag verification and metric guidance drift", async () => {
   const root = await copyCurrentPublicPackage();
   for (const relative of [
     "README.md",
@@ -156,11 +156,142 @@ test("public package rejects released-state tag verification and metric guidance
   );
   const errors = await validatePackage(root);
   assert(errors.some((item) => item.includes("README.md must include \"git clone --branch v0.1.2\"")));
-  assert(errors.some((item) => item.includes("README.md must include \"v0.1.2^{}\"")));
+  assert(errors.some((item) => item.startsWith("README.md must include") && item.includes("git -C relaypact-v0.1.2 rev-parse") && item.includes("v0.1.2^{}")));
   assert(errors.some((item) => item.includes("README.md must include \"Latest published release: **v0.1.2**\"")));
   assert(errors.some((item) => item.includes("README.zh-CN.md must include \"relaypactDeclaredInputBytes\"")));
   assert(errors.some((item) => item.includes("docs/manual-configuration.md must include \"relaypactDeclaredInputBytes\"")));
   await rm(root, { recursive: true });
+});
+
+test("candidate rejects premature release claims and installation in either language", async (t) => {
+  const root = await copyCurrentPublicPackage();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const [file, claim] of [
+    ["README.md", "Latest published release: **v0.2.0**"],
+    ["README.zh-CN.md", "最新已发布版本：**v0.2.0**"]
+  ]) {
+    const target = path.join(root, file);
+    await writeFile(target, `${await readFile(target, "utf8")}\n${claim}\ngit clone --branch v0.2.0\n`);
+  }
+  const errors = await validatePackage(root);
+  for (const file of ["README.md", "README.zh-CN.md"]) {
+    assert(errors.some((item) => item.startsWith(`${file} must not include`) && item.includes("v0.2.0")));
+    assert(errors.some((item) => item.startsWith(`${file} must not include`) && item.includes("git clone --branch")));
+  }
+});
+
+test("candidate rejects stale versioned status and missing unreleased changelog", async (t) => {
+  const root = await copyCurrentPublicPackage();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const guide = path.join(root, "docs/agent-quickstart.zh-CN.md");
+  await writeFile(guide, (await readFile(guide, "utf8")).replace("0.2.0 Public Preview source candidate", "0.1.2 Public Preview source candidate"));
+  const changelog = path.join(root, "CHANGELOG.md");
+  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.2.0] - Unreleased - Public Preview", "## [0.2.0] - 2026-01-01 - Public Preview"));
+  const errors = await validatePackage(root);
+  assert(errors.some((item) => item.startsWith("docs/agent-quickstart.zh-CN.md must include") && item.includes("0.2.0 Public Preview source candidate")));
+  assert(errors.some((item) => item.startsWith("CHANGELOG.md must include") && item.includes("Unreleased")));
+});
+
+test("versioned documentation requires complete install identity without publication claims", async (t) => {
+  const root = await copyCurrentPublicPackage();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const validator = path.join(root, "scripts/validate-package.mjs");
+  await writeFile(validator, (await readFile(validator, "utf8")).replace('const PROJECT_RELEASE_STATE = "candidate";', 'const PROJECT_RELEASE_STATE = "versioned";'));
+  const { validatePackage: validateReleased } = await import(pathToFileURL(validator).href);
+  let errors = await validateReleased(root);
+  assert(errors.some((item) => item.includes("README.md must include") && item.includes("git clone --branch v0.2.0")));
+  assert(errors.some((item) => item.includes("dated Public Preview release heading")));
+  for (const file of ["README.md", "README.zh-CN.md", "docs/agent-quickstart.md", "docs/agent-quickstart.zh-CN.md", "docs/manual-configuration.md"]) {
+    const target = path.join(root, file);
+    const content = (await readFile(target, "utf8"))
+      .replace(/  `v0\.2\.0` is not released;[\s\S]*?installation below\.\n/u, "")
+      .replace(/  `v0\.2\.0` 尚未发布；[\s\S]*?v0\.1\.2 中。\n/u, "")
+      .replace(/- Current source: \*\*0\.2\.0 Public Preview source candidate\*\*, unreleased\.\n  The release installation below does not include these candidate changes\.\n/u, "")
+      .replace(/- 当前源码为 \*\*0\.2\.0 Public Preview source candidate\*\*，尚未发布；\n  下文的 release 安装不包含这些候选改动。\n/u, "")
+      .replace("This tutorial covers the published Codex capsule tooling. The current-source", "This tutorial covers the installation target's Codex capsule tooling. The")
+      .replace("from CLI setup; that revision is not part of the v0.1.2 installation below.", "from CLI setup.")
+      .replace("本教程演示已发布的 Codex capsule", "本教程演示安装目标版本的 Codex capsule")
+      .replace("配置；该修订尚未包含在下文安装的 v0.1.2 中。", "配置。")
+      .replace(", not a published\nrelease.", ".")
+      .replace("This guidance revision is in the current working source and is not included in\nthe published v0.1.2 installation.", "This version includes the Host guidance revision.")
+      .replace("位于当前工作源码，尚未包含在已发布的 v0.1.2 安装物中。", "已包含在安装目标版本中。")
+      .replaceAll("0.2.0 Public Preview source candidate", "0.2.0 Public Preview")
+      .replaceAll("`v0.2.0` is not released", "`v0.2.0` is the release target")
+      .replaceAll("`v0.2.0` 尚未发布", "`v0.2.0` 为安装目标版本")
+      .replaceAll("0.1.2", "0.2.0")
+      .replaceAll("Install the latest published release", "Install the release target")
+      .replaceAll("Install and verify the latest published release:", "Install and verify the release target:")
+      .replace("Latest published release: **v0.2.0**", "Release target: **v0.2.0**")
+      .replace("最新已发布版本：**v0.2.0**", "安装目标版本：**v0.2.0**")
+      .replaceAll("latest published release is \u0060v0.2.0\u0060", "installation target is \u0060v0.2.0\u0060")
+      .replaceAll("\u0060v0.2.0\u0060 is the latest published release", "\u0060v0.2.0\u0060 is the installation target")
+      .replaceAll("\u0060v0.2.0\u0060 是最新已发布版本", "\u0060v0.2.0\u0060 是安装目标版本")
+      .replaceAll("最新已发布版本", "安装目标版本");
+    await writeFile(target, "Before installation, confirm https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0 is visible. Otherwise stop and use v0.1.2.\n\n" + content);
+  }
+  const changelog = path.join(root, "CHANGELOG.md");
+  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.2.0] - Unreleased - Public Preview", "## [0.2.0] - 2026-01-01 - Public Preview"));
+  const comparisonLink = "[0.2.0]: https://github.com/echopath-labs/relaypact/compare/v0.1.2...v0.2.0";
+  const datedChangelog = (await readFile(changelog, "utf8"))
+    .replace(/- This is an unreleased source candidate\.[\s\S]*?implied by package metadata\./u, "- Install v0.2.0 only after the official GitHub Release is visible and verify its peeled tag commit.");
+  const checklist = path.join(root, "RELEASING.md");
+  await writeFile(checklist, (await readFile(checklist, "utf8"))
+    .replace(/The checked-in state is a 0\.2\.0 source candidate\.[\s\S]*?Candidate readiness does not establish publication\./u,
+      "The checked-in metadata describes 0.2.0 Public Preview, dated 2026-01-01."));
+  await writeFile(changelog, `${datedChangelog}\n${comparisonLink}\n`);
+  assert.deepEqual(await validateReleased(root), []);
+  for (const invalidLink of ["", comparisonLink.replace("v0.1.2...", "v0.1.1...")]) {
+    await writeFile(changelog, `${datedChangelog}\n${invalidLink}\n`);
+    assert((await validateReleased(root)).some((item) => item.startsWith("CHANGELOG.md must include") && item.includes("compare/v0.1.2...v0.2.0")));
+  }
+  await writeFile(changelog, `${datedChangelog}\n${comparisonLink}\n`);
+  for (const [file, claim] of [
+    ["README.md", "Install the latest published release"],
+    ["docs/manual-configuration.md", "Install and verify the latest published release:"],
+    ["README.zh-CN.md", "安装最新已发布版本"]
+  ]) {
+    const target = path.join(root, file);
+    const valid = await readFile(target, "utf8");
+    await writeFile(target, `${valid}\n${claim}\n`);
+    assert((await validateReleased(root)).some((item) => item === `${file} must not claim the installation target is the latest published release.`));
+    await writeFile(target, valid);
+  }
+  for (const file of ["README.md", "README.zh-CN.md", "docs/agent-quickstart.md", "docs/agent-quickstart.zh-CN.md", "docs/manual-configuration.md"]) {
+    const target = path.join(root, file);
+    const valid = await readFile(target, "utf8");
+    const releaseUrl = "https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0";
+    await writeFile(target, valid.replaceAll(releaseUrl, "(release link moved)") + `\nCheck ${releaseUrl} before installation.\n`);
+    assert((await validateReleased(root)).some((item) => item === `${file} must put the Release availability precondition before installation commands.`));
+    await writeFile(target, valid + "\nThis checkout is not a published release.\n");
+    assert((await validateReleased(root)).some((item) => item === `${file} must not retain candidate-only release status.`));
+    await writeFile(target, valid);
+  }
+  for (const [file, from, to, expected] of [
+    ["CHANGELOG.md", "### Compatibility", "### Compatibility\n\nThis is an unreleased source candidate.", "CHANGELOG.md must not retain candidate-only status"],
+    ["RELEASING.md", "The checked-in metadata describes 0.2.0 Public Preview, dated 2026-01-01.", "The checked-in state is a 0.2.0 source candidate. The release date is intentionally unset.", "RELEASING.md must describe the dated versioned current state."]
+  ]) {
+    const target = path.join(root, file);
+    const valid = await readFile(target, "utf8");
+    await writeFile(target, valid.replace(from, to));
+    assert((await validateReleased(root)).some((item) => item.startsWith(expected)));
+    await writeFile(target, valid);
+  }
+  const manual = path.join(root, "docs/manual-configuration.md");
+  const validManual = await readFile(manual, "utf8");
+  for (const [from, to, expected] of [
+    ['p.version!=="0.2.0"', 'p.version!=="0.1.2"', 'if(p.version'],
+    ['cd relaypact-v0.2.0', 'cd relaypact-v0.1.2', 'cd relaypact-v0.2.0'],
+    ["git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}'", "git -C relaypact-v0.1.2 rev-parse 'v0.2.0^{}'", "git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}'"]
+  ]) {
+    await writeFile(manual, validManual.replaceAll(from, to));
+    const invalid = await validateReleased(root);
+    assert(invalid.some((item) => item.startsWith("docs/manual-configuration.md must include") && item.includes(expected)));
+  }
+  await writeFile(manual, validManual);
+  const chinese = path.join(root, "README.zh-CN.md");
+  await writeFile(chinese, (await readFile(chinese, "utf8")).replace("安装目标版本：**v0.2.0**", "最新已发布版本：**v0.2.0**"));
+  errors = await validateReleased(root);
+  assert(errors.some((item) => item.startsWith("README.zh-CN.md must include") && item.includes("v0.2.0")));
 });
 
 test("public package rejects Pi promotion into the Codex-only first path", async () => {

@@ -13,6 +13,8 @@ RelayPact 的通用目标是指导 Host 委派与验收。本教程演示已发�
 
 当前发布事实：
 
+- 当前源码为 **0.2.0 Public Preview source candidate**，尚未发布；
+  下文的 release 安装不包含这些候选改动。
 - `v0.1.2` 是最新已发布版本；`v0.1.1` 仍可使用。
 - 本指南安装版本化 tag，并验证 peel 后的 commit SHA。
 - Pi 是 experimental、inactive；本流程不会安装、加载或调用它。

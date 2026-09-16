@@ -21,7 +21,9 @@ RelayPact 给 Host Agent（甲方）一套稳定的委派与验收参考。Host 
 
 ## 发布状态
 
-- 源码包元数据：**0.1.2 Public Preview**；未发布改动与已发布 tag 按下文区分。
+- 源码包元数据：**0.2.0 Public Preview source candidate**。
+  `v0.2.0` 尚未发布；新版 Host 规约与 Cursor 改动仅在经审核的源码中，
+  不包含在下文安装的 v0.1.2 中。
 - 最新已发布版本：**v0.1.2**。
 - 支持状态：`codex-codex` 是 `public-preview`；`codex-pi` 保持
   `experimental`、inactive；`codex-cursor` 已包含源码，但仍是
