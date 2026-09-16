@@ -15,6 +15,14 @@ All notable public changes to RelayPact are recorded here.
 - Offline checks for identity, terminal output, interruption, native login errors
   and Host verification; opt-in live acceptance separately selects each edition.
 
+### Fixed
+
+- WorkBuddy repository Read ask rules reject unmatched reads that native dontAsk
+  would otherwise allow automatically; existing native allow rules remain additive.
+- WorkBuddy doctor accepts both support-matrix route IDs and rejects mismatched
+  editions. Nonzero native login failures retain their authentication diagnosis
+  without masking interrupted or truncated execution.
+
 ## [0.2.0] - 2026-09-16 - Public Preview
 
 ### Added

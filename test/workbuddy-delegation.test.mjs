@@ -85,6 +85,7 @@ test("launch preserves native roots, narrows tools, omits model/auth overrides a
       assert.equal(args[args.indexOf("--tools") + 1], "Read,Write");
       assert.equal(args[args.indexOf("--permission-mode") + 1], "dontAsk");
       const settings = JSON.parse(args[args.indexOf("--settings") + 1]);
+      assert.deepEqual(settings.permissions.ask, [`Read(/${options.workingDirectory}/**)`]);
       assert(settings.permissions.allow.includes(`Write(/${options.workingDirectory}/allowed.txt)`));
       assert(settings.permissions.deny.includes(`Write(/${options.workingDirectory}/private.txt)`));
       assert(!("model" in settings));
@@ -113,9 +114,21 @@ test("timeout, cancellation, truncation and zero-exit login errors cannot pass",
     const result = await runExecutor(makeEnvelope(options.workingDirectory), { ...options, runProcess: async () => processResult([terminal()], extra) });
     assert.equal(result.reportedStatus, "failed");
   }
-  const login = await runExecutor(makeEnvelope(options.workingDirectory), { ...options, runProcess: async () => processResult([], { stdout: "", stderr: "Authentication required. Please use /login command to sign in to your account" }) });
-  assert.equal(login.reportedStatus, "blocked");
-  assert.equal(login.failureCode, "workbuddy_authentication_unavailable");
+  for (const exitCode of [0, 1, 42]) {
+    for (const state of ["required", "failed"]) {
+      const login = await runExecutor(makeEnvelope(options.workingDirectory), { ...options, runProcess: async () => processResult([], { exitCode, stdout: "", stderr: `Authentication ${state}. Please use /login command to sign in to your account` }) });
+      assert.equal(login.reportedStatus, "blocked");
+      assert.equal(login.failureCode, "workbuddy_authentication_unavailable");
+      assert.equal(login.exitCode, exitCode);
+    }
+  }
+  for (const bounds of [{ timedOut: true }, { cancelled: true }, { signal: "SIGTERM" }, { stdoutTruncated: true }, { stderrTruncated: true }]) {
+    const result = await runExecutor(makeEnvelope(options.workingDirectory), { ...options, runProcess: async () => processResult([], {
+      exitCode: 1, stderr: "Authentication failed. Please use /login", ...bounds
+    }) });
+    assert.equal(result.failureCode, "workbuddy_process_failed");
+    assert.equal(result.reportedStatus, "failed");
+  }
 });
 
 test("identity mutation and same-session requests stop before spawning", async (t) => {
@@ -174,6 +187,7 @@ test("read grants respect explicit authority and original prohibitions in both m
         const scope = { allowedPaths: ["allowed.txt"], forbiddenPaths, ...(readablePaths === undefined ? {} : { readablePaths }) };
         const result = await runDelegation(makeEnvelope(root, { scope }), { ...options, readOnly, runProcess: async (command, args) => {
           const settings = JSON.parse(args[args.indexOf("--settings") + 1]).permissions;
+          assert.deepEqual(settings.ask, [`Read(/${canonicalRoot}/**)`]);
           assert.deepEqual(settings.allow.filter((rule) => rule.startsWith("Read(")),
             (readablePaths ?? scope.allowedPaths).map((p) => `Read(/${canonicalRoot}/${p})`));
           for (const p of forbiddenPaths) {
@@ -189,6 +203,26 @@ test("read grants respect explicit authority and original prohibitions in both m
         } });
         assert.equal(result.status, "completed");
       }
+    }
+  }
+});
+
+test("doctor accepts each matrix route only with its matching explicit edition", async (t) => {
+  for (const [route, edition] of [["codex-workbuddy", "mainland"], ["codex-workbuddy-ai", "international"]]) {
+    const installationOptions = await installation(t, edition);
+    let stdout = "", stderr = "";
+    const io = { stdout: { write(text) { stdout += text; } }, stderr: { write(text) { stderr += text; } }, exitCode: 0 };
+    await runCli(["doctor", "--route", route, "--edition", edition, "--app", installationOptions.appPath], io, { doctor: installationOptions });
+    assert.equal(stderr, "");
+    assert.equal(io.exitCode, 0);
+    assert.equal(JSON.parse(stdout).edition, edition);
+    assert.equal(JSON.parse(stdout).state, "available");
+    for (const selection of [[], ["--edition", edition === "mainland" ? "international" : "mainland"]]) {
+      stdout = ""; stderr = ""; io.exitCode = 0;
+      await runCli(["doctor", "--route", route, ...selection, "--app", installationOptions.appPath], io, { doctor: installationOptions });
+      assert.equal(stdout, "");
+      assert.equal(io.exitCode, 1);
+      assert.match(stderr, /edition/);
     }
   }
 });

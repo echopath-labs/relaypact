@@ -114,6 +114,9 @@ async function permissionSettings(envelope, readOnly) {
   }
   return { permissions: {
     allow: [...readPatterns.map((p) => rule("Read", p)), ...writePatterns.map((p) => rule("Write", p))],
+    // Native dontAsk otherwise auto-allows reads in the working directory.
+    // Ask follows explicit allow rules and is denied by the noninteractive harness.
+    ask: [rule("Read", "**")],
     deny: [...denyPatterns.flatMap((p) => [rule("Read", p), rule("Write", p)]), ...(readOnly ? [rule("Write", "**")] : [])]
   } };
 }
@@ -161,11 +164,14 @@ export async function runExecutor(envelope, options = {}) {
       cwd: workingDirectory, env, timeoutMs: envelope.execution?.timeoutMs ?? 120_000,
       maxCaptureBytes: 2 * 1024 * 1024, signal: options.signal
     });
-    if (result.timedOut || result.cancelled || result.signal || result.exitCode !== 0 || result.stdoutTruncated || result.stderrTruncated) {
+    if (result.timedOut || result.cancelled || result.signal || result.stdoutTruncated || result.stderrTruncated) {
       return outcome("failed", "WorkBuddy did not complete within the process and evidence bounds.", result, "workbuddy_process_failed");
     }
     if (/Authentication (?:required|failed)\. Please use \/login/u.test(result.stderr ?? "")) {
       return outcome("blocked", "The selected WorkBuddy native login is unavailable.", result, "workbuddy_authentication_unavailable");
+    }
+    if (result.exitCode !== 0) {
+      return outcome("failed", "WorkBuddy exited unsuccessfully.", result, "workbuddy_process_failed");
     }
     const parsed = parseWorkBuddyResult(result.stdout);
     if (!parsed) return outcome("malformed", "WorkBuddy did not return the required terminal task result.", result, "workbuddy_result_invalid");

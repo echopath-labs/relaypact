@@ -23,8 +23,9 @@ node <skill-directory>/scripts/relaypact.mjs doctor
 Do not load Pi, Cursor, a provider, a router, or credentials during default
 support discovery. Probe Cursor only after explicit route selection with
 `doctor --route codex-cursor`; that diagnostic must not invoke a model.
-For WorkBuddy, explicitly select `doctor --route codex-workbuddy --edition
-mainland|international`; it checks distribution identity and configuration presence,
+For WorkBuddy, explicitly select `doctor --route codex-workbuddy --edition mainland`
+or `doctor --route codex-workbuddy-ai --edition international`;
+it checks distribution identity and configuration presence,
 not authentication. See [workbuddy.md](workbuddy.md) for native configuration and
 bounded file-task limits.
 Use `support-matrix.json` as the route-status authority. Treat doctor as local

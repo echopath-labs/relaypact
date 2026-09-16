@@ -21,5 +21,8 @@ provider diagnostics are not forwarded into RelayPact evidence.
 
 Explicit read scope is preserved; absent `readablePaths` defaults to the writable
 paths for this route only. Original forbidden paths deny both Read and Write.
+Repository Read ask rules prevent dontAsk's automatic working-directory reads
+when no explicit native allow matches. Existing native allow rules still precede
+ask rules; this does not intersect all native policy with the task envelope.
 Read-only tasks require a clean repository. Sanitized exposure and context
 planning are rejected before native execution.

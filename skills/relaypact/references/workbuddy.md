@@ -24,10 +24,15 @@ Inspect installation/configuration presence without starting the harness:
 ```text
 node <skill-directory>/scripts/relaypact.mjs doctor
   --route codex-workbuddy --edition mainland
+
+node <skill-directory>/scripts/relaypact.mjs doctor
+  --route codex-workbuddy-ai --edition international
 ```
 
 `available` is not an authentication or model-health claim. A login/provider
 failure in a live task stays blocked/failed and must be resolved in that edition.
+Both doctor routes require the matching explicit edition; conflicting selections
+are rejected before inspecting an installation.
 
 ## Bounded file tasks
 
@@ -63,6 +68,11 @@ do not expand an explicit read scope. Original `forbiddenPaths` deny both Read
 and Write; repository control directories are also denied. If native Write
 requires reading an existing file outside the read scope, report blocked and
 request the missing authority instead of adding it implicitly.
+
+Native `dontAsk` otherwise permits reads inside its working directory without an
+allow rule. This route adds a repository-wide Read `ask` rule after explicit
+allows; noninteractive execution rejects those unmatched reads. Pre-existing
+native allow rules still take priority over ask rules, as described above.
 
 These tool restrictions are not an OS sandbox. Native settings, hooks, plugins
 and startup services remain harness-owned and may perform their own operations.
