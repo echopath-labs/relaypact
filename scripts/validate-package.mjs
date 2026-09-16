@@ -269,7 +269,15 @@ async function validateProjectOnboarding(root, errors) {
     requireText(files["README.md"], [`Release target: **v${PROJECT_VERSION}**`], "README.md", errors);
     requireText(files["README.zh-CN.md"], [`安装目标版本：**v${PROJECT_VERSION}**`], "README.zh-CN.md", errors);
     for (const relative of candidateOnboardingFiles) {
-      requireText(files[relative], [`releases/tag/v${PROJECT_VERSION}`], relative, errors);
+      const text = files[relative] ?? "";
+      const releaseGate = text.indexOf(`releases/tag/v${PROJECT_VERSION}`);
+      const firstInstall = text.indexOf(`git clone --branch v${PROJECT_VERSION}`);
+      if (releaseGate < 0 || firstInstall < 0 || releaseGate > firstInstall) {
+        errors.push(`${relative} must put the Release availability precondition before installation commands.`);
+      }
+      if (/unreleased|not a published\s+release|does not include these candidate changes|not part of the v0\.2\.0 installation|only in reviewed source|尚未发布|尚未包含|不包含在下文安装|不包含这些候选改动/iu.test(text)) {
+        errors.push(`${relative} must not retain candidate-only release status.`);
+      }
       if (/latest published release|最新已发布版本/iu.test(files[relative] ?? "")) {
         errors.push(`${relative} must not claim the installation target is the latest published release.`);
       }
@@ -287,6 +295,15 @@ async function validateProjectOnboarding(root, errors) {
     requireText(files["CHANGELOG.md"], [
       `[${PROJECT_VERSION}]: https://github.com/echopath-labs/relaypact/compare/v${LATEST_PUBLISHED_VERSION}...v${PROJECT_VERSION}`
     ], "CHANGELOG.md", errors);
+    const currentChangelog = (files["CHANGELOG.md"] ?? "").split(`## [${PROJECT_VERSION}]`)[1]?.split("\n## [")[0] ?? "";
+    if (/unreleased|source candidate|latest published release remains|no v0\.2\.0 tag/iu.test(currentChangelog)) {
+      errors.push("CHANGELOG.md must not retain candidate-only status in the current release section.");
+    }
+    const checklist = files["RELEASING.md"] ?? "";
+    if (!/The checked-in metadata describes 0\.2\.0 Public Preview, dated \d{4}-\d{2}-\d{2}\./u.test(checklist)
+        || /The checked-in state is a 0\.2\.0 source candidate|is intentionally unset/u.test(checklist)) {
+      errors.push("RELEASING.md must describe the dated versioned current state.");
+    }
     const heading = files["CHANGELOG.md"]?.split("\n").find((line) => line.startsWith(`## [${PROJECT_VERSION}]`));
     if (!heading || !/^## \[[0-9.]+\] - \d{4}-\d{2}-\d{2} - Public Preview$/u.test(heading)) {
       errors.push("CHANGELOG.md must include the dated Public Preview release heading.");

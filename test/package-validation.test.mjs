@@ -235,6 +235,26 @@ test("versioned documentation requires complete install identity without publica
     assert((await validatePackage(root)).some((item) => item === `${file} must not claim the installation target is the latest published release.`));
     await writeFile(target, valid);
   }
+  for (const file of ["README.md", "README.zh-CN.md", "docs/agent-quickstart.md", "docs/agent-quickstart.zh-CN.md", "docs/manual-configuration.md"]) {
+    const target = path.join(root, file);
+    const valid = await readFile(target, "utf8");
+    const releaseUrl = "https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0";
+    await writeFile(target, valid.replaceAll(releaseUrl, "(release link moved)") + `\nCheck ${releaseUrl} before installation.\n`);
+    assert((await validatePackage(root)).some((item) => item === `${file} must put the Release availability precondition before installation commands.`));
+    await writeFile(target, valid + "\nThis checkout is not a published release.\n");
+    assert((await validatePackage(root)).some((item) => item === `${file} must not retain candidate-only release status.`));
+    await writeFile(target, valid);
+  }
+  for (const [file, from, to, expected] of [
+    ["CHANGELOG.md", "### Compatibility", "### Compatibility\n\nThis is an unreleased source candidate.", "CHANGELOG.md must not retain candidate-only status"],
+    ["RELEASING.md", "The checked-in metadata describes 0.2.0 Public Preview, dated 2026-09-16.", "The checked-in state is a 0.2.0 source candidate. The release date is intentionally unset.", "RELEASING.md must describe the dated versioned current state."]
+  ]) {
+    const target = path.join(root, file);
+    const valid = await readFile(target, "utf8");
+    await writeFile(target, valid.replace(from, to));
+    assert((await validatePackage(root)).some((item) => item.startsWith(expected)));
+    await writeFile(target, valid);
+  }
   const manual = path.join(root, "docs/manual-configuration.md");
   const validManual = await readFile(manual, "utf8");
   for (const [from, to, expected] of [
