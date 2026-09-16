@@ -1,7 +1,10 @@
 # Contributing
 
-Keep changes scoped to portable delegation contracts or an explicit host,
-executor, or adapter boundary.
+Keep changes scoped to shared Host delegation guidance, portable contracts,
+or an explicit host, executor, or adapter boundary. General Host requirements
+belong in the shared Skill; harness-specific invocation belongs in its selected
+reference and adapter. Keep route claims aligned with `support-matrix.json`;
+Pi and Cursor remain experimental and must not become default prerequisites.
 
 Before submitting a change:
 

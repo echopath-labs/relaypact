@@ -12,8 +12,8 @@ logs, and unpublished workspace decisions outside this repository.
 - `packages/core` owns product-neutral evidence, environment, process, Git,
   filesystem, redaction, and context services.
 - Host, executor, and adapter packages own only their named product boundary.
-- Codex-to-Codex is the public-preview route. Codex-to-Pi is experimental and
-  must never become an implicit Codex prerequisite or fallback.
+- Codex-to-Codex is the public-preview route. Codex-to-Pi and Codex-to-Cursor
+  are experimental and must never become implicit Codex prerequisites or fallbacks.
 - Providers, models, proxies, and optional bridges are route configuration, not
   execution harnesses or core dependencies.
 

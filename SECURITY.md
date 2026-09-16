@@ -2,14 +2,19 @@
 
 ## Supported Versions
 
-RelayPact is currently a human-reviewed `0.1.x` Public Preview.
-Security fixes are provided on a best-effort basis for the latest published
-`0.1.x` release. Unreleased commits, older preview snapshots, unattended use,
-and locally modified adapters are not supported release channels.
+RelayPact is a human-reviewed Public Preview. Security fixes are provided on a
+best-effort basis for the most recent officially published preview. Until the
+[v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0)
+is visible, that supported release remains v0.1.2. Once v0.2.0 is published,
+support moves to the latest published `0.2.x` release. Unreleased commits, older
+preview snapshots, unattended use, and locally modified adapters are not
+supported release channels.
 
-The supported preview route is Codex-to-Codex. Codex-to-Pi security controls are
-retained and tested because its source is public, but that adapter remains
-experimental and is not activated by the root Skill.
+The supported preview route is Codex-to-Codex. Codex-to-Pi and Codex-to-Cursor
+controls are retained and tested because their source is public; both adapters
+remain experimental, explicitly selected, and inactive at the root Plugin.
+Cursor uses its own CLI authentication and model configuration. RelayPact does
+not manage those credentials or claim that direct execution is a sandbox.
 
 ## Reporting A Vulnerability
 

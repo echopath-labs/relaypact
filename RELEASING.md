@@ -39,9 +39,10 @@ the exact SPDX identifier `Apache-2.0`. License drift is a release blocker.
 
 ## 0.2.0 release-time documentation closeout
 
-The checked-in state is a 0.2.0 source candidate. Package and Plugin metadata
-report 0.2.0; v0.1.2 remains the latest published installation. The release date
-is intentionally unset. Candidate readiness does not establish publication.
+The checked-in metadata describes 0.2.0 Public Preview, dated 2026-09-16.
+The release process merges reviewed documentation before publishing the tag
+and GitHub prerelease. Confirm both remote objects exist before treating the
+version as installable; metadata alone does not establish publication.
 Merge the reviewed preparation PR before closing out the release documents.
 Then merge the reviewed release-documentation PR before tagging its verified main
 commit. Release metadata describes that version; installation still requires a

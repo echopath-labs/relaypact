@@ -8,7 +8,7 @@ const CANONICAL_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.
 const PROJECT_NAME = "relaypact";
 const PROJECT_DISPLAY_NAME = "RelayPact";
 const PROJECT_VERSION = "0.2.0";
-const PROJECT_RELEASE_STATE = "candidate";
+const PROJECT_RELEASE_STATE = "versioned";
 const LATEST_PUBLISHED_VERSION = "0.1.2";
 const PROJECT_LICENSE = "Apache-2.0";
 const PROJECT_REPOSITORY = "https://github.com/echopath-labs/relaypact";
@@ -144,6 +144,7 @@ async function validateProjectOnboarding(root, errors) {
     ...SKILL_REFERENCES.map((name) => `skills/relaypact/references/${name}`),
     "CONTRIBUTING.md",
     "RELEASING.md",
+    "SECURITY.md",
     "CHANGELOG.md",
     "LICENSE",
     "NOTICE"
@@ -270,10 +271,13 @@ async function validateProjectOnboarding(root, errors) {
     requireText(files["README.zh-CN.md"], [`安装目标版本：**v${PROJECT_VERSION}**`], "README.zh-CN.md", errors);
     for (const relative of candidateOnboardingFiles) {
       const text = files[relative] ?? "";
-      const releaseGate = text.indexOf(`releases/tag/v${PROJECT_VERSION}`);
-      const firstInstall = text.indexOf(`git clone --branch v${PROJECT_VERSION}`);
-      if (releaseGate < 0 || firstInstall < 0 || releaseGate > firstInstall) {
-        errors.push(`${relative} must put the Release availability precondition before installation commands.`);
+      const installSections = text.split(/(?=^#{1,6} )/mu)
+        .filter((section) => section.includes(`git clone --branch v${PROJECT_VERSION}`));
+      if (installSections.length === 0 || installSections.some((section) => {
+        const releaseGate = section.indexOf(`releases/tag/v${PROJECT_VERSION}`);
+        return releaseGate < 0 || releaseGate > section.indexOf(`git clone --branch v${PROJECT_VERSION}`);
+      })) {
+        errors.push(`${relative} must put the Release availability precondition before installation commands in each install section.`);
       }
       if (/unreleased|not a published\s+release|does not include these candidate changes|not part of the v0\.2\.0 installation|only in reviewed source|尚未发布|尚未包含|不包含在下文安装|不包含这些候选改动/iu.test(text)) {
         errors.push(`${relative} must not retain candidate-only release status.`);
@@ -299,6 +303,10 @@ async function validateProjectOnboarding(root, errors) {
     if (/unreleased|source candidate|latest published release remains|no v0\.2\.0 tag/iu.test(currentChangelog)) {
       errors.push("CHANGELOG.md must not retain candidate-only status in the current release section.");
     }
+    requireText((files["SECURITY.md"] ?? "").replace(/\s+/gu, " "), [
+      `releases/tag/v${PROJECT_VERSION}) is visible, that supported release remains v${LATEST_PUBLISHED_VERSION}.`,
+      `Once v${PROJECT_VERSION} is published, support moves to the latest published \`0.2.x\` release.`
+    ], "SECURITY.md", errors);
     const checklist = files["RELEASING.md"] ?? "";
     if (!/The checked-in metadata describes 0\.2\.0 Public Preview, dated \d{4}-\d{2}-\d{2}\./u.test(checklist)
         || /The checked-in state is a 0\.2\.0 source candidate|is intentionally unset/u.test(checklist)) {
@@ -307,6 +315,11 @@ async function validateProjectOnboarding(root, errors) {
     const heading = files["CHANGELOG.md"]?.split("\n").find((line) => line.startsWith(`## [${PROJECT_VERSION}]`));
     if (!heading || !/^## \[[0-9.]+\] - \d{4}-\d{2}-\d{2} - Public Preview$/u.test(heading)) {
       errors.push("CHANGELOG.md must include the dated Public Preview release heading.");
+    }
+    const changelogDate = heading?.match(/ - (\d{4}-\d{2}-\d{2}) - Public Preview$/u)?.[1];
+    const checklistDate = checklist.match(/The checked-in metadata describes 0\.2\.0 Public Preview, dated (\d{4}-\d{2}-\d{2})\./u)?.[1];
+    if (changelogDate && checklistDate && changelogDate !== checklistDate) {
+      errors.push("RELEASING.md and CHANGELOG.md release dates must agree.");
     }
   } else {
     errors.push("scripts/validate-package.mjs PROJECT_RELEASE_STATE must be candidate or versioned.");
