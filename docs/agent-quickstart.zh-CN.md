@@ -6,6 +6,11 @@
 Codex-to-Codex candidate。RelayPact 使用现有 Codex CLI 中的独立
 `codex exec`，不需要第二个 executor package。
 
+RelayPact 的通用目标是指导 Host 委派与验收。本教程演示已发布的 Codex capsule
+工具流程。当前源码的 [Host 规约](../skills/relaypact/SKILL.md) 已区分通用责任与 CLI
+配置；该修订尚未包含在下文安装的 v0.1.2 中。本教程的候选要到后续获得授权的应用
+步骤才会写入源码。
+
 当前发布事实：
 
 - `v0.1.2` 是最新已发布版本；`v0.1.1` 仍可使用。

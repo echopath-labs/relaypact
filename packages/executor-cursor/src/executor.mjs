@@ -14,7 +14,9 @@ const PROBE_TIMEOUT_MS = 5_000;
 const PROBE_CAPTURE_BYTES = 256 * 1024;
 const EXECUTION_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_CURSOR_BUNDLE_FILES = 1_024;
-const MAX_CURSOR_BUNDLE_BYTES = 512 * 1024 * 1024;
+// Current Node-entry installations also ship standalone binaries. Preserve
+// their complete snapshot and identity within a finite aggregate budget.
+const MAX_CURSOR_BUNDLE_BYTES = 768 * 1024 * 1024;
 const MAX_CURSOR_BUNDLE_DEPTH = 16;
 const SUPPORTED_SHELL_INTERPRETERS = new Set(["bash", "dash", "ksh", "sh", "zsh"]);
 const CURSOR_BUNDLE_RUNTIME_COMMAND = "node";

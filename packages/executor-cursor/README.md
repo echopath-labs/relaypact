@@ -19,12 +19,17 @@ from a private content-verified snapshot. Shell launchers must belong to a
 recognized, bounded `@anysphere/agent-cli-runtime` installation bundle. RelayPact
 fingerprints and snapshots that complete static bundle—including launcher-relative
 companions—before execution, while excluding the runtime-only `.running`
-directory. RelayPact validates the launcher's system-Bash form but does not execute
+directory. The complete static bundle is bounded to 768 MiB, 1,024 files and
+16 directory levels. Standalone binaries shipped alongside the Node entrypoint
+remain part of the fingerprint and private snapshot; they are not omitted to
+fit the budget. Larger or otherwise unsupported installations remain blocked.
+RelayPact validates the launcher's system-Bash form but does not execute
 its shell logic for protected work. It uses a fixed `shell: false` launch profile
 to invoke the verified snapshot `node` and `index.js` by absolute path, with a
 trusted `CURSOR_INVOKED_AS` value. Any launcher-declared `--use-system-ca` path
 is selected only after the fingerprint-matched runtime accepts the same bounded
-version probe; otherwise RelayPact preserves the launcher's no-flag fallback.
+version probe. A conclusive unsupported-option result selects the no-flag path;
+inconclusive probes block readiness without caching an alternative identity.
 Inherited `PATH` is therefore not consulted before protected task or session data
 reaches Cursor, while Cursor retains the bounded Host PATH for delegated tool
 execution. The signed fingerprint binds the bundle, launcher, validated

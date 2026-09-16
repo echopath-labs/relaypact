@@ -42,6 +42,10 @@ const ALLOWED_ACTIONS = new Set([
   "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
 ]);
 const REVIEWED_WORKFLOW_SHA256 = "6ef860d3bf95bf059a1dcc5e9569cdc46fb277411ef7bef55447c9d3916d6533";
+const SKILL_REFERENCES = [
+  "agent-setup.md", "task-envelope.md", "executor-result.md",
+  "correction-request.md", "scope-breach.md", "invocation.md", "context-planning.md"
+];
 const REQUIRED_PREVIEW_FILES = [
   "AGENTS.md",
   "CHANGELOG.md",
@@ -137,7 +141,7 @@ async function validateProjectOnboarding(root, errors) {
     "docs/agent-quickstart.zh-CN.md",
     "docs/manual-configuration.md",
     "skills/relaypact/SKILL.md",
-    "skills/relaypact/references/agent-setup.md",
+    ...SKILL_REFERENCES.map((name) => `skills/relaypact/references/${name}`),
     "CONTRIBUTING.md",
     "RELEASING.md",
     "LICENSE",
@@ -198,9 +202,11 @@ async function validateProjectOnboarding(root, errors) {
     "额度或费用"
   ], "docs/agent-quickstart.zh-CN.md", errors);
 
+  // Check discovery and reference integrity here; Host behavior needs actual trials.
+  // CLI prerequisites belong to conditional setup, not the shared Skill entry.
   requireText(files["skills/relaypact/SKILL.md"], [
-    `name: ${PROJECT_SKILL}`, "# RelayPact", "references/agent-setup.md", "support", "doctor", "codex exec", "credential-free", "private",
-    "Do not substitute", "Acceptance archives evidence"
+    `name: ${PROJECT_SKILL}`, "# RelayPact",
+    ...SKILL_REFERENCES.map((name) => `references/${name}`)
   ], "skills/relaypact/SKILL.md", errors);
   requireText(files["skills/relaypact/references/agent-setup.md"], [
     "support", "doctor", "codex exec", "readablePaths", "allowedPaths", "credential-free",

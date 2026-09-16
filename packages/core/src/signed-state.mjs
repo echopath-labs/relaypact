@@ -1,11 +1,10 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, lstat, mkdir, open, readFile, rename, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 
-const STALE_LOCK_MS = 15 * 60_000;
 const execFileAsync = promisify(execFile);
 
 async function defaultProcessIdentity(pid) {
@@ -90,36 +89,27 @@ function stateMac(state, key) {
 
 export function createSignedStateStore(statePath, validateState, options = {}) {
   const processIdentity = options.processIdentity ?? defaultProcessIdentity;
-  const lockLeaseMs = options.lockLeaseMs ?? STALE_LOCK_MS;
-  const lockHeartbeatMs = options.lockHeartbeatMs ?? Math.max(10, Math.min(30_000, Math.floor(lockLeaseMs / 3)));
-  if (!Number.isFinite(lockLeaseMs) || lockLeaseMs <= 0 || !Number.isFinite(lockHeartbeatMs) || lockHeartbeatMs <= 0) {
-    throw new TypeError("Signed-state lock lease and heartbeat intervals must be positive finite numbers.");
-  }
   async function reclaimStaleLock(lockPath) {
     const info = await lstat(lockPath).catch(() => null);
     if (!info || !info.isFile() || info.isSymbolicLink() || info.size > 4096) return false;
-    let owner = null;
+    let owner;
     try {
       owner = JSON.parse(await readFile(lockPath, "utf8"));
     } catch {
-      // A malformed private lock is reclaimable only after a conservative age bound.
-    }
-    if (Number.isSafeInteger(owner?.pid) && owner.pid > 0) {
-      try {
-        process.kill(owner.pid, 0);
-        const observedIdentity = await processIdentity(owner.pid).catch(() => null);
-        const ownerHasIdentity = typeof owner.processIdentity === "string" && owner.processIdentity.length > 0;
-        const observedHasIdentity = typeof observedIdentity === "string" && observedIdentity.length > 0;
-        if (ownerHasIdentity && observedHasIdentity) {
-          if (owner.processIdentity === observedIdentity) return false;
-        } else if (Date.now() - info.mtimeMs < lockLeaseMs) {
-          return false;
-        }
-      } catch (error) {
-        if (error?.code !== "ESRCH") return false;
-      }
-    } else if (Date.now() - info.mtimeMs < lockLeaseMs) {
+      // This may be a live owner that has not finished writing its metadata.
       return false;
+    }
+    if (!Number.isSafeInteger(owner?.pid) || owner.pid <= 0) return false;
+    try {
+      process.kill(owner.pid, 0);
+      const observedIdentity = await processIdentity(owner.pid).catch(() => null);
+      const ownerHasIdentity = typeof owner.processIdentity === "string" && owner.processIdentity.length > 0;
+      const observedHasIdentity = typeof observedIdentity === "string" && observedIdentity.length > 0;
+      // An expired timestamp cannot prove a live owner left its critical section.
+      // Unknown identity remains busy even if a probe or heartbeat was delayed.
+      if (!ownerHasIdentity || !observedHasIdentity || owner.processIdentity === observedIdentity) return false;
+    } catch (error) {
+      if (error?.code !== "ESRCH") return false;
     }
     const current = await lstat(lockPath).catch(() => null);
     if (!current || current.dev !== info.dev || current.ino !== info.ino) return false;
@@ -172,8 +162,6 @@ export function createSignedStateStore(statePath, validateState, options = {}) {
     const lockPath = path.join(lockRoot, `${path.basename(integrityKeyPath(statePath), ".key")}.lock`);
     let handle;
     let lockIdentity;
-    let heartbeat;
-    let heartbeatRunning = false;
     try {
       try {
         handle = await open(lockPath, "wx", 0o600);
@@ -193,22 +181,6 @@ export function createSignedStateStore(statePath, validateState, options = {}) {
         await rm(lockPath, { force: true }).catch(() => {});
         throw error;
       }
-      heartbeat = setInterval(async () => {
-        if (heartbeatRunning) return;
-        heartbeatRunning = true;
-        try {
-          const current = await lstat(lockPath).catch(() => null);
-          if (current && current.dev === lockIdentity.dev && current.ino === lockIdentity.ino) {
-            const now = new Date();
-            await utimes(lockPath, now, now);
-          }
-        } catch {
-          // The owner keeps the inode-bound lock; a later contender still verifies the lease.
-        } finally {
-          heartbeatRunning = false;
-        }
-      }, lockHeartbeatMs);
-      heartbeat.unref?.();
     } catch (error) {
       if (error?.code === "EEXIST") {
         throw new DelegationError("task_state_busy", "Task lifecycle state is being updated by another host action.");
@@ -218,7 +190,6 @@ export function createSignedStateStore(statePath, validateState, options = {}) {
     try {
       return await operation({ read: readUnlocked, persist, key: () => loadIntegrityKey(statePath) });
     } finally {
-      if (heartbeat) clearInterval(heartbeat);
       await handle.close().catch(() => {});
       const current = await lstat(lockPath).catch(() => null);
       if (current && current.dev === lockIdentity.dev && current.ino === lockIdentity.ino) {

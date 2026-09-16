@@ -1,7 +1,7 @@
 import { runLocalDelegation } from "../packages/core/src/local-delegation.mjs";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { access, chmod, copyFile, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { once } from "node:events";
 import path from "node:path";
@@ -2007,3 +2007,83 @@ for (const proof of ["missing", "different-archive", "different-revision"]) {
     } finally { await chmod(integrityRoot, 0o700).catch(() => {}); await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); await rm(archiveRoot, { recursive: true, force: true }); }
   });
 }
+
+test("Cursor larger static bundle preserves complete snapshot and companion identity", async () => {
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-large-bundle-"));
+  let materialized;
+  try {
+    const command = await nodeCursorFixture(privateRoot, source => source);
+    const companion = path.join(path.dirname(command), "cursor-agent-worker-sea");
+    await writeFile(companion, "");
+    await truncate(companion, 600 * 1024 * 1024);
+    await chmod(companion, 0o755);
+    const identity = await resolveCursorExecutable(command);
+    assert.ok(identity, "current larger installations must be admitted");
+    materialized = await materializeCursorExecutable(identity);
+    const copied = path.join(path.dirname(materialized.identity.launchCommand), "cursor-agent-worker-sea");
+    assert.equal((await stat(copied)).size, 600 * 1024 * 1024);
+    assert.notEqual(copied, companion);
+    await writeFile(companion, "changed static executable");
+    await assert.rejects(materializeCursorExecutable(identity), error => error.code === "cursor_executor_mismatch");
+    assert.equal((await stat(copied)).size, 600 * 1024 * 1024);
+  } finally {
+    await materialized?.cleanup();
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor static bundle above 768 MiB is refused before runtime probing", async () => {
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-oversized-bundle-"));
+  try {
+    const command = await nodeCursorFixture(privateRoot, source => source);
+    const companion = path.join(path.dirname(command), "cursor-agent-sea");
+    await writeFile(companion, "");
+    await truncate(companion, 768 * 1024 * 1024 + 1);
+    let probes = 0;
+    const identity = await resolveCursorExecutable(command, {
+      async runProcess() { probes++; throw new Error("oversized bundle must not execute"); }
+    });
+    assert.equal(identity, null);
+    assert.equal(probes, 0);
+  } finally {
+    await rm(privateRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cursor cold correction probe failure preserves signed task state", async () => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cold-correction-"));
+  try {
+    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle" }), {
+      executorCommand: fakeCursor, stateRoot, hostInstanceId: "cursor-host-1"
+    });
+    const before = await readFile(first.statePath, "utf8");
+    const adapterUrl = new URL("../packages/adapter-codex-cursor/src/run-delegation.mjs", import.meta.url).href;
+    const script = `
+      const { correctDelegation } = await import(process.argv[1]);
+      let calls = 0;
+      try {
+        await correctDelegation(process.argv[2], "Keep the same task scope.", {
+          async runProcess(_command, args) {
+            calls++;
+            if (JSON.stringify(args) !== JSON.stringify(["--use-system-ca", "--version"])) {
+              throw new Error("unexpected executor launch");
+            }
+            return { exitCode: null, timedOut: true, stdout: "", stderr: "" };
+          }
+        });
+        throw new Error("correction unexpectedly started");
+      } catch (error) {
+        if (error.code !== "cursor_runtime_probe_unavailable") throw error;
+        console.log(JSON.stringify({ code: error.code, calls }));
+      }
+    `;
+    const { stdout } = await execFileAsync(process.execPath,
+      ["--input-type=module", "-e", script, adapterUrl, first.taskRoot]);
+    assert.deepEqual(JSON.parse(stdout), { code: "cursor_runtime_probe_unavailable", calls: 1 });
+    assert.equal(await readFile(first.statePath, "utf8"), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});

@@ -2,20 +2,26 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-RelayPact 让一个 Codex Agent Instance 把边界明确的工程任务委派给独立 Codex
-executor，同时由协调 Codex 保留范围、证据审查、风险判断和最终验收权。
+RelayPact 给 Host Agent（甲方）一套稳定的委派与验收参考。Host 约定任务、明确权限、
+核对真实证据、处理偏差，并在用户授权内做出验收决定；executor（乙方）接入提供兼容的
+调用方式与证据工具。
+
+[Host Skill](skills/relaypact/SKILL.md) 说明这些通用要求，具体工具参考按需读取。
+[八个审查案例](examples/host-delegation-cases.md) 给出可观察的行为预期。本次规约修订
+位于当前工作源码，尚未包含在已发布的 v0.1.2 安装物中。通用 Host 措辞不代表新增
+其他 Host 产品支持；支持矩阵中接纳的 Host 仍为 Codex。
 
 首个且唯一 active Public Preview 路线是 **Codex → Codex**。RelayPact 提供流程、
 隔离、证据和验收约束；真正执行任务的是用户现有 Codex CLI 中的独立
 `codex exec` 进程。不需要安装第二套 Codex 或单独的 executor package。
 
-**不需要额外安装 executor。**
+对这条 Codex-to-Codex 路线：**不需要额外安装 executor。**
 
 > 英文 `README.md` 是规范性默认版本；如中英文冲突，以英文为准。
 
 ## 发布状态
 
-- Public source 版本：**0.1.2 Public Preview**。
+- 源码包元数据：**0.1.2 Public Preview**；未发布改动与已发布 tag 按下文区分。
 - 最新已发布版本：**v0.1.2**。
 - 支持状态：`codex-codex` 是 `public-preview`；`codex-pi` 保持
   `experimental`、inactive；`codex-cursor` 已包含源码，但仍是
@@ -29,7 +35,7 @@ fallback。
 
 Cursor 的一次性命令仍只返回 pending；可选的私有 state-root 模式增加签名持久审查、
 受保护的同 session correction，以及显式归档的终态决策。它不会修改 Cursor 模型设置，
-也不会应用源码变更。持久 correction 会保留原始只读或写入权限，并在恢复 session 前
+终态决策步骤也不会应用或撤销变更；直接执行期间可能已经修改了工作区。持久 correction 会保留原始只读或写入权限，并在恢复 session 前
 校验绑定的 Cursor 绝对启动路径，以及存在时已解析的 shebang 解释器身份。`prepared` 任务或具有签名执行结束证据的失败任务，可由 Host 显式 abandon
 并清理私有状态；活跃执行 owner 仍存活时会拒绝清理。中断的 `running` 任务
 或缺少结束证据的旧失败状态返回 `execution_stop_unverified` 并保留私有状态。
@@ -100,7 +106,8 @@ codex plugin list --marketplace relaypact-local --json
 获得完整 commit SHA 时才做独立精确比对。
 
 如需 dogfood 可变的当前源码，应把 development-only 路径与 release 安装明确
-分开，并记录精确 commit：
+分开，并记录精确 commit。`main` checkout 只包含已合并内容，不一定包含候选分支
+或未提交工作区描述的全部修订：
 
 ```bash
 git clone --branch main --depth 1 \
@@ -109,6 +116,8 @@ git -C relaypact-current-source rev-parse HEAD
 ```
 
 ## 一分钟理解生命周期
+
+对 Codex capsule 路线，候选与源码保持分离：
 
 `completed` != `accept` != `apply`：
 
@@ -119,7 +128,11 @@ git -C relaypact-current-source rev-parse HEAD
    当前 source base。
 
 Commit、push、tag、GitHub Release、包发布和部署还是更进一步的独立动作。
-RelayPact 永远不会从一个授权推断另一个授权。
+验收不会赋予这些权限；已有且适用的用户授权可以沿用，无需重复询问。
+
+Cursor 与 Pi 直接在工作区执行，审查前可能已经发生修改。接受不会应用另一份 capsule
+patch，拒绝也不会自动撤销工作区变更。一次性结果在工具层仍为 pending；只有支持的
+持久模式才能记录工具终态决策。
 
 ## 安全与可观测性
 

@@ -150,7 +150,7 @@ test("signed state reclaims a lock when the PID belongs to a different process i
   await assert.rejects(lstat(lockPath), (error) => error.code === "ENOENT");
 });
 
-test("signed state age-bounds a live lock when process identity is unavailable", async () => {
+test("signed state preserves an old live lock when process identity is unavailable", async () => {
   const root = await createDirectory();
   const taskRoot = path.join(root, "task");
   await mkdir(taskRoot);
@@ -176,32 +176,80 @@ test("signed state age-bounds a live lock when process identity is unavailable",
   );
   const stale = new Date(Date.now() - 16 * 60_000);
   await utimes(lockPath, stale, stale);
-  const observed = await stateStore.withLock(async ({ read }) => read());
-  assert.equal(observed.stateRevision, 0);
-  await assert.rejects(lstat(lockPath), (error) => error.code === "ENOENT");
+  await assert.rejects(stateStore.withLock(async () => {}), (error) => error.code === "task_state_busy");
+  assert.equal(JSON.parse(await readFile(lockPath, "utf8")).pid, process.pid);
 });
 
-test("signed state renews an unidentified live owner's lock lease", async () => {
+for (const refreshDuringProbe of [false, true]) {
+test(`signed state keeps a held lock across delayed unknown identity (refresh=${refreshDuringProbe})`, { timeout: 5_000 }, async () => {
   const root = await createDirectory();
   const taskRoot = path.join(root, "task");
   await mkdir(taskRoot);
   const statePath = path.join(taskRoot, "state.json");
   const stateStore = createSignedStateStore(statePath, () => {}, {
-    processIdentity: async () => null,
-    lockLeaseMs: 40,
-    lockHeartbeatMs: 10
+    processIdentity: async () => null
   });
   await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  let acquired;
+  const ready = new Promise((resolve) => { acquired = resolve; });
   let release;
-  const held = stateStore.withLock(() => new Promise((resolve) => { release = resolve; }));
-  await new Promise((resolve) => setTimeout(resolve, 80));
-  await assert.rejects(
-    stateStore.withLock(async () => {}),
-    (error) => error.code === "task_state_busy"
-  );
-  release();
-  await held;
+  const held = stateStore.withLock(() => new Promise((resolve) => { release = resolve; acquired(); }));
+  await ready;
+  const lockRoot = path.join(root, ".relaypact-integrity", "locks");
+  const lockPath = path.join(lockRoot, (await readdir(lockRoot))[0]);
+  let probeStarted;
+  const probing = new Promise((resolve) => { probeStarted = resolve; });
+  let finishProbe;
+  const identity = new Promise((resolve) => { finishProbe = resolve; });
+  const contender = createSignedStateStore(statePath, () => {}, {
+    processIdentity: async () => { probeStarted(); return identity; }
+  });
+  let entered = false;
+  let pending;
+  try {
+    const stale = new Date(Date.now() - 16 * 60_000);
+    await utimes(lockPath, stale, stale);
+    const before = await lstat(lockPath);
+    pending = contender.withLock(async () => { entered = true; }).then(() => null, (error) => error);
+    await probing;
+    if (refreshDuringProbe) {
+      const now = new Date();
+      await utimes(lockPath, now, now);
+      assert.ok((await lstat(lockPath)).mtimeMs > before.mtimeMs);
+    }
+    finishProbe(null);
+    const error = await pending;
+    assert.equal(entered, false, "contender must not overlap the owner's critical section");
+    assert.equal(error?.code, "task_state_busy");
+    assert.equal((await lstat(lockPath)).ino, before.ino);
+  } finally {
+    finishProbe(null);
+    await pending;
+    release();
+    await held;
+  }
+  await contender.withLock(async () => { entered = true; });
+  assert.equal(entered, true, "normal owner release must allow the next action");
 });
+}
+
+for (const ownerText of ["", "{", '{"pid":0}', '{"pid":"123"}']) {
+test(`signed state preserves old incomplete owner metadata ${JSON.stringify(ownerText)}`, async () => {
+  const root = await createDirectory();
+  const taskRoot = path.join(root, "task");
+  await mkdir(taskRoot);
+  const stateStore = createSignedStateStore(path.join(taskRoot, "state.json"), () => {});
+  await stateStore.create({ stateRevision: 0, integrity: "unsigned-placeholder" });
+  await stateStore.withLock(async () => {});
+  const integrityRoot = path.join(root, ".relaypact-integrity");
+  const keyName = (await readdir(integrityRoot)).find((name) => name.endsWith(".key"));
+  const lockPath = path.join(integrityRoot, "locks", keyName.replace(/\.key$/u, ".lock"));
+  await writeFile(lockPath, ownerText, { mode: 0o600 });
+  await utimes(lockPath, new Date(0), new Date(0));
+  await assert.rejects(stateStore.withLock(async () => {}), (error) => error.code === "task_state_busy");
+  assert.equal(await readFile(lockPath, "utf8"), ownerText);
+});
+}
 
 async function processIsExecuting(pid) {
   try {

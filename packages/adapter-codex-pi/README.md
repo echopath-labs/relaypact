@@ -6,6 +6,12 @@ Skill and is not a prerequisite for Codex-to-Codex execution.
 This adapter translates the neutral delegation contract into a non-interactive
 Pi invocation and normalizes the outcome for Codex review.
 
+The invocation uses Pi's text print mode to collect only the final assistant
+response, which must still contain the required JSON result. Progress events
+are not the delivery evidence. The existing stdout/stderr capture bounds,
+credential redaction and independent postflight checks remain in force; an
+oversized or malformed final response is ineligible for acceptance.
+
 Pi receives a disposable, provider-selected configuration projection rather
 than the host configuration directory. The adapter inventories projected
 credential leaves for result redaction and changed-file inspection and rejects

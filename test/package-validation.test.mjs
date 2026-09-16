@@ -34,22 +34,30 @@ test("current monorepo ownership and support matrix are valid", async () => {
   assert.deepEqual(await validateArchitecture(packageRoot), []);
 });
 
-test("installed Skill exposes Agent-led private setup without optional route prerequisites", async () => {
-  const skill = await readFile(path.join(packageRoot, "skills", "relaypact", "SKILL.md"), "utf8");
-  const setup = await readFile(path.join(
-    packageRoot,
-    "skills",
-    "relaypact",
-    "references",
-    "agent-setup.md"
-  ), "utf8");
-  assert.match(skill, /references\/agent-setup\.md/u);
-  assert.match(skill, /credential-free envelope and\s+profile registry outside the target repository/u);
-  assert.match(setup, /readablePaths/u);
-  assert.match(setup, /allowedPaths/u);
-  assert.match(setup, /Read-only context is readable,\s+not writable, and not forbidden/u);
-  assert.match(setup, /Route failure is fail-closed/u);
-  assert.match(setup, /Never substitute another provider, model, router,\s+Pi, OpenCode CLI, OpenCodex/u);
+test("Skill package integrity allows a shared entry and requires its operational references", async (t) => {
+  const root = await copyCurrentPublicPackage();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const referenceDirectory = path.join(root, "skills", "relaypact", "references");
+  const inventory = JSON.parse(await readFile(path.join(root, "public-files.json"), "utf8"));
+  const references = inventory.files
+    .filter((relative) => relative.startsWith("skills/relaypact/references/"))
+    .map((relative) => path.basename(relative));
+  // A structural validator must not grade prose or require CLI vocabulary in
+  // the shared entry. The actual Host guidance is evaluated separately.
+  await writeFile(path.join(root, "skills", "relaypact", "SKILL.md"), [
+    "---", "name: relaypact", "description: Shared delegation guidance.", "---",
+    "# RelayPact", "",
+    ...references.map((name) => `[${name}](references/${name})`), ""
+  ].join("\n"));
+  assert.deepEqual(await validatePackage(root), []);
+
+  await rm(path.join(referenceDirectory, "invocation.md"));
+  // Removing it from the inventory must not hide a missing operational guide.
+  inventory.files = inventory.files.filter((relative) => !relative.endsWith("references/invocation.md"));
+  await writeFile(path.join(root, "public-files.json"), `${JSON.stringify(inventory, null, 2)}\n`);
+  const errors = await validatePackage(root);
+  assert(errors.some((item) => item.includes("references/invocation.md is required")));
+  assert(errors.some((item) => item.includes("invocation.md") && item.includes("link")));
 });
 
 test("public package rejects Apache-2.0 license drift", async () => {

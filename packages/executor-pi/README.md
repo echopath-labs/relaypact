@@ -9,6 +9,15 @@ loaded only through the explicit `run-pi` command. Pi does not own task framing
 or final acceptance. Provider and model selection
 come from Pi configuration or an explicit non-secret execution profile.
 
+Pi runs in print/text mode and must return exactly one final JSON object with
+`status` (`completed`, `blocked`, or `failed`), a string `summary`, and optional
+`residualRisks`. Put explanations inside that object. Bare compact or multiline
+JSON is accepted; a single complete Markdown `json` or unlabelled fence is also
+tolerated. Surrounding prose, multiple objects, arrays, partial JSON, and event
+wrappers are rejected as malformed. The adapter does not guess which embedded
+result to use. Output bounds, independent validation, and Host acceptance still
+apply.
+
 The adapter gives Pi a disposable HOME and temporary directory and projects a
 task-scoped `PI_CODING_AGENT_DIR` containing only the selected provider's
 authentication, custom model definition when needed, and safe defaults. It
