@@ -60,6 +60,7 @@ checkout_commit="$(git -C relaypact-v0.1.2 rev-parse HEAD)"
 release_commit="$(git -C relaypact-v0.1.2 rev-parse 'v0.1.2^{}')"
 test "$checkout_commit" = "$release_commit"
 cd relaypact-v0.1.2
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.1.2"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json

@@ -192,11 +192,11 @@ test("candidate rejects stale versioned status and missing unreleased changelog"
   assert(errors.some((item) => item.startsWith("CHANGELOG.md must include") && item.includes("Unreleased")));
 });
 
-test("released-state validation requires current install identity and dated changelog", async (t) => {
+test("versioned documentation requires complete install identity without publication claims", async (t) => {
   const root = await copyCurrentPublicPackage();
   t.after(() => rm(root, { recursive: true, force: true }));
   const validator = path.join(root, "scripts/validate-package.mjs");
-  await writeFile(validator, (await readFile(validator, "utf8")).replace('const PROJECT_RELEASE_STATE = "candidate";', 'const PROJECT_RELEASE_STATE = "released";'));
+  await writeFile(validator, (await readFile(validator, "utf8")).replace('const PROJECT_RELEASE_STATE = "candidate";', 'const PROJECT_RELEASE_STATE = "versioned";'));
   const { validatePackage: validateReleased } = await import(pathToFileURL(validator).href);
   let errors = await validateReleased(root);
   assert(errors.some((item) => item.includes("README.md must include") && item.includes("git clone --branch v0.2.0")));
@@ -205,19 +205,33 @@ test("released-state validation requires current install identity and dated chan
     const target = path.join(root, file);
     const content = (await readFile(target, "utf8"))
       .replaceAll("0.2.0 Public Preview source candidate", "0.2.0 Public Preview")
-      .replaceAll("`v0.2.0` is not released", "`v0.2.0` is released")
-      .replaceAll("`v0.2.0` 尚未发布", "`v0.2.0` 已发布")
-      .replaceAll("git clone --branch v0.1.2", "git clone --branch v0.2.0")
-      .replaceAll("v0.1.2^{}", "v0.2.0^{}")
-      .replace("Latest published release: **v0.1.2**", "Latest published release: **v0.2.0**")
-      .replace("最新已发布版本：**v0.1.2**", "最新已发布版本：**v0.2.0**");
+      .replaceAll("`v0.2.0` is not released", "`v0.2.0` is the release target")
+      .replaceAll("`v0.2.0` 尚未发布", "`v0.2.0` 为安装目标版本")
+      .replaceAll("0.1.2", "0.2.0")
+      .replace("Latest published release: **v0.2.0**", "Release target: **v0.2.0**")
+      .replace("最新已发布版本：**v0.2.0**", "安装目标版本：**v0.2.0**")
+      .replaceAll("latest published release is \u0060v0.2.0\u0060", "installation target is \u0060v0.2.0\u0060")
+      .replaceAll("\u0060v0.2.0\u0060 is the latest published release", "\u0060v0.2.0\u0060 is the installation target")
+      .replaceAll("\u0060v0.2.0\u0060 是最新已发布版本", "\u0060v0.2.0\u0060 是安装目标版本")
+      + "\nPrevious release: v0.1.2. Check https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0 before installation.\n";
     await writeFile(target, content);
   }
   const changelog = path.join(root, "CHANGELOG.md");
   await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.2.0] - Unreleased - Public Preview", "## [0.2.0] - 2026-01-01 - Public Preview"));
   assert.deepEqual(await validateReleased(root), []);
+  const manual = path.join(root, "docs/manual-configuration.md");
+  const validManual = await readFile(manual, "utf8");
+  for (const [from, to, expected] of [
+    ['p.version!=="0.2.0"', 'p.version!=="0.1.2"', 'if(p.version'],
+    ['cd relaypact-v0.2.0', 'cd relaypact-v0.1.2', 'cd relaypact-v0.2.0']
+  ]) {
+    await writeFile(manual, validManual.replaceAll(from, to));
+    const invalid = await validateReleased(root);
+    assert(invalid.some((item) => item.startsWith("docs/manual-configuration.md must include") && item.includes(expected)));
+  }
+  await writeFile(manual, validManual);
   const chinese = path.join(root, "README.zh-CN.md");
-  await writeFile(chinese, (await readFile(chinese, "utf8")).replace("最新已发布版本：**v0.2.0**", "最新已发布版本：**v0.1.2**"));
+  await writeFile(chinese, (await readFile(chinese, "utf8")).replace("安装目标版本：**v0.2.0**", "最新已发布版本：**v0.2.0**"));
   errors = await validateReleased(root);
   assert(errors.some((item) => item.startsWith("README.zh-CN.md must include") && item.includes("v0.2.0")));
 });

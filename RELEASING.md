@@ -54,16 +54,20 @@ visible official tag and GitHub Release.
 3. Obtain the human-supplied release date and explicit authorization for the
    final commit, branch push/review, annotated tag, GitHub Release and main
    integration. Preparation alone does not grant these operations.
-4. Prepare one scoped release-state commit:
-   - Set PROJECT_RELEASE_STATE in scripts/validate-package.mjs to released;
+4. Prepare one scoped versioned-documentation commit:
+   - Set PROJECT_RELEASE_STATE in scripts/validate-package.mjs to versioned;
      keep PROJECT_VERSION at 0.2.0 and the previous published version at 0.1.2.
    - Update README.md, README.zh-CN.md, docs/agent-quickstart.md,
      docs/agent-quickstart.zh-CN.md and docs/manual-configuration.md to name
-     v0.2.0 as the latest published installation and verify the peeled
+     v0.2.0 as the installation target, require a visible official GitHub Release
+     before running install commands, and verify the peeled
      v0.2.0^{} commit. Remove candidate-only statements and the guidance caveat
      that applies to the older installation; retain explicitly historical notes.
-   - Date the 0.2.0 changelog entry, update its compatibility paragraph to the
-     released state, and add the v0.1.2...v0.2.0 comparison link.
+   - Date the 0.2.0 changelog entry and add its comparison link.
+   - Versioned documentation is not a publication announcement. Do not label
+     v0.2.0 as latest published before the remote tag and Release exist.
+     If publication fails after merge, installation must stop at the Release
+     availability precondition; the previous v0.1.2 remains the fallback.
    - Update this checklist's current-state paragraph and version-sensitive
      validation fixtures so the release itself does not retain a stale
      candidate-state description. Keep route status and known limits accurate.
