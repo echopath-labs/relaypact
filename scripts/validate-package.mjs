@@ -316,6 +316,11 @@ async function validateProjectOnboarding(root, errors) {
     if (!heading || !/^## \[[0-9.]+\] - \d{4}-\d{2}-\d{2} - Public Preview$/u.test(heading)) {
       errors.push("CHANGELOG.md must include the dated Public Preview release heading.");
     }
+    const changelogDate = heading?.match(/ - (\d{4}-\d{2}-\d{2}) - Public Preview$/u)?.[1];
+    const checklistDate = checklist.match(/The checked-in metadata describes 0\.2\.0 Public Preview, dated (\d{4}-\d{2}-\d{2})\./u)?.[1];
+    if (changelogDate && checklistDate && changelogDate !== checklistDate) {
+      errors.push("RELEASING.md and CHANGELOG.md release dates must agree.");
+    }
   } else {
     errors.push("scripts/validate-package.mjs PROJECT_RELEASE_STATE must be candidate or versioned.");
   }

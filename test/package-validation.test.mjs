@@ -261,6 +261,11 @@ test("versioned documentation requires complete install identity without publica
     assert((await validatePackage(root)).some((item) => item.startsWith(expected)));
     await writeFile(target, valid);
   }
+  const checklist = path.join(root, "RELEASING.md");
+  const validChecklist = await readFile(checklist, "utf8");
+  await writeFile(checklist, validChecklist.replace("dated 2026-09-16.", "dated 2026-09-15."));
+  assert((await validatePackage(root)).includes("RELEASING.md and CHANGELOG.md release dates must agree."));
+  await writeFile(checklist, validChecklist);
   const security = path.join(root, "SECURITY.md");
   const validSecurity = await readFile(security, "utf8");
   for (const policy of [
