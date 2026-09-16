@@ -12,7 +12,7 @@ RelayPact 的通用目标是指导 Host 委派与验收。本教程演示已发�
 
 当前发布事实：
 
-- `v0.2.0` 是最新已发布版本；`v0.1.2` 与 `v0.1.1` 仍可使用。
+- 本指南面向 `v0.2.0`；`v0.1.2` 与 `v0.1.1` 仍可使用。
 - 本指南安装版本化 tag，并验证 peel 后的 commit SHA。
 - Pi 是 experimental、inactive；本流程不会安装、加载或调用它。
 
@@ -34,6 +34,10 @@ codex exec --help
 
 ## 第 1 分钟：安装并验证 v0.2.0 release
 
+安装前必须确认 [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) 已可见。
+若尚不可用，停止这组安装步骤，改用 [v0.1.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.1.2)。
+本文的版本化说明不代表远端发布已经完成。
+
 把下面的提示词交给协调 Codex：
 
 ```text
@@ -51,6 +55,7 @@ push、tag、publish、release 或 deploy。
 等价的 release 命令是：
 
 ```bash
+set -e
 git clone --branch v0.2.0 --depth 1 \
   https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
 checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"

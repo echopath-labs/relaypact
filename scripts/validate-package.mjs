@@ -8,7 +8,7 @@ const CANONICAL_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.
 const PROJECT_NAME = "relaypact";
 const PROJECT_DISPLAY_NAME = "RelayPact";
 const PROJECT_VERSION = "0.2.0";
-const PROJECT_RELEASE_STATE = "released";
+const PROJECT_RELEASE_STATE = "versioned";
 const LATEST_PUBLISHED_VERSION = "0.1.2";
 const PROJECT_LICENSE = "Apache-2.0";
 const PROJECT_REPOSITORY = "https://github.com/echopath-labs/relaypact";
@@ -240,12 +240,16 @@ async function validateProjectOnboarding(root, errors) {
   for (const relative of candidateOnboardingFiles) {
     requireText(files[relative], [
       `git clone --branch v${installVersion}`,
-      `v${installVersion}^{}`
+      `v${installVersion}^{}`,
+      `https://github.com/echopath-labs/relaypact.git relaypact-v${installVersion}`,
+      `git -C relaypact-v${installVersion} rev-parse HEAD`,
+      `cd relaypact-v${installVersion}`,
+      `if(p.version!=="${installVersion}"||q.version!==p.version) process.exit(1)`
     ], relative, errors);
   }
-  requireText(files["README.md"], [`Latest published release: **v${installVersion}**`], "README.md", errors);
-  requireText(files["README.zh-CN.md"], [`最新已发布版本：**v${installVersion}**`], "README.zh-CN.md", errors);
   if (PROJECT_RELEASE_STATE === "candidate") {
+    requireText(files["README.md"], [`Latest published release: **v${installVersion}**`], "README.md", errors);
+    requireText(files["README.zh-CN.md"], [`最新已发布版本：**v${installVersion}**`], "README.zh-CN.md", errors);
     for (const relative of candidateOnboardingFiles) {
       requireText(files[relative], [`${PROJECT_VERSION} Public Preview source candidate`, `v${LATEST_PUBLISHED_VERSION}`], relative, errors);
       forbidText(files[relative], [
@@ -261,9 +265,17 @@ async function validateProjectOnboarding(root, errors) {
       `\`v${PROJECT_VERSION}\` 尚未发布`
     ], "README.zh-CN.md", errors);
     requireText(files["CHANGELOG.md"], [`## [${PROJECT_VERSION}] - Unreleased - Public Preview`], "CHANGELOG.md", errors);
-  } else if (PROJECT_RELEASE_STATE === "released") {
+  } else if (PROJECT_RELEASE_STATE === "versioned") {
+    requireText(files["README.md"], [`Release target: **v${PROJECT_VERSION}**`], "README.md", errors);
+    requireText(files["README.zh-CN.md"], [`安装目标版本：**v${PROJECT_VERSION}**`], "README.zh-CN.md", errors);
     for (const relative of candidateOnboardingFiles) {
+      requireText(files[relative], [`releases/tag/v${PROJECT_VERSION}`], relative, errors);
       forbidText(files[relative], [
+        `Latest published release: **v${PROJECT_VERSION}**`,
+        `最新已发布版本：**v${PROJECT_VERSION}**`,
+        `latest published release is \`v${PROJECT_VERSION}\``,
+        `\`v${PROJECT_VERSION}\` is the latest published release`,
+        `\`v${PROJECT_VERSION}\` 是最新已发布版本`,
         `${PROJECT_VERSION} Public Preview source candidate`,
         `\`v${PROJECT_VERSION}\` is not released`,
         `\`v${PROJECT_VERSION}\` 尚未发布`
@@ -274,7 +286,7 @@ async function validateProjectOnboarding(root, errors) {
       errors.push("CHANGELOG.md must include the dated Public Preview release heading.");
     }
   } else {
-    errors.push("scripts/validate-package.mjs PROJECT_RELEASE_STATE must be candidate or released.");
+    errors.push("scripts/validate-package.mjs PROJECT_RELEASE_STATE must be candidate or versioned.");
   }
 
   requireText(files["CONTRIBUTING.md"], [PROJECT_LICENSE, "Section 5"], "CONTRIBUTING.md", errors);

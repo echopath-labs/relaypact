@@ -47,18 +47,24 @@ codex exec --help
 
 ## Release state and version verification
 
-The latest published release is `v0.2.0`. Package and Plugin version fields
+The installation target is `v0.2.0`. Package and Plugin version fields
 alone are not release identity; verify the official tag's peeled commit.
 
-Install and verify the latest published release:
+Before installing, confirm the [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) is visible.
+If unavailable, stop these installation steps and use [v0.1.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.1.2) instead.
+These versioned instructions are not a publication announcement.
+
+Install and verify the target release only after confirming its availability:
 
 ```bash
+set -e
 git clone --branch v0.2.0 --depth 1 \
   https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
 checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
 release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
 test "$checkout_commit" = "$release_commit"
 cd relaypact-v0.2.0
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.2.0"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json

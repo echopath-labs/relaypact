@@ -25,7 +25,7 @@ For this Codex-to-Codex route: **No additional executor installation is required
 ## Release status
 
 - Source package metadata: **0.2.0 Public Preview**.
-- Latest published release: **v0.2.0**.
+- Release target: **v0.2.0**.
 - Support: `codex-codex` is `public-preview`; `codex-pi` remains
   `experimental` and inactive; `codex-cursor` is source-included,
   `experimental`, and inactive at the root Plugin.
@@ -63,6 +63,10 @@ Use the versioned `v0.2.0` tag for a reproducible release installation.
 Confirm the [GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0)
 is available before installing; package metadata or a PR alone is not publication.
 
+Before installing, confirm the [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) is visible.
+If unavailable, stop these installation steps and use [v0.1.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.1.2) instead.
+These versioned instructions are not a publication announcement.
+
 Give a coordinating Codex instance this prompt:
 
 ```text
@@ -83,6 +87,7 @@ push, tag, publish, release, or deploy anything.
 The equivalent release commands are:
 
 ```bash
+set -e
 git clone --branch v0.2.0 --depth 1 \
   https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
 checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
@@ -100,14 +105,15 @@ Start a new Codex task after installation, then follow the
 bounded first delegation that invokes `$relaypact` and creates one reviewable
 documentation file.
 
-## Install the latest published release
+## Install the versioned release
 
-The latest published release is `v0.2.0`:
+The installation target is `v0.2.0`:
 
 The previous `v0.1.2`, `v0.1.1` and `v0.1.0` releases remain available for exact
 historical installs.
 
 ```bash
+set -e
 git clone --branch v0.2.0 --depth 1 \
   https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
 checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"

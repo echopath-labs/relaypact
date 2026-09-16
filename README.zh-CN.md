@@ -22,7 +22,7 @@ RelayPact 给 Host Agent（甲方）一套稳定的委派与验收参考。Host 
 ## 发布状态
 
 - 源码包元数据：**0.2.0 Public Preview**。
-- 最新已发布版本：**v0.2.0**。
+- 安装目标版本：**v0.2.0**。
 - 支持状态：`codex-codex` 是 `public-preview`；`codex-pi` 保持
   `experimental`、inactive；`codex-cursor` 已包含源码，但仍是
   `experimental`，且不在根 Plugin 中激活。
@@ -53,6 +53,10 @@ Windows。
 [GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) 已可见；
 包版本元数据或 PR 本身不代表已发布。
 
+安装前必须确认 [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) 已可见。
+若尚不可用，停止这组安装步骤，改用 [v0.1.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.1.2)。
+本文的版本化说明不代表远端发布已经完成。
+
 把下面的提示词交给一个协调 Codex：
 
 ```text
@@ -70,6 +74,7 @@ apply、commit、push、tag、publish、release 或 deploy 任何内容。
 等价的 release 命令是：
 
 ```bash
+set -e
 git clone --branch v0.2.0 --depth 1 \
   https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
 checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
@@ -86,13 +91,14 @@ codex plugin list --marketplace relaypact-local --json
 其中包含一个调用 `$relaypact` 的真实、有边界、只创建一个可审查文档文件的
 首次委派。
 
-## 安装最新已发布版本
+## 安装目标版本
 
-最新已发布版本是 `v0.2.0`：
+安装目标版本是 `v0.2.0`：
 
 此前的 `v0.1.2`、`v0.1.1` 与 `v0.1.0` release 仍可用于精确的历史版本安装。
 
 ```bash
+set -e
 git clone --branch v0.2.0 --depth 1 \
   https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
 checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"

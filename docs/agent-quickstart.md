@@ -14,7 +14,7 @@ The candidate in this tutorial remains unapplied until a later authorized action
 
 Current release truth:
 
-- `v0.2.0` is the latest published release; `v0.1.2` and `v0.1.1` remain available.
+- This guide targets `v0.2.0`; `v0.1.2` and `v0.1.1` remain available.
 - This guide installs the versioned tag and verifies its peeled commit SHA.
 - Pi is experimental and inactive; it is not installed, loaded, or used here.
 
@@ -38,6 +38,10 @@ quota or cost.
 
 ## Minute 1: install and verify the v0.2.0 release
 
+Before installing, confirm the [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) is visible.
+If unavailable, stop these installation steps and use [v0.1.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.1.2) instead.
+These versioned instructions are not a publication announcement.
+
 Give the coordinating Codex instance this prompt:
 
 ```text
@@ -57,6 +61,7 @@ deploy anything.
 The equivalent release commands are:
 
 ```bash
+set -e
 git clone --branch v0.2.0 --depth 1 \
   https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
 checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
