@@ -11,22 +11,21 @@ invocation and evidence tools for that work.
 The [Host Skill](skills/relaypact/SKILL.md) states those shared requirements;
 its references explain the selected tools only when needed. See
 [eight review cases](examples/host-delegation-cases.md) for concrete expectations.
-Version 0.2.0 includes this guidance and the experimental Cursor route.
+Version 0.3.0 includes this guidance and experimental Cursor and WorkBuddy routes.
 General Host wording does not add support for
 other Host products; Codex remains the admitted Host in the support matrix.
 
-The first and only active Public Preview route is **Codex → Codex**. RelayPact
+The default root Plugin route is **Codex → Codex**. RelayPact
 provides the workflow, isolation, evidence, and acceptance controls; execution
 comes from an independent `codex exec` process in the user's existing Codex
 CLI. No second Codex installation or executor package is required.
 
 For this Codex-to-Codex route: **No additional executor installation is required.**
 
-## Development branch additions
+## WorkBuddy executors
 
-This branch adds experimental **Codex → WorkBuddy** (mainland) and
-**Codex → WorkBuddy AI** (international) executor routes. These additions are available from this development branch;
-the published v0.2.0 predates them. Select the edition explicitly; each uses its own native desktop
+Version 0.3.0 adds experimental **Codex → WorkBuddy** (mainland) and
+**Codex → WorkBuddy AI** (international) executor routes. Select the edition explicitly; each uses its own native desktop
 configuration. The initial macOS route admits bundled CLI 2.137.1 and bounded
 Read/Write tasks, with independent Host checks and fresh-task correction.
 Shell execution and same-session continuation are not admitted. See the
@@ -34,11 +33,16 @@ Shell execution and same-session continuation are not admitted. See the
 
 ## Release status
 
-- Source package metadata: **0.2.0 Public Preview**.
-- Release target: **v0.2.0**.
+v0.3.0 is an ordinary GitHub Release for practical, Host-supervised delegation.
+Delegation mechanisms and constraints continue to evolve through review and use.
+Product release status is separate from each adapter's maturity in the support matrix.
+
+- Source package metadata: **0.3.0**.
+- Release target: **v0.3.0**.
 - Support: `codex-codex` is `public-preview`; `codex-pi` remains
   `experimental` and inactive; `codex-cursor` is source-included,
-  `experimental`, and inactive at the root Plugin.
+  `experimental`, and inactive at the root Plugin. WorkBuddy and WorkBuddy AI
+  are also explicit, experimental executors.
 
 [`support-matrix.json`](support-matrix.json) is authoritative. The Cursor route
 must be selected explicitly and requires a compatible authenticated local Cursor
@@ -67,24 +71,24 @@ and Codex CLI 0.147.0 or later with both `codex --version` and
 for a release only after its exact candidate passes public CI. Windows support
 is not yet claimed.
 
-## Five-minute start with the v0.2.0 release
+## Five-minute start with the v0.3.0 release
 
-Use the versioned `v0.2.0` tag for a reproducible release installation.
-Confirm the [GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0)
+Use the versioned `v0.3.0` tag for a reproducible release installation.
+Confirm the [GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.0)
 is available before installing; package metadata or a PR alone is not publication.
 
-Before installing, confirm the [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) is visible.
-If unavailable, stop these installation steps and use [v0.1.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.1.2) instead.
+Before installing, confirm the [v0.3.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.0) is visible.
+If unavailable, stop these installation steps and use [v0.2.0](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) instead.
 These versioned instructions are not a publication announcement.
 
 Give a coordinating Codex instance this prompt:
 
 ```text
-Clone the versioned v0.2.0 release tag from
+Clone the versioned v0.3.0 release tag from
 https://github.com/echopath-labs/relaypact into a local tools directory outside
 my target repository. Record the exact checkout commit, verify it against the
-peeled v0.2.0 tag commit, and verify that package.json and plugin.json both
-report 0.2.0.
+peeled v0.3.0 tag commit, and verify that package.json and plugin.json both
+report 0.3.0.
 Read README.md and the nearest AGENTS.md. Verify Node.js 20 or later, Git,
 Codex CLI 0.147.0 or later, and `codex exec --help`. Install the root Agent
 Plugin through its local marketplace, start no worker, then run the installed
@@ -98,13 +102,13 @@ The equivalent release commands are:
 
 ```bash
 set -e
-git clone --branch v0.2.0 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
-checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
+git clone --branch v0.3.0 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.0
+checkout_commit="$(git -C relaypact-v0.3.0 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.0 rev-parse 'v0.3.0^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.2.0
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.2.0"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.0
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.0"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -117,22 +121,22 @@ documentation file.
 
 ## Install the versioned release
 
-Before running this block, confirm the official [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) is visible. If it is unavailable, stop and use [v0.1.2](https://github.com/echopath-labs/relaypact/tree/v0.1.2). A tag alone does not satisfy this precondition.
+Before running this block, confirm the official [v0.3.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.0) is visible. If it is unavailable, stop and use [v0.2.0](https://github.com/echopath-labs/relaypact/tree/v0.2.0). A tag alone does not satisfy this precondition.
 
-The installation target is `v0.2.0`:
+The installation target is `v0.3.0`:
 
 The previous `v0.1.2`, `v0.1.1` and `v0.1.0` releases remain available for exact
 historical installs.
 
 ```bash
 set -e
-git clone --branch v0.2.0 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
-checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
+git clone --branch v0.3.0 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.0
+checkout_commit="$(git -C relaypact-v0.3.0 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.0 rev-parse 'v0.3.0^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.2.0
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.2.0"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.0
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.0"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json

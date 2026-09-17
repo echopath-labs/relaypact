@@ -3,7 +3,7 @@
 Read this reference only after explicitly selecting WorkBuddy. Codex remains
 Host. Mainland **WorkBuddy** and international **WorkBuddy AI** share the adapter
 but have separate support entries. They are not interchangeable credentials or
-fallbacks. This source change is experimental and is not part of v0.2.0.
+fallbacks. These experimental routes are included in v0.3.0.
 
 ## Requirements and configuration
 
