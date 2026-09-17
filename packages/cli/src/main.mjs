@@ -6,6 +6,7 @@ import { asDelegationError } from "../../contracts/src/errors.mjs";
 import { redact } from "../../core/src/redact.mjs";
 
 const SUPPORT_MATRIX_PATH = fileURLToPath(new URL("../../../support-matrix.json", import.meta.url));
+const WORKBUDDY_ROUTES = Object.freeze({ "codex-workbuddy": "mainland", "codex-workbuddy-ai": "international" });
 
 function usage() {
   return [
@@ -15,6 +16,9 @@ function usage() {
     "  relaypact run-codex --envelope <file> --profiles <file> --state-root <dir> --host-instance <id>",
     "  relaypact correct-codex --task-root <dir> --profiles <file> --prompt <file>",
     "  relaypact decide-codex --task-root <dir> --profiles <file> --action <accept|reject|abandon> --actor <id> --archive-root <dir>",
+    "  relaypact run-workbuddy --edition <mainland|international> --envelope <file> [--app <app-path>] [--read-only]  # experimental",
+    "  relaypact doctor --route codex-workbuddy --edition mainland [--app <app-path>]",
+    "  relaypact doctor --route codex-workbuddy-ai --edition international [--app <app-path>]",
     "  relaypact run-pi --envelope <file> [--executor <pi-path>]  # experimental",
     "  relaypact run-cursor --envelope <file> [--executor <cursor-path>] [--read-only] [--state-root <dir> --host-instance <id>]  # experimental",
     "  relaypact correct-cursor --task-root <dir> --prompt <file> [--executor <cursor-path>]  # experimental",
@@ -26,7 +30,7 @@ function parseArgs(argv) {
   if (argv[0] === "run") {
     throw new Error(`The ambiguous 'run' command was removed before 0.1.0. Use 'run-pi' explicitly. ${usage()}`);
   }
-  if (!["support", "doctor", "run-pi", "run-cursor", "correct-cursor", "decide-cursor", "run-codex", "correct-codex", "decide-codex"].includes(argv[0])) throw new Error(usage());
+  if (!["support", "doctor", "run-workbuddy", "run-pi", "run-cursor", "correct-cursor", "decide-cursor", "run-codex", "correct-codex", "decide-codex"].includes(argv[0])) throw new Error(usage());
   const command = argv[0];
   const options = {};
   for (let index = 1; index < argv.length; index += 1) {
@@ -37,6 +41,8 @@ function parseArgs(argv) {
       continue;
     }
     if (key === "--envelope" && value) options.envelope = value;
+    else if (key === "--edition" && value) options.edition = value;
+    else if (key === "--app" && value) options.appPath = value;
     else if (key === "--executor" && value) options.executor = value;
     else if (key === "--route" && value) options.route = value;
     else if (key === "--profiles" && value) options.profiles = value;
@@ -53,13 +59,21 @@ function parseArgs(argv) {
   if (command === "support" && argv.length !== 1) throw new Error(usage());
   if (command === "doctor") {
     options.route ??= "codex-codex";
-    if (!["codex-codex", "codex-cursor"].includes(options.route)) throw new Error(usage());
+    if (!["codex-codex", "codex-cursor", ...Object.keys(WORKBUDDY_ROUTES)].includes(options.route)) throw new Error(usage());
     if (options.executor && options.route !== "codex-cursor") throw new Error(usage());
   }
+  const workbuddy = command === "run-workbuddy" || (command === "doctor" && Object.hasOwn(WORKBUDDY_ROUTES, options.route));
+  if (workbuddy) {
+    if (!["mainland", "international"].includes(options.edition)) throw new Error("WorkBuddy requires --edition mainland or international.");
+    if (command === "doctor" && WORKBUDDY_ROUTES[options.route] !== options.edition) throw new Error("The WorkBuddy route and edition must match.");
+    const allowed = new Set(command === "doctor" ? ["route", "edition", "appPath"] : ["edition", "appPath", "envelope", "readOnly"]);
+    if (Object.keys(options).some((key) => !allowed.has(key))) throw new Error("Unsupported option for the selected WorkBuddy route.");
+    if (command === "run-workbuddy" && !options.envelope) throw new Error(usage());
+  } else if (options.edition || options.appPath) throw new Error(usage());
   if (command === "run-pi" && !options.envelope) throw new Error(usage());
   if (command === "run-cursor" && !options.envelope) throw new Error(usage());
   if (command === "run-cursor" && Boolean(options.stateRoot) !== Boolean(options.hostInstanceId)) throw new Error(usage());
-  if (command !== "run-cursor" && options.readOnly) throw new Error(usage());
+  if (!["run-cursor", "run-workbuddy"].includes(command) && options.readOnly) throw new Error(usage());
   if (command === "correct-cursor" && (!options.taskRoot || !options.prompt)) throw new Error(usage());
   if (
     command === "decide-cursor" &&
@@ -165,6 +179,13 @@ async function decideCodex(options) {
   return { action: options.action, lifecycleState: decided.packet.lifecycleState, acceptance: decided.packet.acceptance, archive };
 }
 
+async function runWorkBuddy(options) {
+  const { runDelegation } = await import("../../adapter-codex-workbuddy/src/run-delegation.mjs");
+  return runDelegation(await readJson(options.envelope), {
+    edition: options.edition, appPath: options.appPath, readOnly: options.readOnly === true
+  });
+}
+
 async function runPi(options) {
   const { runDelegation } = await import("../../adapter-codex-pi/src/run-delegation.mjs");
   const envelope = await readJson(options.envelope);
@@ -204,7 +225,11 @@ export async function runCli(argv, io = process, runtime = {}) {
     let result;
     if (options.command === "support") result = await supportSummary();
     else if (options.command === "doctor") {
-      if (options.route === "codex-cursor") {
+      if (Object.hasOwn(WORKBUDDY_ROUTES, options.route)) {
+        const { discoverWorkBuddy } = await import("../../executor-workbuddy/src/executor.mjs");
+        const readiness = await discoverWorkBuddy({ ...runtime.doctor, edition: options.edition, appPath: options.appPath });
+        result = { ...readiness, status: readiness.state === "available" ? "completed" : "blocked" };
+      } else if (options.route === "codex-cursor") {
         const { runCursorDoctor } = await import("./doctor.mjs");
         result = await runCursorDoctor({ ...runtime.doctor, executorCommand: options.executor });
       } else {
@@ -212,6 +237,7 @@ export async function runCli(argv, io = process, runtime = {}) {
         result = await runDoctor(runtime.doctor);
       }
     }
+    else if (options.command === "run-workbuddy") result = await runWorkBuddy(options);
     else if (options.command === "run-pi") result = await runPi(options);
     else if (options.command === "run-cursor") result = await runCursor(options);
     else if (options.command === "correct-cursor") result = await correctCursor(options);
@@ -221,7 +247,7 @@ export async function runCli(argv, io = process, runtime = {}) {
     else result = await decideCodex(options);
     io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     if (options.command === "doctor") io.exitCode = result.state === "blocked" ? 1 : 0;
-    else if (options.command === "run-pi" || (options.command === "run-cursor" && !result.review)) io.exitCode = result.status === "completed" || result.status === "blocked" ? 0 : 1;
+    else if (["run-pi", "run-workbuddy"].includes(options.command) || (options.command === "run-cursor" && !result.review)) io.exitCode = result.status === "completed" || result.status === "blocked" ? 0 : 1;
     else if (["run-cursor", "correct-cursor"].includes(options.command)) {
       const status = result.review.executionResult.status;
       io.exitCode = status === "completed" || status === "blocked" ? 0 : 1;

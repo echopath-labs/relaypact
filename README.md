@@ -22,6 +22,16 @@ CLI. No second Codex installation or executor package is required.
 
 For this Codex-to-Codex route: **No additional executor installation is required.**
 
+## Development branch additions
+
+This branch adds experimental **Codex → WorkBuddy** (mainland) and
+**Codex → WorkBuddy AI** (international) executor routes. These additions are available from this development branch;
+the published v0.2.0 predates them. Select the edition explicitly; each uses its own native desktop
+configuration. The initial macOS route admits bundled CLI 2.137.1 and bounded
+Read/Write tasks, with independent Host checks and fresh-task correction.
+Shell execution and same-session continuation are not admitted. See the
+[WorkBuddy invocation reference](skills/relaypact/references/workbuddy.md).
+
 ## Release status
 
 - Source package metadata: **0.2.0 Public Preview**.

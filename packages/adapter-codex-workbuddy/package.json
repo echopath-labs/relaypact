@@ -1,0 +1,9 @@
+{
+  "name": "@relaypact/adapter-codex-workbuddy",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/run-delegation.mjs"
+  }
+}

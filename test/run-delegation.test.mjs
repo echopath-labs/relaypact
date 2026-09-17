@@ -51,7 +51,9 @@ test("CLI support metadata is sanitized and keeps Pi experimental", async () => 
   assert.deepEqual(support.routes.map(({ id, status }) => ({ id, status })), [
     { id: "codex-codex", status: "public-preview" },
     { id: "codex-pi", status: "experimental" },
-    { id: "codex-cursor", status: "experimental" }
+    { id: "codex-cursor", status: "experimental" },
+    { id: "codex-workbuddy", status: "experimental" },
+    { id: "codex-workbuddy-ai", status: "experimental" }
   ]);
   assert.equal(support.routes[0].rootPluginActivation, true);
   assert.equal(support.routes[1].rootPluginActivation, false);
