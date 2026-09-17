@@ -1,4 +1,4 @@
-# Release Release Checklist
+# Release Checklist
 
 This checklist prepares a human-authorized `0.3.0` GitHub Release. It
 does not authorize a commit, remote change, push, tag, GitHub release, npm
