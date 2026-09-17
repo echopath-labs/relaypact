@@ -1,6 +1,6 @@
-# Public Preview Release Checklist
+# Release Release Checklist
 
-This checklist prepares a human-authorized `0.2.0` GitHub Public Preview. It
+This checklist prepares a human-authorized `0.3.0` GitHub Release. It
 does not authorize a commit, remote change, push, tag, GitHub release, npm
 publish, or deployment.
 
@@ -37,11 +37,11 @@ The candidate `LICENSE` must contain the reviewed Apache License 2.0 text,
 `plugin.json`, both README language entries, and contribution guidance must use
 the exact SPDX identifier `Apache-2.0`. License drift is a release blocker.
 
-## 0.2.0 release-time documentation closeout
+## 0.3.0 release-time documentation closeout
 
-The checked-in metadata describes 0.2.0 Public Preview, dated 2026-09-16.
+The checked-in metadata describes 0.3.0 Release, dated 2026-09-17.
 The release process merges reviewed documentation before publishing the tag
-and GitHub prerelease. Confirm both remote objects exist before treating the
+and ordinary GitHub Release. Confirm both remote objects exist before treating the
 version as installable; metadata alone does not establish publication.
 Merge the reviewed preparation PR before closing out the release documents.
 Then merge the reviewed release-documentation PR before tagging its verified main
@@ -52,23 +52,23 @@ visible official tag and GitHub Release.
    exact repository is echopath-labs/relaypact and record the reviewed candidate
    commit/tree and the complete diff from that main baseline.
 2. Confirm the authenticated GitHub identity is exactly chasechou007.
-3. Obtain the human-supplied release date and explicit authorization for the
+3. Obtain the human-approved release date and explicit authorization for the
    final commit, branch push/review, annotated tag, GitHub Release and main
    integration. Preparation alone does not grant these operations.
 4. Prepare one scoped versioned-documentation commit:
    - Set PROJECT_RELEASE_STATE in scripts/validate-package.mjs to versioned;
-     keep PROJECT_VERSION at 0.2.0 and the previous published version at 0.1.2.
+     set PROJECT_VERSION to 0.3.0 and the previous published version at 0.2.0.
    - Update README.md, README.zh-CN.md, docs/agent-quickstart.md,
      docs/agent-quickstart.zh-CN.md and docs/manual-configuration.md to name
-     v0.2.0 as the installation target, require a visible official GitHub Release
+     v0.3.0 as the installation target, require a visible official GitHub Release
      before running install commands, and verify the peeled
-     v0.2.0^{} commit. Remove candidate-only statements and the guidance caveat
+     v0.3.0^{} commit. Remove candidate-only statements and the guidance caveat
      that applies to the older installation; retain explicitly historical notes.
-   - Date the 0.2.0 changelog entry and add its comparison link.
+   - Date the 0.3.0 changelog entry and add its comparison link.
    - Versioned documentation is not a publication announcement. Do not label
-     v0.2.0 as latest published before the remote tag and Release exist.
+     v0.3.0 as latest published before the remote tag and Release exist.
      If publication fails after merge, installation must stop at the Release
-     availability precondition; the previous v0.1.2 remains the fallback.
+     availability precondition; the previous v0.2.0 remains the fallback.
    - Update this checklist's current-state paragraph and version-sensitive
      validation fixtures so the release itself does not retain a stale
      candidate-state description. Keep route status and known limits accurate.
@@ -79,9 +79,9 @@ visible official tag and GitHub Release.
    reviewed PR before creating the release tag, then verify the merged main tree
    matches the reviewed content and its post-merge CI passes. Earlier main CI is
    not final release-candidate CI.
-6. Under the explicit remote authorization, create the annotated v0.2.0 tag at
+6. Under the explicit remote authorization, create the annotated v0.3.0 tag at
    that verified merged main commit, push only the approved tag and create a
-   GitHub prerelease. Verify the peeled tag and the visible GitHub Release.
+   ordinary GitHub Release. Verify the peeled tag and the visible GitHub Release.
 7. Recheck main, tag identity, Release visibility, bilingual links and install
    commands. Record the resulting commit identities and post-integration CI.
 
@@ -92,7 +92,7 @@ authorized withdrawal or corrected version. Do not discard unrelated work.
 
 ## Manual GitHub Gates
 
-Before the first public preview:
+Verify the existing repository gates for each release:
 
 - establish `main` as the default branch and preserve the reviewed candidate
   history;
@@ -108,19 +108,20 @@ Before the first public preview:
 
 ## Release Positioning
 
-Describe 0.2.0 as a human-reviewed Public Preview that provides shared Host
-delegation guidance with Codex as the admitted Host. Codex-to-Codex is the
-only active Public Preview route. Describe Codex-to-Pi and Codex-to-Cursor
-separately as experimental, optional and explicitly selected.
+Describe 0.3.0 as an ordinary GitHub Release for practical Host-supervised
+delegation, with Codex as the admitted Host. Continue reviewing and improving
+delegation mechanisms and constraints. Preserve the existing route maturity
+labels independently: Codex-to-Codex remains the active public-preview route;
+Pi, Cursor, WorkBuddy and WorkBuddy AI remain experimental and explicitly selected.
 Do not claim unattended, production-ready, complete
 cross-platform, provider-neutral live reliability, or operating-system sandbox
 guarantees beyond the documented contracts.
 
-Keep `package.json` private for the GitHub preview. npm publication requires a
+Keep `package.json` private for the GitHub Release. npm publication requires a
 separate design, package-metadata review, provenance plan, and human approval.
 
 ## Rollback
 
 Before publication, revert the candidate on its feature branch. After
-publication, preserve the public history and either withdraw the preview
+publication, preserve the public history and either withdraw the
 release or publish a corrected version. Never rewrite a released tag silently.

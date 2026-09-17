@@ -8,7 +8,7 @@ does not authorize broader access or automatic patch application.
 
 The [Host Skill](../skills/relaypact/SKILL.md) defines the shared delegation and
 review requirements. Read this manual when using the CLI tools, whose schemas
-and lifecycle constraints remain required. Version 0.2.0 includes the shared
+and lifecycle constraints remain required. Version 0.3.0 includes the shared
 Host guidance and the experimental Cursor adapter.
 
 ## Prerequisites for the published Codex capsule route
@@ -47,24 +47,24 @@ codex exec --help
 
 ## Release state and version verification
 
-The installation target is `v0.2.0`. Package and Plugin version fields
+The installation target is `v0.3.0`. Package and Plugin version fields
 alone are not release identity; verify the official tag's peeled commit.
 
-Before installing, confirm the [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) is visible.
-If unavailable, stop these installation steps and use [v0.1.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.1.2) instead.
+Before installing, confirm the [v0.3.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.0) is visible.
+If unavailable, stop these installation steps and use [v0.2.0](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) instead.
 These versioned instructions are not a publication announcement.
 
 Install and verify the target release only after confirming its availability:
 
 ```bash
 set -e
-git clone --branch v0.2.0 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
-checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
+git clone --branch v0.3.0 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.0
+checkout_commit="$(git -C relaypact-v0.3.0 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.0 rev-parse 'v0.3.0^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.2.0
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.2.0"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.0
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.0"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -332,7 +332,8 @@ Do not overwrite an installation while an active task depends on its Skill
 files. Existing private task archives are versioned evidence and do not need to
 be rewritten for a plugin upgrade.
 
-Version 0.2.0 adds Host guidance and experimental Cursor support; it does not
+Version 0.3.0 adds experimental WorkBuddy and WorkBuddy AI support alongside
+Host guidance and the existing Cursor route; it does not
 automatically migrate existing task state. Finish active tasks with their
 original verified installation where possible, preserve evidence, and prepare
 new tasks after upgrading. Never bypass a lifecycle or evidence refusal.

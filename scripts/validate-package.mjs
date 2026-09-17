@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 const CANONICAL_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const PROJECT_NAME = "relaypact";
 const PROJECT_DISPLAY_NAME = "RelayPact";
-const PROJECT_VERSION = "0.2.0";
+const PROJECT_VERSION = "0.3.0";
 const PROJECT_RELEASE_STATE = "versioned";
-const LATEST_PUBLISHED_VERSION = "0.1.2";
+const LATEST_PUBLISHED_VERSION = "0.2.0";
 const PROJECT_LICENSE = "Apache-2.0";
 const PROJECT_REPOSITORY = "https://github.com/echopath-labs/relaypact";
 const PROJECT_MARKETPLACE = "relaypact-local";
@@ -226,7 +226,7 @@ async function validateProjectOnboarding(root, errors) {
   ], "docs/manual-configuration.md", errors);
   requireText(files["RELEASING.md"], [
     `${PROJECT_VERSION} release-time documentation closeout`, "PROJECT_RELEASE_STATE",
-    "chasechou007", "human-supplied release date", `v${PROJECT_VERSION}^{}`,
+    "chasechou007", "human-approved release date", `v${PROJECT_VERSION}^{}`,
     "reviewed PR before creating the release tag"
   ], "RELEASING.md", errors);
 
@@ -252,7 +252,7 @@ async function validateProjectOnboarding(root, errors) {
     requireText(files["README.md"], [`Latest published release: **v${installVersion}**`], "README.md", errors);
     requireText(files["README.zh-CN.md"], [`最新已发布版本：**v${installVersion}**`], "README.zh-CN.md", errors);
     for (const relative of candidateOnboardingFiles) {
-      requireText(files[relative], [`${PROJECT_VERSION} Public Preview source candidate`, `v${LATEST_PUBLISHED_VERSION}`], relative, errors);
+      requireText(files[relative], [`${PROJECT_VERSION} Release source candidate`, `v${LATEST_PUBLISHED_VERSION}`], relative, errors);
       forbidText(files[relative], [
         `git clone --branch v${PROJECT_VERSION}`,
         `Latest published release: **v${PROJECT_VERSION}**`,
@@ -265,7 +265,7 @@ async function validateProjectOnboarding(root, errors) {
     requireText(files["README.zh-CN.md"], [
       `\`v${PROJECT_VERSION}\` 尚未发布`
     ], "README.zh-CN.md", errors);
-    requireText(files["CHANGELOG.md"], [`## [${PROJECT_VERSION}] - Unreleased - Public Preview`], "CHANGELOG.md", errors);
+    requireText(files["CHANGELOG.md"], [`## [${PROJECT_VERSION}] - Unreleased - Release`], "CHANGELOG.md", errors);
   } else if (PROJECT_RELEASE_STATE === "versioned") {
     requireText(files["README.md"], [`Release target: **v${PROJECT_VERSION}**`], "README.md", errors);
     requireText(files["README.zh-CN.md"], [`安装目标版本：**v${PROJECT_VERSION}**`], "README.zh-CN.md", errors);
@@ -279,7 +279,7 @@ async function validateProjectOnboarding(root, errors) {
       })) {
         errors.push(`${relative} must put the Release availability precondition before installation commands in each install section.`);
       }
-      if (/unreleased|not a published\s+release|does not include these candidate changes|not part of the v0\.2\.0 installation|only in reviewed source|尚未发布|尚未包含|不包含在下文安装|不包含这些候选改动/iu.test(text)) {
+      if (/unreleased|not a published\s+release|does not include these candidate changes|not part of the v0\.3\.0 installation|only in reviewed source|尚未发布|尚未包含|不包含在下文安装|不包含这些候选改动/iu.test(text)) {
         errors.push(`${relative} must not retain candidate-only release status.`);
       }
       if (/latest published release|最新已发布版本/iu.test(files[relative] ?? "")) {
@@ -291,7 +291,7 @@ async function validateProjectOnboarding(root, errors) {
         `latest published release is \`v${PROJECT_VERSION}\``,
         `\`v${PROJECT_VERSION}\` is the latest published release`,
         `\`v${PROJECT_VERSION}\` 是最新已发布版本`,
-        `${PROJECT_VERSION} Public Preview source candidate`,
+        `${PROJECT_VERSION} Release source candidate`,
         `\`v${PROJECT_VERSION}\` is not released`,
         `\`v${PROJECT_VERSION}\` 尚未发布`
       ], relative, errors);
@@ -300,24 +300,24 @@ async function validateProjectOnboarding(root, errors) {
       `[${PROJECT_VERSION}]: https://github.com/echopath-labs/relaypact/compare/v${LATEST_PUBLISHED_VERSION}...v${PROJECT_VERSION}`
     ], "CHANGELOG.md", errors);
     const currentChangelog = (files["CHANGELOG.md"] ?? "").split(`## [${PROJECT_VERSION}]`)[1]?.split("\n## [")[0] ?? "";
-    if (/unreleased|source candidate|latest published release remains|no v0\.2\.0 tag/iu.test(currentChangelog)) {
+    if (/unreleased|source candidate|latest published release remains|no v0\.3\.0 tag/iu.test(currentChangelog)) {
       errors.push("CHANGELOG.md must not retain candidate-only status in the current release section.");
     }
     requireText((files["SECURITY.md"] ?? "").replace(/\s+/gu, " "), [
       `releases/tag/v${PROJECT_VERSION}) is visible, that supported release remains v${LATEST_PUBLISHED_VERSION}.`,
-      `Once v${PROJECT_VERSION} is published, support moves to the latest published \`0.2.x\` release.`
+      `Once v${PROJECT_VERSION} is published, support moves to the latest published \`0.3.x\` release.`
     ], "SECURITY.md", errors);
     const checklist = files["RELEASING.md"] ?? "";
-    if (!/The checked-in metadata describes 0\.2\.0 Public Preview, dated \d{4}-\d{2}-\d{2}\./u.test(checklist)
-        || /The checked-in state is a 0\.2\.0 source candidate|is intentionally unset/u.test(checklist)) {
+    if (!/The checked-in metadata describes 0\.3\.0 Release, dated \d{4}-\d{2}-\d{2}\./u.test(checklist)
+        || /The checked-in state is a 0\.3\.0 source candidate|is intentionally unset/u.test(checklist)) {
       errors.push("RELEASING.md must describe the dated versioned current state.");
     }
     const heading = files["CHANGELOG.md"]?.split("\n").find((line) => line.startsWith(`## [${PROJECT_VERSION}]`));
-    if (!heading || !/^## \[[0-9.]+\] - \d{4}-\d{2}-\d{2} - Public Preview$/u.test(heading)) {
-      errors.push("CHANGELOG.md must include the dated Public Preview release heading.");
+    if (!heading || !/^## \[[0-9.]+\] - \d{4}-\d{2}-\d{2} - Release$/u.test(heading)) {
+      errors.push("CHANGELOG.md must include the dated Release heading.");
     }
-    const changelogDate = heading?.match(/ - (\d{4}-\d{2}-\d{2}) - Public Preview$/u)?.[1];
-    const checklistDate = checklist.match(/The checked-in metadata describes 0\.2\.0 Public Preview, dated (\d{4}-\d{2}-\d{2})\./u)?.[1];
+    const changelogDate = heading?.match(/ - (\d{4}-\d{2}-\d{2}) - Release$/u)?.[1];
+    const checklistDate = checklist.match(/The checked-in metadata describes 0\.3\.0 Release, dated (\d{4}-\d{2}-\d{2})\./u)?.[1];
     if (changelogDate && checklistDate && changelogDate !== checklistDate) {
       errors.push("RELEASING.md and CHANGELOG.md release dates must agree.");
     }

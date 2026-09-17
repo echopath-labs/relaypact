@@ -7,12 +7,12 @@ Codex-to-Codex candidate。RelayPact 使用现有 Codex CLI 中的独立
 `codex exec`，不需要第二个 executor package。
 
 RelayPact 的通用目标是指导 Host 委派与验收。本教程演示安装目标版本的 Codex capsule
-工具流程。v0.2.0 的 [Host 规约](../skills/relaypact/SKILL.md) 区分通用责任与 CLI
+工具流程。v0.3.0 的 [Host 规约](../skills/relaypact/SKILL.md) 区分通用责任与 CLI
 配置。本教程的候选要到后续获得授权的应用步骤才会写入源码。
 
 当前发布事实：
 
-- 本指南面向 `v0.2.0`；`v0.1.2` 与 `v0.1.1` 仍可使用。
+- 本指南面向 `v0.3.0`；`v0.1.2` 与 `v0.1.1` 仍可使用。
 - 本指南安装版本化 tag，并验证 peel 后的 commit SHA。
 - Pi 是 experimental、inactive；本流程不会安装、加载或调用它。
 
@@ -32,19 +32,19 @@ codex exec --help
 仅安装 Codex Desktop 不能证明 CLI 或 `codex exec` 可用。独立 worker 会产生
 独立模型请求，可能额外消耗额度或费用。
 
-## 第 1 分钟：安装并验证 v0.2.0 release
+## 第 1 分钟：安装并验证 v0.3.0 release
 
-安装前必须确认 [v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0) 已可见。
-若尚不可用，停止这组安装步骤，改用 [v0.1.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.1.2)。
+安装前必须确认 [v0.3.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.0) 已可见。
+若尚不可用，停止这组安装步骤，改用 [v0.2.0](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0)。
 本文的版本化说明不代表远端发布已经完成。
 
 把下面的提示词交给协调 Codex：
 
 ```text
-请把 https://github.com/echopath-labs/relaypact 的版本化 v0.2.0 release tag
+请把 https://github.com/echopath-labs/relaypact 的版本化 v0.3.0 release tag
 克隆到目标仓库之外的本地工具目录。记录精确 checkout commit SHA，并将它与
-peel 后的 v0.2.0 tag commit 做精确比较。确认 package.json 和 plugin.json
-都报告 0.2.0；读取 README.md 和最近的 AGENTS.md；验证 Node.js 20+、Git、
+peel 后的 v0.3.0 tag commit 做精确比较。确认 package.json 和 plugin.json
+都报告 0.3.0；读取 README.md 和最近的 AGENTS.md；验证 Node.js 20+、Git、
 Codex CLI 0.147.0+ 和 `codex exec --help`。通过 local marketplace 安装根
 Plugin。在不读取凭据、不连接 provider、不启动 worker 的情况下，运行安装后
 Skill-local 的 `support` 和 `doctor`。报告精确 commit、版本、Plugin 与 Skill
@@ -56,13 +56,13 @@ push、tag、publish、release 或 deploy。
 
 ```bash
 set -e
-git clone --branch v0.2.0 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.2.0
-checkout_commit="$(git -C relaypact-v0.2.0 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.2.0 rev-parse 'v0.2.0^{}')"
+git clone --branch v0.3.0 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.0
+checkout_commit="$(git -C relaypact-v0.3.0 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.0 rev-parse 'v0.3.0^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.2.0
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.2.0"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.0
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.0"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json

@@ -2,7 +2,13 @@
 
 All notable public changes to RelayPact are recorded here.
 
-## [Unreleased]
+## [0.3.0] - 2026-09-17 - Release
+
+### Changed
+
+- Publish v0.3.0 as an ordinary GitHub Release for practical Host-supervised
+  delegation. Adapter maturity remains independently recorded in the support
+  matrix; delegation mechanisms and constraints remain subject to review and improvement.
 
 ### Added
 
@@ -22,6 +28,15 @@ All notable public changes to RelayPact are recorded here.
 - WorkBuddy doctor accepts both support-matrix route IDs and rejects mismatched
   editions. Nonzero native login failures retain their authentication diagnosis
   without masking interrupted or truncated execution.
+
+### Compatibility
+
+- Codex remains the admitted Host. WorkBuddy and WorkBuddy AI require macOS,
+  bundled CLI 2.137.1 and each edition's native login/configuration.
+- WorkBuddy supports bounded Read/Write tasks and fresh-task correction; shell,
+  same-session continuation and sanitized execution are not admitted.
+- Root Plugin activation and route maturity remain unchanged. GitHub installation
+  is supported; npm publication is not part of this release.
 
 ## [0.2.0] - 2026-09-16 - Public Preview
 
@@ -208,3 +223,5 @@ All notable public changes to RelayPact are recorded here.
 [0.1.2]: https://github.com/echopath-labs/relaypact/compare/v0.1.1...v0.1.2
 
 [0.2.0]: https://github.com/echopath-labs/relaypact/compare/v0.1.2...v0.2.0
+
+[0.3.0]: https://github.com/echopath-labs/relaypact/compare/v0.2.0...v0.3.0

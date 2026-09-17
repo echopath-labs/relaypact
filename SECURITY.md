@@ -2,19 +2,18 @@
 
 ## Supported Versions
 
-RelayPact is a human-reviewed Public Preview. Security fixes are provided on a
-best-effort basis for the most recent officially published preview. Until the
-[v0.2.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.2.0)
-is visible, that supported release remains v0.1.2. Once v0.2.0 is published,
-support moves to the latest published `0.2.x` release. Unreleased commits, older
-preview snapshots, unattended use, and locally modified adapters are not
-supported release channels.
+RelayPact v0.3.0 is an ordinary GitHub Release for Host-supervised delegation.
+Security fixes are provided on a best-effort basis for the current release line.
+Until the [v0.3.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.0)
+is visible, that supported release remains v0.2.0. Once v0.3.0 is published,
+support moves to the latest published `0.3.x` release. Unreleased commits, older
+snapshots and locally modified adapters are not supported release channels.
 
-The supported preview route is Codex-to-Codex. Codex-to-Pi and Codex-to-Cursor
-controls are retained and tested because their source is public; both adapters
-remain experimental, explicitly selected, and inactive at the root Plugin.
-Cursor uses its own CLI authentication and model configuration. RelayPact does
-not manage those credentials or claim that direct execution is a sandbox.
+Product release status does not promote adapter maturity. Codex-to-Codex remains
+the active public-preview route. Pi, Cursor, WorkBuddy and WorkBuddy AI remain
+experimental, explicitly selected and inactive at the root Plugin. Their public
+source and documented controls are covered by regression checks. Native harness
+configuration remains harness-owned; direct execution is not an OS sandbox.
 
 ## Reporting A Vulnerability
 
@@ -30,7 +29,7 @@ issue may report only that the private reporting channel is unavailable.
 
 Include the affected version or commit, entry point, required configuration,
 security boundary crossed, impact, and a minimal reproduction when it is safe
-to do so. Reports are evaluated against the documented preview threat boundary;
+to do so. Reports are evaluated against the documented threat boundary;
 not every self-directed or already-privileged local action is a vulnerability.
 
 ## Security Boundary
