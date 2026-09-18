@@ -40,8 +40,9 @@ configuration discovery, or an automatic fallback between adapters.
   should also run its focused check and relevant opt-in smoke when configured.
 - Deterministic tests must remain offline and independent of user Pi, Codex,
   provider, model, proxy, router, network, or credential configuration.
-- Use `feat/<scope>`, `fix/<scope>`, `chore/<scope>`, or `docs/<scope>` branch
-  names. Never use `codex/*` branches.
+- Codex tasks use `codex/<scope>` by default. `feat/<scope>`, `fix/<scope>`,
+  `chore/<scope>`, and `docs/<scope>` are also permitted. Branch names do not
+  confer merge or release authority.
 - Do not commit, push, tag, publish, release, or change repository settings
   without explicit human authorization. Executor completion is never final
   host or human acceptance.

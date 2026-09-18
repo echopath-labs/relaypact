@@ -212,6 +212,7 @@ only supported persistent modes can record a tool terminal decision.
 ## Development validation
 
 ```bash
+npm ci --ignore-scripts
 npm run check:codex-codex
 npm run check:codex-cursor
 npm run check

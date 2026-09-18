@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -221,4 +221,75 @@ test("Skill-local wrapper completes fake Codex execution through pending review"
     await rm(privateRoot, { recursive: true, force: true });
   }
   context.diagnostic("Skill-local wrapper used fake Codex without Pi or provider configuration.");
+});
+
+test("all execution commands map blocked to 2 and unknown outcomes fail closed", async () => {
+  const { exitCodeForResult } = await import("../packages/cli/src/main.mjs");
+  for (const command of ["run-pi", "run-workbuddy", "run-cursor", "correct-cursor", "run-codex", "correct-codex"]) {
+    for (const [status, expected] of [["completed", 0], ["blocked", 2], ["failed", 1], ["rejected", 1], ["unknown", 1], [undefined, 1]]) {
+      const result = command.endsWith("codex")
+        ? { reviewPacket: { lifecycleState: "awaiting_review", executorSelfReport: { status }, acceptance: { status: "pending" } } }
+        : command.endsWith("cursor")
+          ? { review: { executionResult: { status } } }
+          : { status };
+      assert.equal(exitCodeForResult(command, result), expected, `${command} ${status}`);
+      if (command === "run-cursor") assert.equal(exitCodeForResult(command, { status }), expected);
+    }
+  }
+  assert.equal(exitCodeForResult("run-codex", { reviewPacket: { lifecycleState: "failed", executorSelfReport: { status: "completed" } } }), 1);
+  for (const command of ["support", "decide-codex", "decide-cursor"]) assert.equal(exitCodeForResult(command, { acceptance: { status: "rejected" } }), 0);
+  assert.equal(exitCodeForResult("doctor", { state: "blocked" }), 1);
+});
+
+test("CLI subprocess emits blocked JSON with exit 2 for unavailable optional executors", async (context) => {
+  const repository = await createGitRepository();
+  const inputs = await mkdtemp(path.join(os.tmpdir(), "relaypact-cli-blocked-"));
+  context.after(async () => { await rm(repository, { recursive: true, force: true }); await rm(inputs, { recursive: true, force: true }); });
+  const envelope = path.join(inputs, "envelope.json");
+  await writeFile(envelope, JSON.stringify(makeEnvelope(repository)));
+  const pi = path.join(inputs, "blocked-pi.mjs");
+  await writeFile(pi, '#!/usr/bin/env node\nconsole.log(JSON.stringify({status: "blocked", summary: "Host clarification required", residualRisks: []}));\n', { mode: 0o755 });
+  for (const command of [
+    ["run-pi", "--executor", pi],
+    ["run-cursor", "--executor", path.join(inputs, "missing-cursor")],
+    ["run-workbuddy", "--edition", "mainland", "--app", path.join(inputs, "missing-mainland.app")],
+    ["run-workbuddy", "--edition", "international", "--app", path.join(inputs, "missing-international.app")]
+  ]) {
+    await writeFile(envelope, JSON.stringify(makeEnvelope(repository, command[0] === "run-pi" ? { executionProfile: { provider: "fixture", model: "fixture" } } : {})));
+    await assert.rejects(execFileAsync(process.execPath, [wrapper, ...command, "--envelope", envelope]), error => {
+      assert.equal(error.code, 2, `${command[0]} ${error.stderr} ${error.stdout}`);
+      assert.equal(JSON.parse(error.stdout).status, "blocked");
+      return true;
+    });
+  }
+});
+
+test("Codex CLI distinguishes blocked worker report from a reviewable lifecycle", async (context) => {
+  const repository = await createGitRepository();
+  const inputs = await mkdtemp(path.join(os.tmpdir(), "relaypact-cli-codex-blocked-"));
+  context.after(async () => { await rm(repository, { recursive: true, force: true }); await rm(inputs, { recursive: true, force: true }); });
+  const worker = path.join(inputs, "blocked-codex.mjs");
+  await writeFile(worker, (await readFile(fakeCodex, "utf8")).replace('status: "completed"', 'status: "blocked"').replace('blocking: null', 'blocking: { code: "needs_input", message: "Host clarification" }'), { mode: 0o755 });
+  const envelope = path.join(inputs, "envelope.json"), profiles = path.join(inputs, "profiles.json");
+  await writeFile(envelope, JSON.stringify(makeEnvelope(repository, { executionProfile: "fixture", scope: { readablePaths: ["README.md"], allowedPaths: ["allowed.txt"], forbiddenPaths: ["private/**"] } })));
+  await writeFile(profiles, JSON.stringify({ schemaVersion: "1.0.0", profiles: { fixture: { codexCommand: worker, external: false, environmentAllowlist: [] } } }));
+  await mkdir(path.join(inputs, "state"));
+  let taskRoot;
+  await assert.rejects(execFileAsync(process.execPath, [wrapper, "run-codex", "--envelope", envelope, "--profiles", profiles, "--state-root", path.join(inputs, "state"), "--host-instance", "fixture-host"]), error => {
+    assert.equal(error.code, 2, error.stderr || error.stdout);
+    const result = JSON.parse(error.stdout);
+    taskRoot = result.taskRoot;
+    const packet = result.reviewPacket;
+    assert.equal(packet.executorSelfReport.status, "blocked");
+    assert.equal(packet.acceptance.status, "pending");
+    assert.equal(packet.acceptance.eligible, false);
+    return true;
+  });
+  const prompt = path.join(inputs, "correction.txt");
+  await writeFile(prompt, "Report the remaining blocker within the original scope.");
+  await assert.rejects(execFileAsync(process.execPath, [wrapper, "correct-codex", "--task-root", taskRoot, "--profiles", profiles, "--prompt", prompt]), error => {
+    assert.equal(error.code, 2, error.stderr || error.stdout);
+    assert.equal(JSON.parse(error.stdout).reviewPacket.executorSelfReport.status, "blocked");
+    return true;
+  });
 });

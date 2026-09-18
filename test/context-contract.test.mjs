@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import Ajv2020 from "ajv/dist/2020.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -132,8 +133,8 @@ test("public JSON schemas are parseable and expose strict context contracts", as
   assert.equal(taskSchema.additionalProperties, false);
   assert.equal(taskSchema.properties.contextPlanning.additionalProperties, false);
   assert.equal(taskSchema.properties.contextPlanning.properties.strategy.const, "dependency-closure");
-  assert.match(taskSchema.$defs.readiness.properties.argv.items.pattern, /credential/);
-  assert.match(taskSchema.$defs.readiness.properties.argv.prefixItems[0].pattern, /powershell/);
+  assert.equal(taskSchema.$defs.readiness.properties.argv.items.$ref, "#/$defs/text");
+  assert.equal(taskSchema.$defs.readiness.properties.argv.prefixItems.length, 1);
   assert.equal(manifestSchema.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.equal(manifestSchema.additionalProperties, false);
   assert.deepEqual(manifestSchema.required, [
@@ -160,5 +161,116 @@ test("public JSON schemas are parseable and expose strict context contracts", as
     assert.equal(reviewSchema.properties.metrics.properties[field].oneOf[0].type, "integer");
     assert.equal(reviewSchema.properties.metrics.properties[field].oneOf[0].minimum, 0);
     assert.equal(reviewSchema.properties.metrics.properties[field].oneOf[1].const, "unavailable");
+  }
+});
+
+// A separate standards implementation validates the published schema; do not
+// substitute the runtime validator or a home-grown subset evaluator here.
+const taskSchema = JSON.parse(await readFile(new URL("../packages/contracts/schemas/task-envelope.schema.json", import.meta.url), "utf8"));
+const schemaAccepts = new Ajv2020({ strict: false, allErrors: true }).compile(taskSchema);
+function agreement(envelope, expected, label) {
+  const schemaValid = schemaAccepts(envelope);
+  let runtimeValid = true;
+  try { validateTaskEnvelope(envelope); } catch (error) {
+    assert.ok(["invalid_envelope", "invalid_path", "credential_in_envelope"].includes(error.code), `${label}: unexpected ${error}`);
+    runtimeValid = false;
+  }
+  assert.equal(schemaValid, expected, `${label}: schema ${JSON.stringify(schemaAccepts.errors)}`);
+  assert.equal(runtimeValid, expected, `${label}: runtime`);
+}
+
+test("schema/runtime differential paths preserve POSIX and Windows spelling boundaries", () => {
+  const paths = [
+    [".", true], ["src/a.mjs", true], ["src\\a.mjs", true], ["C:relative", true],
+    ["目录/😀.mjs", true], ["line\nname", true], ["src/**", true],
+    ["/etc/file", false], ["C:\\file", false], ["\\rooted", false],
+    ["../file", false], ["src/../file", false], ["src/./file", false],
+    ["src/.", false], ["src//file", false], ["src/", false], ["src\\", false],
+    ["src\0file", false], ["./file", false], [" ", false], ["", false],
+    ["src/..\n", true], ["src\n/../file", false], ["src\n/.git/file", false],
+    [".git/config", false], ["src/.GiT/config", false], [".RelayPact/state", false]
+  ];
+  for (const key of ["allowedPaths", "readablePaths", "discoverablePaths", "forbiddenPaths", "workingDirectory", "acknowledgedPaths"]) {
+    for (const [value, allowed] of paths) {
+      const envelope = makeEnvelope("/repository");
+      if (key === "workingDirectory") envelope.repository[key] = value;
+      else if (key === "acknowledgedPaths") envelope.repository.dirtyTree[key] = [value];
+      else envelope.scope[key] = [value];
+      const reserved = /(?:^|\/)\.(?:git|relaypact)(?:\/|$)/iu.test(value);
+      let expected = allowed || (reserved && ["forbiddenPaths", "workingDirectory", "acknowledgedPaths"].includes(key));
+      if (key === "discoverablePaths" && value.includes("\\")) expected = false;
+      agreement(envelope, expected, `${key}=${JSON.stringify(value)}`);
+    }
+  }
+  for (const [root, expected] of [["/repo", true], ["C:\\repo", true], ["\\rooted", true], ["\\\\server\\share", true], ["C:relative", false], ["relative", false], ["", false], ["/repo\0", false]]) {
+    agreement(makeEnvelope(root), expected, `root=${JSON.stringify(root)}`);
+  }
+});
+
+test("schema/runtime differential text, duplicates and profile constraints", () => {
+  for (const field of ["taskId", "objective", "expectedOutcome"]) {
+    const maximum = field === "taskId" ? 128 : 16384;
+    for (const [value, valid] of [["", false], ["\n\t ", false], ["a\0b", false], ["a\nb", true], ["😀".repeat(maximum), true], ["a".repeat(maximum + 1), false]]) {
+      const e = makeEnvelope("/repo"); e[field] = value;
+      agreement(e, valid, `${field} text length ${value.length}`);
+    }
+  }
+  for (const field of ["instructions", "constraints", "stopConditions", "requiredEvidence"]) {
+    const e = makeEnvelope("/repo"); e[field] = [e[field][0] ?? "same", e[field][0] ?? "same"];
+    agreement(e, false, `${field} duplicate`);
+  }
+  for (const profile of ["profile", {}, { model: "model", provider: "provider", reasoning: "high" }]) {
+    agreement(makeEnvelope("/repo", { executionProfile: profile }), true, "valid profile");
+  }
+  for (const profile of [null, [], 3, " ", "x".repeat(16385), { provider: " " }, { model: "a\0b" }, { reasoning: "unknown" }, { extra: true }]) {
+    agreement(makeEnvelope("/repo", { executionProfile: profile }), false, `invalid profile ${JSON.stringify(profile).slice(0, 60)}`);
+  }
+  for (const argv of [["node", "--test", "--test"], ["node", " "], ["node", "a\0b"]]) {
+    agreement(makeEnvelope("/repo", { validation: [{ id: "check", argv }] }), false, "invalid argv");
+  }
+});
+
+test("schema/runtime differential planned envelopes and malformed authority arrays", () => {
+  agreement(plannedEnvelope(), true, "planned baseline");
+  for (const seeds of [null, {}, 3, "src/a.mjs", [], ["."], ["src\\a.mjs"], ["src/*.mjs"], ["src/.git/config"], ["src/a.mjs", "src/a.mjs"]]) {
+    agreement(plannedEnvelope({ contextPlanning: { seeds } }), false, `invalid seeds ${JSON.stringify(seeds)}`);
+  }
+  for (const paths of [null, {}, 3, "src/**", []]) {
+    agreement(plannedEnvelope({ scope: { discoverablePaths: paths } }), false, "invalid discovery array");
+  }
+  for (const executable of ["bash", "/bin/BASH", "bash/", "C:\\Windows\\cmd.exe", "PwSh.EXE"]) {
+    agreement(plannedEnvelope({ contextPlanning: { readiness: [{ id: "shell", argv: [executable, "-c", "true"], timeoutMs: 10, acceptableExitCodes: [0] }] } }), false, executable);
+  }
+  agreement(plannedEnvelope({ execution: { exposureMode: "trusted-worktree", trustedWorktreeAcknowledged: true } }), false, "planned trusted worktree");
+});
+
+test("documented runtime-only semantic checks reject credentials and duplicate readiness IDs", () => {
+  for (const argv of [["node", "--API_KEY=fixture"], ["node", "Bearer fixture"], ["node", "https://user:pass@example.invalid"], ["node", "sk-abcdefghijklmnop"]]) {
+    const e = makeEnvelope("/repo", { validation: [{ id: "check", argv }] });
+    assert.equal(schemaAccepts(e), true);
+    assert.throws(() => validateTaskEnvelope(e), { code: "credential_in_envelope" });
+  }
+  const e = plannedEnvelope();
+  e.contextPlanning.readiness.push({ ...e.contextPlanning.readiness[0], argv: ["node", "--help"] });
+  assert.equal(schemaAccepts(e), true);
+  assert.throws(() => validateTaskEnvelope(e), /duplicate ids/);
+});
+
+test("schema/runtime accept public task examples and reject field/type mutations", async () => {
+  for (const name of ["task-envelope.json", "codex-task-envelope.planned.json", "codex-task-envelope.opencode-go-luna.json"]) {
+    const e = JSON.parse(await readFile(new URL(`../examples/${name}`, import.meta.url), "utf8"));
+    agreement(e, true, name);
+  }
+  const base = plannedEnvelope();
+  for (const field of taskSchema.required) {
+    const e = structuredClone(base); delete e[field]; agreement(e, false, `missing ${field}`);
+  }
+  // Deterministic generated combinations catch regex edge cases without relying on
+  // a random seed or comparing either validator with itself.
+  for (const parent of ["src", "目录", "line\nname"]) {
+    for (const segment of ["a", ".", "..", ".git", ".RELAYPACT"]) {
+      const e = makeEnvelope("/repo"); e.scope.allowedPaths = [`${parent}/${segment}/file`];
+      agreement(e, segment === "a", "generated relative authority");
+    }
   }
 });

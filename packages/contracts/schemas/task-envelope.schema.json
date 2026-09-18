@@ -19,27 +19,27 @@
     "resultFormat"
   ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
-    "taskId": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "objective": { "type": "string", "minLength": 1, "maxLength": 16384 },
-    "expectedOutcome": { "type": "string", "minLength": 1, "maxLength": 16384 },
+    "schemaVersion": {"const": "1.0.0"},
+    "taskId": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000]*(?![\\s\\S])"},
+    "objective": {"$ref": "#/$defs/text"},
+    "expectedOutcome": {"$ref": "#/$defs/text"},
     "repository": {
       "type": "object",
       "additionalProperties": false,
       "required": ["root", "workingDirectory", "dirtyTree"],
       "properties": {
-        "root": { "type": "string", "minLength": 1, "maxLength": 16384 },
-        "workingDirectory": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "root": {"$ref": "#/$defs/absolutePath"},
+        "workingDirectory": {"$ref": "#/$defs/relativePath"},
         "dirtyTree": {
           "type": "object",
           "additionalProperties": false,
           "required": ["allow", "acknowledgedPaths"],
           "properties": {
-            "allow": { "type": "boolean" },
+            "allow": {"type": "boolean"},
             "acknowledgedPaths": {
               "type": "array",
               "maxItems": 10000,
-              "items": { "type": "string", "minLength": 1, "maxLength": 16384 },
+              "items": {"$ref": "#/$defs/relativePath"},
               "uniqueItems": true
             }
           }
@@ -55,25 +55,25 @@
           "type": "array",
           "minItems": 1,
           "maxItems": 10000,
-          "items": { "type": "string", "minLength": 1, "maxLength": 16384 },
+          "items": {"$ref": "#/$defs/authorityPath"},
           "uniqueItems": true
         },
         "forbiddenPaths": {
           "type": "array",
           "maxItems": 10000,
-          "items": { "type": "string", "minLength": 1, "maxLength": 16384 },
+          "items": {"$ref": "#/$defs/relativePath"},
           "uniqueItems": true
         },
         "readablePaths": {
           "type": "array",
           "maxItems": 10000,
-          "items": { "type": "string", "minLength": 1, "maxLength": 16384 },
+          "items": {"$ref": "#/$defs/authorityPath"},
           "uniqueItems": true
         },
         "discoverablePaths": {
           "type": "array",
           "maxItems": 10000,
-          "items": { "$ref": "#/$defs/normalizedGlob" },
+          "items": {"$ref": "#/$defs/normalizedGlob"},
           "uniqueItems": true
         }
       }
@@ -83,24 +83,26 @@
       "additionalProperties": false,
       "required": ["strategy", "seeds", "analyzers", "budget", "readiness"],
       "properties": {
-        "strategy": { "const": "dependency-closure" },
+        "strategy": {"const": "dependency-closure"},
         "seeds": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/normalizedLiteralPath" },
-          "uniqueItems": true
+          "items": {"$ref": "#/$defs/normalizedLiteralPath"},
+          "uniqueItems": true,
+          "maxItems": 10000
         },
         "analyzers": {
           "type": "array",
           "minItems": 1,
-          "items": { "const": "node-esm" },
-          "uniqueItems": true
+          "items": {"const": "node-esm"},
+          "uniqueItems": true,
+          "maxItems": 10000
         },
-        "budget": { "$ref": "#/$defs/budget" },
+        "budget": {"$ref": "#/$defs/budget"},
         "readiness": {
           "type": "array",
           "maxItems": 256,
-          "items": { "$ref": "#/$defs/readiness" }
+          "items": {"$ref": "#/$defs/readiness"}
         }
       }
     },
@@ -108,12 +110,14 @@
       "type": "array",
       "minItems": 1,
       "maxItems": 10000,
-      "items": { "type": "string", "minLength": 1, "maxLength": 16384 }
+      "items": {"$ref": "#/$defs/text"},
+      "uniqueItems": true
     },
     "constraints": {
       "type": "array",
       "maxItems": 10000,
-      "items": { "type": "string", "minLength": 1, "maxLength": 16384 }
+      "items": {"$ref": "#/$defs/text"},
+      "uniqueItems": true
     },
     "validation": {
       "type": "array",
@@ -123,19 +127,16 @@
         "additionalProperties": false,
         "required": ["id", "argv"],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
+          "id": {"$ref": "#/$defs/text"},
           "argv": {
             "type": "array",
             "minItems": 1,
             "maxItems": 256,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 16384,
-              "pattern": "^(?!(?:--?)?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:entication)?[_-]?token|token|password|secret|credential)(?:[_-][A-Za-z0-9]+)*(?:=|$))(?!.*(?:authorization|proxy-authorization)\\s*:\\s*(?:bearer|basic)\\s+\\S+)(?!\\s*(?:bearer|basic)\\s+\\S+)(?!.*https?:\\/\\/[^\\/\\s:@]+:[^\\/\\s@]+@).+$"
-            }
+            "items": {"$ref": "#/$defs/text"},
+            "uniqueItems": true,
+            "description": "Credential-like arguments are rejected by validateTaskEnvelope after structural schema validation; see the contracts README."
           },
-          "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 3600000 }
+          "timeoutMs": {"type": "integer", "minimum": 1, "maximum": 3600000}
         }
       }
     },
@@ -152,25 +153,26 @@
       "type": "array",
       "minItems": 1,
       "maxItems": 10000,
-      "items": { "type": "string", "minLength": 1, "maxLength": 16384 }
+      "items": {"$ref": "#/$defs/text"},
+      "uniqueItems": true
     },
     "resultFormat": {
       "type": "object",
       "additionalProperties": false,
       "required": ["schemaVersion"],
       "properties": {
-        "schemaVersion": { "const": "1.0.0" }
+        "schemaVersion": {"const": "1.0.0"}
       }
     },
     "executionProfile": {
       "oneOf": [
-        { "type": "string", "minLength": 1 },
+        {"$ref": "#/$defs/text"},
         {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "provider": { "type": "string", "minLength": 1 },
-            "model": { "type": "string", "minLength": 1 },
+            "provider": {"$ref": "#/$defs/text"},
+            "model": {"$ref": "#/$defs/text"},
             "reasoning": {
               "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
             }
@@ -182,20 +184,26 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 3600000 },
-        "exposureMode": { "enum": ["sanitized", "trusted-worktree"] },
-        "trustedWorktreeAcknowledged": { "type": "boolean" }
+        "timeoutMs": {"type": "integer", "minimum": 1, "maximum": 3600000},
+        "exposureMode": {
+          "enum": ["sanitized", "trusted-worktree"]
+        },
+        "trustedWorktreeAcknowledged": {"type": "boolean"}
       }
     }
   },
   "allOf": [
     {
-      "if": { "required": ["contextPlanning"] },
+      "if": {
+        "required": ["contextPlanning"]
+      },
       "then": {
         "properties": {
           "scope": {
             "required": ["discoverablePaths"],
-            "properties": { "discoverablePaths": { "minItems": 1 } }
+            "properties": {
+              "discoverablePaths": {"minItems": 1}
+            }
           }
         }
       }
@@ -206,32 +214,32 @@
         "properties": {
           "execution": {
             "required": ["exposureMode"],
-            "properties": { "exposureMode": { "const": "trusted-worktree" } }
+            "properties": {
+              "exposureMode": {"const": "trusted-worktree"}
+            }
           }
         }
       },
-      "then": { "not": {} }
+      "then": {
+        "not": {}
+      }
     }
   ],
   "$defs": {
     "normalizedGlob": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?:\\.|(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*(?:^|/)\\./)(?!.*/$)[^\\\\\\u0000]+)$"
+      "allOf": [{"$ref": "#/$defs/authorityPath"}, {"not": {"pattern": "\\\\"}}]
     },
     "normalizedLiteralPath": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^(?!\\.$)(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*(?:^|/)\\./)(?!.*/$)(?!.*[*?\\[\\]{}])[^\\\\\\u0000]+$"
+      "allOf": [{"$ref": "#/$defs/normalizedGlob"}, {"not": {"const": "."}}, {"not": {"pattern": "[*?\\[\\]{}]"}}]
     },
     "budget": {
       "type": "object",
       "additionalProperties": false,
       "required": ["maxFiles", "maxBytes", "maxDepth"],
       "properties": {
-        "maxFiles": { "type": "integer", "minimum": 1, "maximum": 10000 },
-        "maxBytes": { "type": "integer", "minimum": 1, "maximum": 67108864 },
-        "maxDepth": { "type": "integer", "minimum": 1, "maximum": 256 }
+        "maxFiles": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "maxBytes": {"type": "integer", "minimum": 1, "maximum": 67108864},
+        "maxDepth": {"type": "integer", "minimum": 1, "maximum": 256}
       }
     },
     "readiness": {
@@ -239,30 +247,51 @@
       "additionalProperties": false,
       "required": ["id", "argv", "timeoutMs", "acceptableExitCodes"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
+        "id": {"$ref": "#/$defs/text"},
         "argv": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 256,
-        "items": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 16384,
-          "pattern": "^(?!(?:--?)?(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|access[_-]?token|auth(?:entication)?[_-]?token|token|password|secret|credential)(?:[_-][A-Za-z0-9]+)*(?:=|$))(?!.*(?:authorization|proxy-authorization)\\s*:\\s*(?:bearer|basic)\\s+\\S+)(?!\\s*(?:bearer|basic)\\s+\\S+)(?!.*https?:\\/\\/[^\\/\\s:@]+:[^\\/\\s@]+@).+$"
-          },
-          "prefixItems": [{
-            "type": "string",
-            "pattern": "^(?!(?:.*[/\\\\])?(?:sh|bash|zsh|dash|ksh|fish|csh|tcsh|cmd|powershell|pwsh)(?:\\.exe)?$).+$"
-          }]
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/text"},
+          "prefixItems": [
+            {
+              "allOf": [
+                {"$ref": "#/$defs/text"},
+                {
+                  "not": {
+                    "pattern": "^(?:[\\s\\S]*[/\\\\])?(?:[sS][hH]|[bB][aA][sS][hH]|[zZ][sS][hH]|[dD][aA][sS][hH]|[kK][sS][hH]|[fF][iI][sS][hH]|[cC][sS][hH]|[tT][cC][sS][hH]|[cC][mM][dD]|[cC][mM][dD]\\.[eE][xX][eE]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL]\\.[eE][xX][eE]|[pP][wW][sS][hH]|[pP][wW][sS][hH]\\.[eE][xX][eE])[/\\\\]*(?![\\s\\S])"
+                  }
+                }
+              ]
+            }
+          ],
+          "uniqueItems": true,
+          "description": "Credential-like arguments are rejected by validateTaskEnvelope after structural schema validation; see the contracts README."
         },
-        "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 3600000 },
+        "timeoutMs": {"type": "integer", "minimum": 1, "maximum": 3600000},
         "acceptableExitCodes": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "type": "integer", "minimum": 0, "maximum": 255 }
+          "items": {"type": "integer", "minimum": 0, "maximum": 255}
         }
       }
+    },
+    "text": {"type": "string", "minLength": 1, "maxLength": 16384, "pattern": "^(?=[\\s\\S]*\\S)[^\\u0000]*(?![\\s\\S])"},
+    "relativePath": {
+      "allOf": [
+        {"$ref": "#/$defs/text"},
+        {
+          "pattern": "^(?:\\.|(?![/\\\\])(?![A-Za-z]:[/\\\\])(?![\\s\\S]*(?:^|[/\\\\])\\.{1,2}(?:[/\\\\]|$))(?![\\s\\S]*[/\\\\]{2})(?![\\s\\S]*[/\\\\]$)[^\\u0000]+)(?![\\s\\S])"
+        }
+      ]
+    },
+    "authorityPath": {
+      "allOf": [{"$ref": "#/$defs/relativePath"}, {"not": {"pattern": "(?:^|[/\\\\])\\.(?:[gG][iI][tT]|[rR][eE][lL][aA][yY][pP][aA][cC][tT])(?:[/\\\\]|$)"}}]
+    },
+    "absolutePath": {
+      "allOf": [{"$ref": "#/$defs/text"}, {"pattern": "^(?:[/\\\\]|[A-Za-z]:[/\\\\])"}]
     }
-  }
+  },
+  "$comment": "Structural TaskEnvelope contract. Runtime additionally rejects credential-like command arguments and duplicate readiness IDs; schema validity never implies execution readiness or acceptance. See packages/contracts/README.md."
 }

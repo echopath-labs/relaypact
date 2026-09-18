@@ -32,7 +32,7 @@ const MANIFEST_FIELDS = new Set([
 const ALLOWED_TOP_LEVEL = new Set([
   ".agents", ".git", ".github", ".gitignore", ".npmignore", "CHANGELOG.md",
   "AGENTS.md", "CONTRIBUTING.md", "LICENSE", "NOTICE", "README.md", "README.zh-CN.md", "RELEASING.md", "SECURITY.md",
-  "plugin.json", "package.json", "skills", "packages", "bin", "scripts",
+  "plugin.json", "package.json", "package-lock.json", "node_modules", "skills", "packages", "bin", "scripts",
   "test", "examples", "docs", "public-files.json", "support-matrix.json"
 ]);
 const PRIVATE_NAMES = new Set(["openspec", "opendomain", ".pi", "auth.json", ".ds_store", "node_modules"]);
@@ -41,7 +41,7 @@ const ALLOWED_ACTIONS = new Set([
   "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
 ]);
-const REVIEWED_WORKFLOW_SHA256 = "6ef860d3bf95bf059a1dcc5e9569cdc46fb277411ef7bef55447c9d3916d6533";
+const REVIEWED_WORKFLOW_SHA256 = "674c35c3f103eee052dc5dd8cf463543938dafb0c70a08b1b1365fb5daf62110";
 const SKILL_REFERENCES = [
   "agent-setup.md", "task-envelope.md", "executor-result.md",
   "correction-request.md", "scope-breach.md", "invocation.md", "context-planning.md"

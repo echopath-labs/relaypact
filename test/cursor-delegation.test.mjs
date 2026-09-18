@@ -2087,3 +2087,22 @@ test("Cursor cold correction probe failure preserves signed task state", async (
     await rm(stateRoot, { recursive: true, force: true });
   }
 });
+
+
+test("Cursor CLI blocked execution is nonzero for both one-shot and persistent review", async (context) => {
+  const root = await createGitRepository();
+  const inputs = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-cli-blocked-"));
+  context.after(async () => { await rm(root, { recursive: true, force: true }); await rm(inputs, { recursive: true, force: true }); });
+  const envelope = path.join(inputs, "envelope.json"), state = path.join(inputs, "state");
+  await mkdir(state);
+  await writeFile(envelope, JSON.stringify(makeEnvelope(root, { taskId: "cursor-blocked" })));
+  for (const extra of [[], ["--state-root", state, "--host-instance", "fixture-host"]]) {
+    await assert.rejects(execFileAsync(process.execPath, [cli, "run-cursor", "--envelope", envelope, "--executor", fakeCursor, ...extra]), error => {
+      assert.equal(error.code, 2, error.stderr || error.stdout);
+      const result = JSON.parse(error.stdout);
+      assert.equal(result.review?.executionResult.status ?? result.status, "blocked");
+      assert.equal((result.review?.executionResult.hostAcceptance ?? result.hostAcceptance).status, "pending");
+      return true;
+    });
+  }
+});

@@ -8,7 +8,7 @@ Pi and Cursor remain experimental and must not become default prerequisites.
 
 Before submitting a change:
 
-1. Run `npm run check` with Node.js 20 or later.
+1. Run `npm ci --ignore-scripts`, then `npm run check` with Node.js 20 or later.
 2. Add or update tests for contract, Git-boundary, and error behavior.
 3. Do not commit credentials, authentication files, personal absolute paths,
    private planning records, or raw executor logs.

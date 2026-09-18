@@ -654,3 +654,15 @@ test("correction resume refuses every mismatched identity dimension", async () =
     );
   }
 });
+
+
+test("Codex results preserve TaskEnvelope Unicode task ID length semantics", async () => {
+  const { validateTaskEnvelope } = await import("../packages/contracts/src/envelope.mjs");
+  const { validateCodexWorkerResult } = await import("../packages/executor-codex/src/result.mjs");
+  const taskId = "😀".repeat(128);
+  const envelope = makeEnvelope("/repository", { taskId });
+  assert.equal(validateTaskEnvelope(envelope).taskId, taskId);
+  const result = { schemaVersion: "1.0.0", taskId, status: "completed", summary: "fixture", changedFiles: [], validations: [], residualRisks: [], blocking: null };
+  assert.equal(validateCodexWorkerResult(result, taskId).taskId, taskId);
+  assert.throws(() => validateCodexWorkerResult({ ...result, taskId: taskId + "a" }, taskId + "a"), { code: "malformed_worker_result" });
+});

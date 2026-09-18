@@ -34,6 +34,7 @@
     "examples/host-delegation-cases.md",
     "examples/host-review-packet.json",
     "examples/task-envelope.json",
+    "package-lock.json",
     "package.json",
     "packages/adapter-codex-codex/README.md",
     "packages/adapter-codex-codex/package.json",

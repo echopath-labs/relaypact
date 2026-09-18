@@ -62,7 +62,7 @@ function requireObject(value, field) {
 }
 
 function requireString(value, field, { maxLength = MAX_TEXT_LENGTH } = {}) {
-  if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength || value.includes("\0")) {
+  if (typeof value !== "string" || value.trim().length === 0 || [...value].length > maxLength || value.includes("\0")) {
     throw new DelegationError("invalid_envelope", `${field} must be a non-empty string.`);
   }
   return value;
@@ -121,7 +121,7 @@ function validateReadiness(readiness, field = "contextPlanning.readiness") {
     }
     ids.add(entry.id);
     requireStringArray(entry.argv, `${entryField}.argv`, { min: 1, max: MAX_COMMAND_ARGS });
-    const executable = path.basename(entry.argv[0]).toLowerCase();
+    const executable = path.posix.basename(entry.argv[0].replaceAll("\\", "/")).toLowerCase();
     if (SHELL_EXECUTABLES.has(executable)) {
       throw new DelegationError("invalid_envelope", `${entryField}.argv must invoke a non-shell executable.`);
     }
@@ -218,15 +218,6 @@ export function validateTaskEnvelope(input) {
   requireStringArray(scope.forbiddenPaths, "scope.forbiddenPaths");
   if (scope.readablePaths !== undefined) requireStringArray(scope.readablePaths, "scope.readablePaths");
   [...scope.allowedPaths, ...scope.forbiddenPaths, ...(scope.readablePaths ?? [])].forEach((item) => normalizeRelativePath(item, "scope pattern"));
-  const authorityPaths = [
-    ...scope.allowedPaths,
-    ...(scope.readablePaths ?? []),
-    ...(scope.discoverablePaths ?? []),
-    ...(input.contextPlanning?.seeds ?? [])
-  ];
-  if (authorityPaths.some(isReservedPath)) {
-    throw new DelegationError("invalid_envelope", "Reserved .git and .relaypact paths cannot be granted as task authority.");
-  }
   if (scope.discoverablePaths !== undefined) requireNormalizedPathArray(scope.discoverablePaths, "scope.discoverablePaths");
 
   requireStringArray(envelope.instructions, "instructions", { min: 1 });
@@ -297,6 +288,16 @@ export function validateTaskEnvelope(input) {
 
   if (envelope.contextPlanning !== undefined) {
     validateContextPlanning(envelope.contextPlanning, scope, envelope.execution);
+  }
+
+  const authorityPaths = [
+    ...scope.allowedPaths,
+    ...(scope.readablePaths ?? []),
+    ...(scope.discoverablePaths ?? []),
+    ...(input.contextPlanning?.seeds ?? [])
+  ];
+  if (authorityPaths.some(isReservedPath)) {
+    throw new DelegationError("invalid_envelope", "Reserved .git and .relaypact paths cannot be granted as task authority.");
   }
 
   rejectCredentials(envelope);

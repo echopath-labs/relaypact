@@ -31,10 +31,16 @@ Host exit is insufficient proof; orphaned execution has no automatic cleanup.
 Candidate source files are never changed. Abandonment returns `task_state_busy` while the signed execution
 lease still has a live owner.
 
-For persistent `run-cursor` and `correct-cursor`, completed or blocked
-execution returns exit code `0`; failed, rejected, or malformed execution
-returns exit code `1`. The JSON review is still authoritative, and a successful
-process exit never implies host acceptance.
+For every `run-*` and `correct-*` command, completed execution returns exit
+code `0`, blocked execution returns `2`, and failed, rejected, malformed or
+unknown execution returns `1`. A failed persistent lifecycle also returns `1`.
+JSON retains the detailed outcome and a successful process exit never implies
+Host acceptance. `doctor` keeps its diagnostic convention (blocked `1`, other
+states `0`); successful `support` and `decide-*` operations return `0`.
+
+Compatibility: v0.3.0 returned `0` for blocked executions. Automation must now
+handle `2` as requiring attention and inspect JSON before retrying. Do not treat
+all nonzero results as retryable, or interpret completion as acceptance.
 
 The CLI never falls back from one execution harness to another.
 
