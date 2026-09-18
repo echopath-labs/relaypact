@@ -104,8 +104,8 @@ execution-completion evidence. It refuses with `task_state_busy` while an active
 execution lease still has a live owner, and with `execution_stop_unverified`
 when completion is unknown. Preserve that state; do not infer executor death
 from Host exit or manually remove the state to bypass this check.
-For `run-cursor` and `correct-cursor`, completed or blocked execution returns
-exit code `0`; failed, rejected, or malformed execution returns exit code `1`.
+For `run-cursor` and `correct-cursor`, completed execution returns exit code `0`, blocked execution returns `2`,
+and failed, rejected, or malformed execution returns `1`.
 The JSON review remains the authoritative result and host acceptance stays
 pending until an explicit terminal decision.
 

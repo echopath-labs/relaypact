@@ -39,5 +39,8 @@
     "check": "npm run validate:architecture && npm run validate:package && npm test",
     "check:codex-workbuddy": "node --test test/workbuddy-delegation.test.mjs",
     "smoke:workbuddy": "node --test test/integration/workbuddy-smoke.test.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0"
   }
 }

@@ -2,6 +2,13 @@
 
 All notable public changes to RelayPact are recorded here.
 
+## [Unreleased]
+
+### Fixed
+- Align TaskEnvelope schema path, text, array and profile constraints with runtime validation; add independent differential checks and document runtime-only semantic checks.
+- Return exit code 2 for blocked execution across run/correction commands; 0 remains completed and 1 remains failed/rejected/error. Shell automation that previously treated blocked as success must handle 2 explicitly. Completion still does not imply Host acceptance.
+- Align branch instructions with permitted Codex task branches and document release-tag protection.
+
 ## [0.3.0] - 2026-09-17 - Release
 
 ### Changed

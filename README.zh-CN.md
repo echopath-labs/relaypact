@@ -186,6 +186,7 @@ patch，拒绝也不会自动撤销工作区变更。一次性结果在工具层
 ## 开发验证
 
 ```bash
+npm ci --ignore-scripts
 npm run check:codex-codex
 npm run check:codex-cursor
 npm run check

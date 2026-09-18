@@ -11,6 +11,17 @@ review requirements. Read this manual when using the CLI tools, whose schemas
 and lifecycle constraints remain required. Version 0.3.0 includes the shared
 Host guidance and the experimental Cursor adapter.
 
+## Execution exit codes after v0.3.0
+
+This source revision changes every `run-*` and `correct-*` command to return
+`0` for completed execution, `2` for blocked execution, and `1` for failed,
+rejected, malformed or unknown results. A failed persistent lifecycle also
+returns `1`. JSON carries details; exit `0` never grants Host acceptance.
+These changes follow v0.3.0; see the [changelog](../CHANGELOG.md) for release status.
+Wrappers upgrading from v0.3.0 must handle `2` explicitly instead of treating
+blocked execution as success. Doctor and decision-operation semantics are
+unchanged; see [CLI semantics](../packages/cli/README.md).
+
 ## Prerequisites for the published Codex capsule route
 
 - Node.js 20 or later

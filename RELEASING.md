@@ -9,6 +9,7 @@ publish, or deployment.
 From a clean candidate repository with Node.js 20 or later and Git:
 
 ```bash
+npm ci --ignore-scripts
 npm run check
 RELAYPACT_CODEX_PLUGIN_SMOKE=1 npm run smoke:codex-plugin
 npm pack --dry-run --json
@@ -101,6 +102,8 @@ Verify the existing repository gates for each release:
 - enable GitHub private vulnerability reporting and verify the link in
   [SECURITY.md](SECURITY.md);
 - require the `Validate` workflow on protected release changes;
+- verify an active tag ruleset matches `refs/tags/v*`, prohibits updates and
+  deletions, and has no bypass actors; new release-tag creation remains allowed;
 - verify the first remote Ubuntu workflow succeeds;
 - inspect the final GitHub diff and release archive;
 - obtain an explicit human Go decision before pushing a version tag or creating
@@ -125,3 +128,7 @@ separate design, package-metadata review, provenance plan, and human approval.
 Before publication, revert the candidate on its feature branch. After
 publication, preserve the public history and either withdraw the
 release or publish a corrected version. Never rewrite a released tag silently.
+
+Tag rules protect Git refs, not administrators' ability to change repository
+settings or edit Release notes. Record the peeled commit and annotated tag object
+in release evidence. Never test protection by rewriting or deleting a published tag.

@@ -23,6 +23,8 @@ jobs:
         with:
           node-version: 20.20.2
           package-manager-cache: false
+      - name: Install locked development dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Validate package and run deterministic tests
         run: npm run check
       - name: Inspect package contents

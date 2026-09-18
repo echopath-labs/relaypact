@@ -8,11 +8,11 @@ const RESULT_KEYS = new Set([
 ]);
 const VALIDATION_KEYS = new Set(["id", "status", "summary"]);
 
-function requireString(value, field, { empty = false, maxLength = 2000 } = {}) {
+function requireString(value, field, { empty = false, maxLength = 2000, codePoints = false } = {}) {
   if (typeof value !== "string" || (!empty && value.trim().length === 0)) {
     throw new DelegationError("malformed_worker_result", `${field} must be a ${empty ? "string" : "non-empty string"}.`);
   }
-  if (value.length > maxLength) {
+  if ((codePoints ? [...value].length : value.length) > maxLength) {
     throw new DelegationError("malformed_worker_result", `${field} exceeds its maximum length.`);
   }
   return value;
@@ -46,7 +46,7 @@ export function validateCodexWorkerResult(input, expectedTaskId, options = {}) {
   const sensitiveValues = Array.isArray(options.sensitiveValues) ? options.sensitiveValues : [];
   exactKeys(input, RESULT_KEYS, "worker result");
   if (input.schemaVersion !== "1.0.0") throw new DelegationError("malformed_worker_result", "Worker result schemaVersion must be 1.0.0.");
-  requireString(input.taskId, "worker result taskId", { maxLength: 128 });
+  requireString(input.taskId, "worker result taskId", { maxLength: 128, codePoints: true });
   if (input.taskId !== expectedTaskId) throw new DelegationError("worker_task_mismatch", "Worker result taskId does not match the delegated task.");
   if (!["completed", "blocked", "failed"].includes(input.status)) throw new DelegationError("malformed_worker_result", "Worker result status is invalid.");
   requireString(input.summary, "worker result summary", { empty: true, maxLength: 4000 });

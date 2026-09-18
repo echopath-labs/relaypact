@@ -219,6 +219,21 @@ async function decideCursor(options) {
   );
 }
 
+// Command status describes execution or the requested operation, never acceptance.
+export function exitCodeForResult(command, result) {
+  if (command === "doctor") return result.state === "blocked" ? 1 : 0;
+  let status;
+  if (["run-codex", "correct-codex"].includes(command)) {
+    if (result.reviewPacket?.lifecycleState === "failed") return 1;
+    status = result.reviewPacket?.executorSelfReport?.status;
+  } else if (["run-cursor", "correct-cursor"].includes(command)) {
+    status = result.review?.executionResult?.status ?? result.status;
+  } else if (["run-pi", "run-workbuddy"].includes(command)) {
+    status = result.status;
+  } else return 0;
+  return status === "completed" ? 0 : status === "blocked" ? 2 : 1;
+}
+
 export async function runCli(argv, io = process, runtime = {}) {
   try {
     const options = parseArgs(argv);
@@ -246,15 +261,7 @@ export async function runCli(argv, io = process, runtime = {}) {
     else if (options.command === "correct-codex") result = await correctCodex(options);
     else result = await decideCodex(options);
     io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    if (options.command === "doctor") io.exitCode = result.state === "blocked" ? 1 : 0;
-    else if (["run-pi", "run-workbuddy"].includes(options.command) || (options.command === "run-cursor" && !result.review)) io.exitCode = result.status === "completed" || result.status === "blocked" ? 0 : 1;
-    else if (["run-cursor", "correct-cursor"].includes(options.command)) {
-      const status = result.review.executionResult.status;
-      io.exitCode = status === "completed" || status === "blocked" ? 0 : 1;
-    }
-    else if (options.command === "run-codex" || options.command === "correct-codex") {
-      io.exitCode = result.reviewPacket.lifecycleState === "failed" ? 1 : 0;
-    } else if (options.command !== "support") io.exitCode = 0;
+    io.exitCode = exitCodeForResult(options.command, result);
   } catch (error) {
     const safe = asDelegationError(error);
     io.stderr.write(`${JSON.stringify({
