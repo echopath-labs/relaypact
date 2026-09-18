@@ -2,10 +2,10 @@
 
 ## Supported Versions
 
-RelayPact v0.3.0 is an ordinary GitHub Release for Host-supervised delegation.
+RelayPact v0.3.1 is an ordinary GitHub Release for Host-supervised delegation.
 Security fixes are provided on a best-effort basis for the current release line.
-Until the [v0.3.0 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.0)
-is visible, that supported release remains v0.2.0. Once v0.3.0 is published,
+Until the [v0.3.1 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.1)
+is visible, that supported release remains v0.3.0. Once v0.3.1 is published,
 support moves to the latest published `0.3.x` release. Unreleased commits, older
 snapshots and locally modified adapters are not supported release channels.
 
