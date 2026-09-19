@@ -185,8 +185,12 @@ patch，拒绝也不会自动撤销工作区变更。一次性结果在工具层
 
 ## v0.3.2 变更
 
-本版对齐 TaskEnvelope Schema 与运行时结构约束，明确运行时语义检查。
-执行与纠正命令受阻时返回 `2`；完成时的 `0` 仍不代表 Host 验收。详见 [CHANGELOG](CHANGELOG.md)。
+- 修复执行器和验证输出截断时切开 Unicode 代理对的问题，保留完整字符。
+- 允许 Host 通过 `execution.filesystemEvidenceMaxBytes` 配置最高 8 GiB 的预算，
+  默认仍为 512 MiB，任务全程保持忽略文件和范围检查。
+- 明确验证上下文准备、等待同一次执行、命令合规证据及进程组取消的限制。
+
+详情与兼容性说明见 [CHANGELOG](CHANGELOG.md)。
 
 ## 开发验证
 

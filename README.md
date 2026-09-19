@@ -211,9 +211,13 @@ only supported persistent modes can record a tool terminal decision.
 
 ## Changes in v0.3.2
 
-TaskEnvelope schema and runtime constraints are aligned, with explicit runtime
-semantic checks. Run/correction commands return `2` for blocked execution;
-completion (`0`) still requires separate Host acceptance. See the [changelog](CHANGELOG.md).
+- Preserve complete Unicode surrogate pairs when truncating executor and validation output.
+- Allow the Host to configure `execution.filesystemEvidenceMaxBytes` up to 8 GiB,
+  retaining the 512 MiB default and ignored-file/scope checks throughout the task.
+- Clarify validation context readiness, waiting on one invocation, command-compliance
+  evidence, and process-group cancellation limits.
+
+See the [changelog](CHANGELOG.md) for details and compatibility notes.
 
 ## Development validation
 
