@@ -2,6 +2,18 @@ import path from "node:path";
 import { DelegationError } from "./errors.mjs";
 import { isReservedPath, normalizeRelativePath } from "./path-policy.mjs";
 
+export const DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES = 512 * 1024 * 1024;
+export const MAX_FILESYSTEM_EVIDENCE_BYTES = 8 * 1024 * 1024 * 1024;
+
+export function filesystemEvidenceMaxBytes(envelope) {
+  const value = envelope?.execution?.filesystemEvidenceMaxBytes;
+  if (value === undefined) return DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES;
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_FILESYSTEM_EVIDENCE_BYTES) {
+    throw new DelegationError("invalid_envelope", "execution.filesystemEvidenceMaxBytes must be an integer from 1 to 8589934592 bytes.");
+  }
+  return value;
+}
+
 const TOP_LEVEL_KEYS = new Set([
   "schemaVersion",
   "taskId",
@@ -271,10 +283,11 @@ export function validateTaskEnvelope(input) {
   if (envelope.execution !== undefined) {
     const execution = requireObject(envelope.execution, "execution");
     for (const key of Object.keys(execution)) {
-      if (!["timeoutMs", "exposureMode", "trustedWorktreeAcknowledged"].includes(key)) {
+      if (!["timeoutMs", "exposureMode", "trustedWorktreeAcknowledged", "filesystemEvidenceMaxBytes"].includes(key)) {
         throw new DelegationError("invalid_envelope", `Unknown execution field: ${key}.`);
       }
     }
+    filesystemEvidenceMaxBytes(envelope);
     if (execution.timeoutMs !== undefined && (!Number.isInteger(execution.timeoutMs) || execution.timeoutMs < 1 || execution.timeoutMs > 3_600_000)) {
       throw new DelegationError("invalid_envelope", "execution.timeoutMs is invalid.");
     }

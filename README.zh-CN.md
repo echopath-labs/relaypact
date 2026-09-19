@@ -200,3 +200,12 @@ npm run check
 默认测试是离线确定性测试。Cursor readiness 可以在不发起模型请求的情况下检查；
 真实 Codex、Cursor 执行、Pi、router 和 provider smoke 必须显式启用，并可能
 消耗本地资源或账户额度。
+
+## 开发源码中的大型仓库证据预算
+
+适配器会检查忽略文件、未跟踪文件及 Git 变化。默认文件系统证据预算为
+512 MiB，安装依赖后的 monorepo 即使 Git 干净也可能超限。下一版本支持 Host
+通过 `execution.filesystemEvidenceMaxBytes` 显式配置最高 8 GiB 的预算，
+并在任务全程保持一致。配置、扫描成本和独立限制见
+[预算说明](skills/relaypact/references/task-envelope.md#filesystem-evidence-budget)。
+v0.3.1 安装版仍使用固定的 512 MiB 限制，此配置属于后续开发源码。

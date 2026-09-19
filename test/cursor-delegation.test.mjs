@@ -2106,3 +2106,64 @@ test("Cursor CLI blocked execution is nonzero for both one-shot and persistent r
     });
   }
 });
+
+
+test("persistent Cursor carries a larger evidence budget through correction and acceptance", async (t) => {
+  const root = await createGitRepository();
+  const privateRoot = await createDirectory();
+  t.after(async () => { await rm(root, { recursive: true, force: true }); await rm(privateRoot, { recursive: true, force: true }); });
+  const archiveRoot = path.join(privateRoot, "archive");
+  await mkdir(archiveRoot);
+  await writeFile(path.join(root, ".git", "info", "exclude"), "dependencies.bin\n");
+  await writeFile(path.join(root, "dependencies.bin"), "");
+  await truncate(path.join(root, "dependencies.bin"), 512 * 1024 * 1024 + 1);
+  const maxBytes = 600 * 1024 * 1024;
+  const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-lifecycle", execution: { filesystemEvidenceMaxBytes: maxBytes } }), {
+    executorCommand: fakeCursor, stateRoot: privateRoot, hostInstanceId: "budget-host"
+  });
+  assert.equal(first.review.executionResult.validations[0].status, "passed");
+  assert.equal(first.review.executionResult.filesystemEvidenceMaxBytes, maxBytes);
+  const prepared = await loadDirectDelegation(first.taskRoot);
+  assert.equal(prepared.state.filesystemEvidenceMaxBytes, maxBytes);
+  const corrected = await correctDelegation(first.taskRoot, "Make the corrected edit.", { executorCommand: fakeCursor });
+  assert.equal(corrected.review.executionResult.hostAcceptance.eligible, true);
+  assert.equal(corrected.review.executionResult.filesystemEvidenceMaxBytes, maxBytes);
+  const decided = await decideDelegation(first.taskRoot, "accept", "budget-host", archiveRoot);
+  assert.equal(decided.acceptance.status, "accepted");
+});
+
+test("direct lifecycle rejects budget drift between signed state and envelope", async (t) => {
+  const root = await createGitRepository();
+  const stateRoot = await createDirectory();
+  t.after(async () => { await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); });
+  const prepared = await prepareDirectDelegation({
+    envelope: makeEnvelope(root, { execution: { filesystemEvidenceMaxBytes: 1024 } }),
+    stateRoot, hostInstanceId: "budget-host", routeId: "codex-cursor", executorHarness: "cursor", executionMode: "write"
+  });
+  const envelopePath = path.join(prepared.taskRoot, "task-envelope.json");
+  const envelope = JSON.parse(await readFile(envelopePath, "utf8"));
+  envelope.execution.filesystemEvidenceMaxBytes = 2048;
+  await writeFile(envelopePath, JSON.stringify(envelope));
+  await assert.rejects(loadDirectDelegation(prepared.taskRoot), { code: "task_state_mismatch" });
+});
+
+test("direct legacy state defaults to 512 MiB and signed budget mismatch is rejected", async (t) => {
+  const root = await createGitRepository();
+  const stateRoot = await createDirectory();
+  t.after(async () => { await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); });
+  const prepared = await prepareDirectDelegation({
+    envelope: makeEnvelope(root), stateRoot, hostInstanceId: "budget-host",
+    routeId: "codex-cursor", executorHarness: "cursor", executionMode: "write"
+  });
+  const store = createSignedStateStore(prepared.statePath, value => value);
+  await store.withLock(async ({ read, persist }) => {
+    const state = await read();
+    delete state.filesystemEvidenceMaxBytes;
+    await persist(state);
+  });
+  assert.equal((await loadDirectDelegation(prepared.taskRoot)).state.filesystemEvidenceMaxBytes, undefined);
+  await store.withLock(async ({ read, persist }) => {
+    await persist({ ...await read(), filesystemEvidenceMaxBytes: 1024 });
+  });
+  await assert.rejects(loadDirectDelegation(prepared.taskRoot), { code: "task_state_mismatch" });
+});

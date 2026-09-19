@@ -3,9 +3,10 @@ import { constants as fsConstants, createReadStream } from "node:fs";
 import { lstat, open, opendir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { DelegationError } from "../../contracts/src/errors.mjs";
+import { DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES } from "../../contracts/src/envelope.mjs";
 
 const DEFAULT_MAX_FILES = 100_000;
-const DEFAULT_MAX_BYTES = 512 * 1024 * 1024;
+const DEFAULT_MAX_BYTES = DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES;
 const DEFAULT_MAX_DEPTH = 256;
 const GIT_CONTROL_EXCLUDES = [];
 const MAX_GIT_POINTER_BYTES = 256 * 1024;
@@ -85,7 +86,7 @@ async function collect(root, options = {}) {
     const record = { path: relative, mode: info.mode & 0o7777 };
     if (info.isFile()) {
       if (!Number.isSafeInteger(info.size) || info.size < 0 || totalBytes + info.size > maximumBytes) {
-        throw new DelegationError("filesystem_evidence_exceeded", "Filesystem evidence exceeded its byte bound.");
+        throw new DelegationError("filesystem_evidence_exceeded", `Filesystem evidence exceeded its byte bound (${maximumBytes} bytes).`);
       }
       const before = { dev: info.dev, ino: info.ino, size: info.size, mtimeMs: info.mtimeMs };
       record.type = "file";
@@ -125,9 +126,9 @@ export async function snapshotFilesystem(root, options = {}) {
   return collect(await realpath(root), options);
 }
 
-export async function assertRepositoryLinks(repositoryRoot, snapshotInput) {
+export async function assertRepositoryLinks(repositoryRoot, snapshotInput, { maxBytes } = {}) {
   const root = await realpath(repositoryRoot);
-  const snapshot = snapshotInput ?? await snapshotFilesystem(root, { exclude: [".git"] });
+  const snapshot = snapshotInput ?? await snapshotFilesystem(root, { maxBytes, exclude: [".git"] });
   for (const entry of assertFilesystemSnapshot(snapshot).entries) {
     if (entry.type !== "symlink" && entry.type !== "file") continue;
     const absolute = path.join(root, ...entry.path.split("/"));

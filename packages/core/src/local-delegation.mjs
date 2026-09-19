@@ -1,7 +1,7 @@
 import { constants as fsConstants } from "node:fs";
 import { open } from "node:fs/promises";
 import path from "node:path";
-import { validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
+import { filesystemEvidenceMaxBytes, validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
 import { evaluatePathScope } from "../../contracts/src/path-policy.mjs";
 import { createIsolatedEnvironment } from "./environment.mjs";
 import { assertRepositoryLinks, assertFilesystemSnapshot, changedFilesystemPaths, snapshotFilesystem, snapshotGitControls } from "./filesystem-evidence.mjs";
@@ -48,7 +48,7 @@ async function runValidations(commands, workingDirectory, options = {}) {
       }
       let processResult;
       try {
-        await assertRepositoryLinks(options.repositoryRoot ?? workingDirectory);
+        await assertRepositoryLinks(options.repositoryRoot ?? workingDirectory, undefined, { maxBytes: options.filesystemEvidenceMaxBytes });
         options.onValidationStarted?.();
         processResult = await runner(command.argv[0], command.argv.slice(1), {
           cwd: workingDirectory,
@@ -143,10 +143,10 @@ async function inspectChangedFilesForSensitiveValues(repositoryRoot, changedPath
   return null;
 }
 
-async function collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore) {
+async function collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore, maxBytes) {
   const [after, filesystemAfter, gitControlsAfter, gitIndexAfter] = await Promise.all([
     collectGitState(repository.gitRoot),
-    snapshotFilesystem(repository.gitRoot, { exclude: [".git"] }),
+    snapshotFilesystem(repository.gitRoot, { exclude: [".git"], maxBytes }),
     snapshotGitControls(repository.gitRoot, { excludeIndexes: true }),
     snapshotGitIndex(repository.gitRoot)
   ]);
@@ -167,6 +167,7 @@ async function collectPostflight(repository, before, pathBaseline, gitControlsBe
 export async function runLocalDelegation(input, options = {}) {
   if (typeof options.execute !== "function") throw new TypeError("A local executor callback is required.");
   const envelope = validateTaskEnvelope(input);
+  const maxBytes = filesystemEvidenceMaxBytes(envelope);
   const validationEnv = Object.freeze(Object.fromEntries(Object.entries(options.validationEnv ?? {})));
   const validationSensitiveValues = Object.values(validationEnv)
     .filter((value) => typeof value === "string" && value.length > 0);
@@ -174,7 +175,7 @@ export async function runLocalDelegation(input, options = {}) {
   const before = await collectGitState(repository.gitRoot);
   enforceDirtyTreePolicy(before, envelope.repository.dirtyTree);
   const [filesystemBefore, gitControlsBefore, gitIndexBefore] = await Promise.all([
-    snapshotFilesystem(repository.gitRoot, { exclude: [".git"] }),
+    snapshotFilesystem(repository.gitRoot, { exclude: [".git"], maxBytes }),
     snapshotGitControls(repository.gitRoot, { excludeIndexes: true }),
     snapshotGitIndex(repository.gitRoot)
   ]);
@@ -206,7 +207,7 @@ export async function runLocalDelegation(input, options = {}) {
       ...validationSensitiveValues
     ])];
 
-    let postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore);
+    let postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore, maxBytes);
     let after = postflight.after;
     let changedPaths = mergePaths(after.dirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
     const baselinePathEvidence = sanitizeChangedPathEvidence(before.dirtyPaths, security, validationSensitiveValues);
@@ -234,13 +235,14 @@ export async function runLocalDelegation(input, options = {}) {
       validations = await runValidations(envelope.validation, repository.workingDirectory, {
         ...options,
         validationEnv,
+        filesystemEvidenceMaxBytes: maxBytes,
         repositoryRoot: repository.gitRoot,
         redactionValues: evidenceSensitiveValues,
         onValidationStarted() { executionSettled = false; },
         onValidationSettled() { executionSettled = true; }
       });
       executionSettled = true;
-      postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore);
+      postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore, maxBytes);
       after = postflight.after;
       changedPaths = mergePaths(after.dirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
       pathEvidence = sanitizeChangedPathEvidence(changedPaths, security, validationSensitiveValues);
@@ -275,6 +277,7 @@ export async function runLocalDelegation(input, options = {}) {
     return {
       schemaVersion: "1.0.0",
       taskId: envelope.taskId,
+      filesystemEvidenceMaxBytes: maxBytes,
       status,
       summary: status === "completed"
         ? "Executor completed the bounded task; host acceptance is still pending."

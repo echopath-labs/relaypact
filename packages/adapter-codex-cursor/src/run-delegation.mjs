@@ -1,3 +1,4 @@
+import { filesystemEvidenceMaxBytes } from "../../contracts/src/envelope.mjs";
 import { assertRepositoryLinks } from "../../core/src/filesystem-evidence.mjs";
 import { minimalEnvironment } from "../../core/src/environment.mjs";
 import { runLocalDelegation } from "../../core/src/local-delegation.mjs";
@@ -87,7 +88,7 @@ async function runCursorAttempt(input, options = {}) {
         async beforeVerifiedLaunch() {
           await options.beforeVerifiedLaunch?.();
           try {
-            await assertRepositoryLinks(runtime.repository.gitRoot);
+            await assertRepositoryLinks(runtime.repository.gitRoot, undefined, { maxBytes: filesystemEvidenceMaxBytes(envelope) });
             await options.assertExecutionBasis?.();
           } catch (error) {
             await options.onExecutionSettled?.();

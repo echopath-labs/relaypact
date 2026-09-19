@@ -46,6 +46,7 @@
     "residualRisks"
   ],
   "properties": {
+    "filesystemEvidenceMaxBytes": { "type": "integer", "minimum": 1, "maximum": 8589934592 },
     "schemaVersion": { "const": "1.0.0" },
     "taskId": { "type": "string", "minLength": 1 },
     "status": { "enum": ["completed", "blocked", "failed", "rejected"] },

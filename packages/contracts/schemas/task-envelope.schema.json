@@ -184,6 +184,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "filesystemEvidenceMaxBytes": { "type": "integer", "minimum": 1, "maximum": 8589934592 },
         "timeoutMs": {"type": "integer", "minimum": 1, "maximum": 3600000},
         "exposureMode": {
           "enum": ["sanitized", "trusted-worktree"]

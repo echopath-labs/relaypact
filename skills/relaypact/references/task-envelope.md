@@ -44,3 +44,45 @@ forbidden authority before worker launch.
 Execution profiles are adapter configuration, required only by routes that use
 them. Follow [agent-setup.md](agent-setup.md); never include provider credentials,
 API keys, access tokens, passwords or secret environment values in an envelope.
+
+## Filesystem evidence budget
+
+The adapters hash repository content, including ignored and untracked files, to
+check for out-of-scope changes. A clean Git status, a narrow path scope, or dirty
+worktree acknowledgment does not reduce that scan. The default aggregate file
+size bound is **512 MiB (536870912 bytes)**, measured by logical file size, so a
+sparse file counts at its full size. Codex capsules also check the source tree.
+
+For an installed monorepo that exceeds this bound, the Host can explicitly set
+`execution.filesystemEvidenceMaxBytes` in the envelope before creating a task:
+
+```json
+{
+  "execution": {
+    "timeoutMs": 120000,
+    "filesystemEvidenceMaxBytes": 2147483648
+  }
+}
+```
+
+This example allows 2 GiB per content snapshot. The value must be an integer
+from 1 through **8589934592 (8 GiB)**; omission preserves the default. Choose a
+bounded value with room for expected output. Larger budgets increase repeated
+hashing and I/O cost. This is distinct from `contextPlanning.budget.maxBytes`,
+which limits selected input context.
+
+The same effective budget applies to preflight, postflight, validation checks,
+correction and acceptance. Direct results report `filesystemEvidenceMaxBytes`;
+Codex review packets report `hostObserved.filesystemEvidenceMaxBytes`. Persistent
+tasks bind the budget to their envelope and protected control records. Do not
+edit saved controls to raise it; create a new Host-authorized task instead.
+Older tasks without the field retain 512 MiB. Older RelayPact versions reject
+the new envelope field.
+
+Exhaustion fails closed with `filesystem_evidence_exceeded`; incomplete evidence
+cannot justify acceptance. The other limits remain: 100,000 file entries,
+100,000 directories (including the root), and depth 256. Git metadata and private
+control evidence have separate limits. Unsafe links, live filesystem changes,
+and scope breaches remain independent failures. Raising bytes does not bypass
+these checks or permit ignored-file mutations. Do not delete dependencies, skip
+ignored paths, move live caches, or patch the installed adapter to evade a bound.

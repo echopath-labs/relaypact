@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
+import { DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES, MAX_FILESYSTEM_EVIDENCE_BYTES, filesystemEvidenceMaxBytes, validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import { evaluatePathScope } from "../../contracts/src/path-policy.mjs";
 import {
@@ -25,6 +25,7 @@ const STATES = new Set([
 ]);
 const EXECUTION_MODES = new Set(["read_only", "write"]);
 const STATE_KEYS = new Set([
+  "filesystemEvidenceMaxBytes",
   "schemaVersion", "taskId", "routeId", "executorHarness", "lifecycleState",
   "hostInstanceId", "taskRootDev", "taskRootIno", "repositoryRoot", "workingDirectory",
   "branch", "head", "envelopeFingerprint", "initialFilesystemFingerprint",
@@ -83,6 +84,7 @@ function validateState(state) {
     (state.correctionReviewBasis !== undefined && state.correctionReviewBasis !== null && !validCorrectionBasis(state.correctionReviewBasis)) ||
     (state.executionContextFingerprint !== undefined && !/^hmac-sha256:[a-f0-9]{64}$/u.test(state.executionContextFingerprint)) ||
     (state.executionSettled !== undefined && typeof state.executionSettled !== "boolean") ||
+    (state.filesystemEvidenceMaxBytes !== undefined && (!Number.isSafeInteger(state.filesystemEvidenceMaxBytes) || state.filesystemEvidenceMaxBytes < 1 || state.filesystemEvidenceMaxBytes > MAX_FILESYSTEM_EVIDENCE_BYTES)) ||
     unknown.length > 0 || state.schemaVersion !== "1.0.0" || !STATES.has(state.lifecycleState) ||
     required.some((key) => !nonempty(state[key])) ||
     !EXECUTION_MODES.has(state.executionMode) ||
@@ -219,10 +221,10 @@ function validateReview(review, state) {
   return review;
 }
 
-async function currentEvidence(repositoryRoot) {
+async function currentEvidence(repositoryRoot, maxBytes = DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES) {
   const [git, filesystem, gitControl, gitIndex] = await Promise.all([
     collectGitState(repositoryRoot),
-    snapshotFilesystem(repositoryRoot, { exclude: [".git"] }),
+    snapshotFilesystem(repositoryRoot, { exclude: [".git"], maxBytes }),
     snapshotGitControls(repositoryRoot, { excludeIndexes: true }),
     snapshotGitIndex(repositoryRoot)
   ]);
@@ -230,7 +232,7 @@ async function currentEvidence(repositoryRoot) {
 }
 
 async function assertReviewBasis(state) {
-  const evidence = await currentEvidence(state.repositoryRoot);
+  const evidence = await currentEvidence(state.repositoryRoot, state.filesystemEvidenceMaxBytes);
   const mismatches = [];
   if (evidence.git.head !== state.head) mismatches.push("HEAD");
   if (evidence.git.branch !== state.branch) mismatches.push("branch");
@@ -278,7 +280,7 @@ export async function prepareDirectDelegation({
     requireRealDirectory(stateRoot, "invalid_state_root", "Direct lifecycle state root must be an absolute pre-existing real directory."),
     resolveRepository(envelope.repository)
   ]);
-  const baseline = await currentEvidence(repository.gitRoot);
+  const baseline = await currentEvidence(repository.gitRoot, filesystemEvidenceMaxBytes(envelope));
   if (!nonempty(baseline.git.head)) {
     throw new DelegationError("repository_head_unavailable", "Persistent direct-worktree lifecycle requires an existing Git HEAD.");
   }
@@ -313,6 +315,7 @@ export async function prepareDirectDelegation({
     branch: baseline.git.branch,
     head: baseline.git.head,
     envelopeFingerprint: sha256(canonicalize(envelope)),
+    filesystemEvidenceMaxBytes: filesystemEvidenceMaxBytes(envelope),
     initialFilesystemFingerprint: baseline.filesystem.fingerprint,
     initialGitControlFingerprint: baseline.gitControl.fingerprint,
     initialGitIndexFingerprint: baseline.gitIndex.fingerprint,
@@ -360,7 +363,8 @@ function samePathSet(left, right) {
 }
 
 async function recordDirectDelegationResultLocked(prepared, executionResult, session, { read, persist }) {
-  if (executionResult?.taskId !== prepared.envelope.taskId || executionResult?.hostAcceptance?.status !== "pending") {
+  if (executionResult?.taskId !== prepared.envelope.taskId || executionResult?.hostAcceptance?.status !== "pending" ||
+    (executionResult?.filesystemEvidenceMaxBytes ?? DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES) !== filesystemEvidenceMaxBytes(prepared.envelope)) {
     throw new DelegationError("review_identity_mismatch", "Execution result is not attributable to the prepared direct delegation.");
   }
   if (
@@ -375,7 +379,7 @@ async function recordDirectDelegationResultLocked(prepared, executionResult, ses
   ) {
     throw new DelegationError("executor_session_mismatch", "Protected executor session, executable, and digest evidence are inconsistent.");
   }
-  const basis = await currentEvidence(prepared.repository.gitRoot);
+  const basis = await currentEvidence(prepared.repository.gitRoot, filesystemEvidenceMaxBytes(prepared.envelope));
   const cumulativePaths = [...new Set([
     ...basis.git.dirtyPaths,
     ...changedFilesystemPaths(prepared.initialFilesystem, basis.filesystem)
@@ -634,6 +638,7 @@ export async function loadDirectDelegation(taskRootInput, { routeId, executorHar
   const envelope = validateTaskEnvelope(await readJson(path.join(taskRoot, "task-envelope.json")));
   const initialFilesystem = assertFilesystemSnapshot(await readJson(path.join(taskRoot, "initial-filesystem.json")));
   if (
+    (state.filesystemEvidenceMaxBytes ?? DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES) !== filesystemEvidenceMaxBytes(envelope) ||
     envelope.taskId !== state.taskId || sha256(canonicalize(envelope)) !== state.envelopeFingerprint ||
     initialFilesystem.fingerprint !== state.initialFilesystemFingerprint
   ) {
