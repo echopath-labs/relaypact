@@ -45,6 +45,15 @@ path and accepts the additional review burden.
 Do not search for credentials or read private authentication merely to prepare
 the task.
 
+Before a sanitized delegation, check the dependency closure of the actual
+validation commands, including subprocess entrypoints, templates, fixtures and
+other files loaded dynamically. A selected-file count or zero static unresolved
+imports does not prove that the tests can run. Use a bounded, non-mutating
+readiness check when supported and useful; otherwise inspect the needed inputs
+before launch. A `context_gap` is missing context evidence, not successful
+validation. Add only the missing read authority and start a new task when the
+selected route requires a new context identity.
+
 ## 3. Propose the delegation before writing it
 
 Show the user or host:

@@ -2,10 +2,19 @@
 
 All notable public changes to RelayPact are recorded here.
 
-## [Unreleased]
+## [0.3.2] - 2026-09-19 - Release
 
 ### Fixed
+- Preserve complete Unicode surrogate pairs when truncating executor and validation output while retaining the output bound and truncation marker.
 - Allow an explicit Host-owned `execution.filesystemEvidenceMaxBytes` budget for installed repositories that exceed the default 512 MiB. Apply the bounded value consistently across execution, validation, correction and review; retain ignored-file and scope checks. Results and protected task controls record the effective budget.
+
+### Documentation
+- Clarify validation context readiness, waiting on a single invocation, command-compliance evidence, and process-group cancellation limits from practical delegation use.
+
+### Compatibility
+- Omitted filesystem budgets retain 512 MiB. Larger budgets do not bypass ignored-file, scope, link, file-count, directory-depth or Git-control checks and can increase repeated scan cost.
+- Results expose the effective budget as an additive optional schema property. Consumers using older strict schemas should update them; older runtimes reject the new envelope field.
+- Codex remains the admitted Host; route maturity and model ownership are unchanged. No scan parallelism or automatic budget expansion is introduced.
 
 ## [0.3.1] - 2026-09-19 - Release
 
@@ -244,3 +253,5 @@ All notable public changes to RelayPact are recorded here.
 [0.3.0]: https://github.com/echopath-labs/relaypact/compare/v0.2.0...v0.3.0
 
 [0.3.1]: https://github.com/echopath-labs/relaypact/compare/v0.3.0...v0.3.1
+
+[0.3.2]: https://github.com/echopath-labs/relaypact/compare/v0.3.1...v0.3.2
