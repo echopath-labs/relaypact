@@ -1,3 +1,4 @@
+import { filesystemEvidenceMaxBytes } from "../../contracts/src/envelope.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, createReadStream } from "node:fs";
 import {
@@ -460,8 +461,8 @@ export async function prepareCapsule(options) {
     capsuleGitIndexBaseline,
     sourceGitIndexBaseline
   ] = await Promise.all([
-    snapshotFilesystem(prepared.capsuleRoot, { exclude: [".git"] }),
-    snapshotFilesystem(options.repository.gitRoot, { exclude: [".git"] }),
+    snapshotFilesystem(prepared.capsuleRoot, { exclude: [".git"], maxBytes: filesystemEvidenceMaxBytes(options.envelope) }),
+    snapshotFilesystem(options.repository.gitRoot, { exclude: [".git"], maxBytes: filesystemEvidenceMaxBytes(options.envelope) }),
     snapshotGitControls(options.repository.gitRoot, { excludeIndexes: true }),
     snapshotGitIndex(prepared.capsuleRoot, prepared.gitControl),
     snapshotGitIndex(options.repository.gitRoot)
@@ -480,6 +481,7 @@ export async function prepareCapsule(options) {
   const marker = {
     schemaVersion: "1.0.0",
     taskId: options.envelope.taskId,
+    filesystemEvidenceMaxBytes: filesystemEvidenceMaxBytes(options.envelope),
     taskRootIdentity: { dev: taskRootInfo.dev, ino: taskRootInfo.ino },
     mode: preflight.mode,
     capsuleRoot: prepared.capsuleRoot,
@@ -508,6 +510,7 @@ export async function prepareCapsule(options) {
     ...prepared,
     ...control,
     taskId: options.envelope.taskId,
+    filesystemEvidenceMaxBytes: filesystemEvidenceMaxBytes(options.envelope),
     taskRoot,
     taskRootIdentity: marker.taskRootIdentity,
     markerPath,
@@ -547,7 +550,7 @@ async function loadFilesystemBaseline(capsule, kind) {
 
 export async function getCapsuleFilesystemChanges(capsule) {
   const baseline = await loadFilesystemBaseline(capsule, "capsule");
-  const current = await snapshotFilesystem(capsule.capsuleRoot, { exclude: [".git"] });
+  const current = await snapshotFilesystem(capsule.capsuleRoot, { exclude: [".git"], maxBytes: capsule.filesystemEvidenceMaxBytes });
   return changedFilesystemPaths(baseline, current);
 }
 
@@ -783,7 +786,7 @@ export async function verifySourceUnchanged(repository, capsule) {
   const [head, statusPaths, currentFilesystem, currentGitControls, currentGitIndex] = await Promise.all([
     getHead(repository.gitRoot),
     getStatusPaths(repository.gitRoot),
-    snapshotFilesystem(repository.gitRoot, { exclude: [".git"] }),
+    snapshotFilesystem(repository.gitRoot, { exclude: [".git"], maxBytes: capsule.filesystemEvidenceMaxBytes }),
     snapshotGitControls(repository.gitRoot, { excludeIndexes: true }),
     snapshotGitIndex(repository.gitRoot)
   ]);

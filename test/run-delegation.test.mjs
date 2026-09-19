@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -634,3 +634,37 @@ for (const scenario of ["oversized-final", "oversized-stderr"]) {
     }
   });
 }
+
+
+test("Pi scans ignored installed content above the default only with a Host budget", async (t) => {
+  const root = await createGitRepository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, ".git", "info", "exclude"), "dependencies.bin\n");
+  const ignored = path.join(root, "dependencies.bin");
+  await writeFile(ignored, "");
+  await truncate(ignored, 512 * 1024 * 1024 + 1);
+  await assert.rejects(execute(makeEnvelope(root), "success"), error =>
+    error.code === "filesystem_evidence_exceeded" && /536870912 bytes/.test(error.message));
+  const result = await execute(makeEnvelope(root, {
+    execution: { filesystemEvidenceMaxBytes: 600 * 1024 * 1024 }
+  }), "success");
+  assert.equal(result.status, "completed");
+  assert.equal(result.validations[0].status, "passed");
+  assert.equal(result.filesystemEvidenceMaxBytes, 600 * 1024 * 1024);
+  assert.deepEqual(result.changedPaths, ["allowed.txt"]);
+});
+
+
+test("configured budgets retain ignored scope breaches and reject postflight growth", async (t) => {
+  const root = await createGitRepository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, ".git", "info", "exclude"), "ignored.txt\n");
+  const result = await execute(makeEnvelope(root, { execution: { filesystemEvidenceMaxBytes: 1024 } }), "ignored-breach");
+  assert.equal(result.status, "rejected");
+  assert.ok(result.changedPaths.includes("ignored.txt"));
+  assert.equal(result.hostAcceptance.eligible, false);
+  await rm(path.join(root, "allowed.txt"));
+  await rm(path.join(root, "ignored.txt"));
+  // The baseline README fits in ten bytes; the worker's allowed edit does not.
+  await assert.rejects(execute(makeEnvelope(root, { execution: { filesystemEvidenceMaxBytes: 10 } }), "success"), { code: "filesystem_evidence_exceeded" });
+});

@@ -1,4 +1,4 @@
-import { validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
+import { filesystemEvidenceMaxBytes, validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import { assertRepositoryLinks } from "../../core/src/filesystem-evidence.mjs";
 import { runLocalDelegation } from "../../core/src/local-delegation.mjs";
@@ -22,7 +22,7 @@ export async function runDelegation(input, options = {}) {
         ...options, redactionValues: Object.values(options.validationEnv ?? {}), workingDirectory: runtime.workingDirectory, signal: runtime.signal,
         async beforeVerifiedLaunch() {
           await options.beforeVerifiedLaunch?.();
-          await assertRepositoryLinks(runtime.repository.gitRoot);
+          await assertRepositoryLinks(runtime.repository.gitRoot, undefined, { maxBytes: filesystemEvidenceMaxBytes(envelope) });
         }
       });
     }

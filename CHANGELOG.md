@@ -2,6 +2,11 @@
 
 All notable public changes to RelayPact are recorded here.
 
+## [Unreleased]
+
+### Fixed
+- Allow an explicit Host-owned `execution.filesystemEvidenceMaxBytes` budget for installed repositories that exceed the default 512 MiB. Apply the bounded value consistently across execution, validation, correction and review; retain ignored-file and scope checks. Results and protected task controls record the effective budget.
+
 ## [0.3.1] - 2026-09-19 - Release
 
 ### Fixed

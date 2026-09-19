@@ -227,3 +227,12 @@ npm run check
 The default suite is deterministic and offline. Cursor readiness can be probed
 without a model request; real Codex, Cursor execution, Pi, router, and provider
 smokes are opt-in and may consume local resources or account quota.
+
+## Large repository evidence in development source
+
+Adapters inspect ignored and untracked content as well as Git changes. The default
+filesystem evidence budget is 512 MiB; installed monorepos can exceed it even
+with clean Git status. The next release adds explicit Host configuration through
+`execution.filesystemEvidenceMaxBytes` (up to 8 GiB), retained throughout the task.
+See [the budget reference](skills/relaypact/references/task-envelope.md#filesystem-evidence-budget)
+for configuration, costs and remaining limits. This option is not in v0.3.1.

@@ -92,6 +92,7 @@ test("host review separates worker claims, observed evidence, and validation", a
   assert.equal(review.packet.contextEvidence.readiness.outcome, "not_configured");
   assert.equal(review.packet.contextEvidence.executorContextGap, null);
   assert.deepEqual(review.packet.hostObserved.changedPaths, ["allowed.txt"]);
+  assert.equal(review.packet.hostObserved.filesystemEvidenceMaxBytes, 536870912);
   assert.deepEqual(review.packet.hostObserved.scopeBreaches, []);
   assert.equal(review.packet.validations[0].status, "passed");
   assert.equal(review.packet.acceptance.status, "pending");

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -291,3 +291,23 @@ test("native pattern syntax and unsupported isolation cannot silently widen auth
   assert.equal(sanitized.failureCode, "workbuddy_exposure_unsupported");
   assert.equal(calls, 0);
 });
+
+
+for (const edition of ["mainland", "international"]) {
+  test(`${edition}: configured evidence budget includes large ignored dependencies`, async (t) => {
+    const options = await installation(t, edition);
+    const root = await createGitRepository();
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await writeFile(path.join(root, ".git", "info", "exclude"), "dependencies.bin\n");
+    await writeFile(path.join(root, "dependencies.bin"), "");
+    await truncate(path.join(root, "dependencies.bin"), 512 * 1024 * 1024 + 1);
+    let launches = 0;
+    const result = await runDelegation(makeEnvelope(root, {
+      execution: { filesystemEvidenceMaxBytes: 600 * 1024 * 1024 }
+    }), { ...options, runProcess: async () => { launches += 1; return processResult(); } });
+    assert.equal(launches, 1);
+    assert.equal(result.status, "completed");
+    assert.equal(result.validations[0].status, "passed");
+    assert.equal(result.filesystemEvidenceMaxBytes, 600 * 1024 * 1024);
+  });
+}

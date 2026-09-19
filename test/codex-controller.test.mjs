@@ -1,6 +1,7 @@
+import { getCapsuleFilesystemChanges, verifySourceUnchanged } from "../packages/executor-codex/src/capsule.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -504,4 +505,33 @@ test("controller prepares a direct provider only from host environment configura
   assert.deepEqual(prepared.providerCredential, { checked: true, credentialEnv: "PROVIDER_API_KEY" });
   assert.equal(prepared.profile.provider.name, "compatible-provider");
   assert.doesNotMatch(JSON.stringify(prepared), /credential-value/);
+});
+
+
+test("Codex capsule reload binds the budget and scans large ignored source content", async (t) => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-budget-capsule-"));
+  t.after(async () => { await rm(root, { recursive: true, force: true }); await rm(stateRoot, { recursive: true, force: true }); });
+  await writeFile(path.join(root, ".git", "info", "exclude"), "dependencies.bin\n");
+  await writeFile(path.join(root, "dependencies.bin"), "");
+  await truncate(path.join(root, "dependencies.bin"), 512 * 1024 * 1024 + 1);
+  const envelope = makeEnvelope(root, {
+    executionProfile: "worker", scope: { readablePaths: ["README.md"] },
+    execution: { filesystemEvidenceMaxBytes: 600 * 1024 * 1024 }
+  });
+  const prepared = await prepareCodexDelegation({ envelope, profileRegistry, stateRoot, hostInstanceId: "budget-host" }, { compatibilityProcess });
+  const loaded = await loadCodexDelegation(prepared.capsule.taskRoot, profileRegistry);
+  assert.equal(loaded.capsule.filesystemEvidenceMaxBytes, 600 * 1024 * 1024);
+  assert.equal((await verifySourceUnchanged(loaded.repository, loaded.capsule)).unchanged, true);
+  // Capsule postflight uses the same budget even when the original context was small.
+  await writeFile(path.join(loaded.capsule.capsuleRoot, "allowed.txt"), "");
+  await truncate(path.join(loaded.capsule.capsuleRoot, "allowed.txt"), 512 * 1024 * 1024 + 1);
+  assert.ok((await getCapsuleFilesystemChanges(loaded.capsule)).includes("allowed.txt"));
+  await truncate(path.join(loaded.capsule.capsuleRoot, "allowed.txt"), 600 * 1024 * 1024 + 1);
+  await assert.rejects(getCapsuleFilesystemChanges(loaded.capsule), { code: "filesystem_evidence_exceeded" });
+  const markerPath = path.join(prepared.capsule.taskRoot, "capsule.json");
+  const marker = JSON.parse(await readFile(markerPath, "utf8"));
+  marker.filesystemEvidenceMaxBytes += 1;
+  await writeFile(markerPath, JSON.stringify(marker));
+  await assert.rejects(loadCodexDelegation(prepared.capsule.taskRoot, profileRegistry), { code: "task_state_mismatch" });
 });

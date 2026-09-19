@@ -274,3 +274,19 @@ test("schema/runtime accept public task examples and reject field/type mutations
     }
   }
 });
+
+
+test("filesystem evidence byte budget runtime and schema agree at both bounds", async () => {
+  const schema = JSON.parse(await readFile(path.join(packageRoot, "packages/contracts/schemas/task-envelope.schema.json"), "utf8"));
+  const validate = new Ajv2020({ strict: false }).compile(schema);
+  for (const value of [undefined, 1, 536870912, 8589934592, 0, -1, 1.5, 8589934593, Number.MAX_SAFE_INTEGER, null, "1024"]) {
+    const envelope = makeEnvelope("/absolute/repository", { execution: value === undefined ? {} : { filesystemEvidenceMaxBytes: value } });
+    const expected = value === undefined || (Number.isSafeInteger(value) && value > 0 && value <= 8589934592);
+    assert.equal(validate(envelope), expected, `schema budget ${value}: ${JSON.stringify(validate.errors)}`);
+    if (expected) assert.doesNotThrow(() => validateTaskEnvelope(envelope));
+    else assert.throws(() => validateTaskEnvelope(envelope), { code: "invalid_envelope" });
+  }
+  for (const value of [NaN, Infinity, -Infinity]) {
+    assert.throws(() => validateTaskEnvelope(makeEnvelope("/absolute/repository", { execution: { filesystemEvidenceMaxBytes: value } })), { code: "invalid_envelope" });
+  }
+});

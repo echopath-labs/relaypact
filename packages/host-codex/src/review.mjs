@@ -1,3 +1,4 @@
+import { filesystemEvidenceMaxBytes } from "../../contracts/src/envelope.mjs";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
@@ -384,6 +385,7 @@ export async function buildHostReviewPacket(prepared, execution, options = {}) {
     contextEvidence,
     executorSelfReport: execution.workerResult,
     hostObserved: {
+      filesystemEvidenceMaxBytes: filesystemEvidenceMaxBytes(prepared.envelope),
       baseline: prepared.capsule.baseline,
       changedPaths: evidence.changedPaths,
       scopeBreaches: evidence.scopeBreaches,

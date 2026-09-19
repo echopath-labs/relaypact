@@ -1,7 +1,7 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
+import { DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES, filesystemEvidenceMaxBytes, validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
 import { assertGitIndexSnapshot, collectGitState, enforceDirtyTreePolicy, resolveRepository } from "../../core/src/git.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import { assertFilesystemSnapshot } from "../../core/src/filesystem-evidence.mjs";
@@ -196,7 +196,11 @@ export async function loadCodexDelegation(taskRootInput, profileRegistry) {
   if ((state.contextManifestFingerprint ?? null) !== contextManifestFingerprint) {
     throw new DelegationError("task_state_mismatch", "Task marker and lifecycle context identities do not match.");
   }
+  if ((marker.filesystemEvidenceMaxBytes ?? DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES) !== filesystemEvidenceMaxBytes(envelope)) {
+    throw new DelegationError("task_state_mismatch", "Stored filesystem evidence budget does not match the task envelope.");
+  }
   const capsule = {
+    filesystemEvidenceMaxBytes: filesystemEvidenceMaxBytes(envelope),
     taskId: state.taskId,
     taskRoot,
     taskRootIdentity: marker.taskRootIdentity,
