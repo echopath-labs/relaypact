@@ -28,9 +28,24 @@ import { changedFilesystemPaths, snapshotFilesystem, snapshotGitControls } from 
 import { getStatusPaths, snapshotGitIndex } from "../packages/core/src/git.mjs";
 import { evaluatePathScope } from "../packages/contracts/src/path-policy.mjs";
 import { runProcess } from "../packages/core/src/process.mjs";
+import { conciseOutput } from "../packages/core/src/redact.mjs";
 import { createSignedStateStore } from "../packages/core/src/signed-state.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
+
+function hasUnpairedSurrogate(text) {
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      const next = text.charCodeAt(index + 1);
+      if (!(next >= 0xDC00 && next <= 0xDFFF)) return true;
+      index += 1;
+      continue;
+    }
+    if (code >= 0xDC00 && code <= 0xDFFF) return true;
+  }
+  return false;
+}
 
 const fakePi = fileURLToPath(new URL("./fixtures/fake-pi.mjs", import.meta.url));
 const workerSchema = fileURLToPath(new URL("../packages/contracts/schemas/codex-worker-result.schema.json", import.meta.url));
@@ -791,4 +806,51 @@ test("scope paths require canonical spelling and forbidden matching is case-safe
     allowedPaths: ["SRC/**"],
     forbiddenPaths: ["src/**"]
   }), ["SRC/private.txt"]);
+});
+
+test("conciseOutput does not split valid UTF-16 surrogate pairs at the truncation boundary", () => {
+  const marker = "\n[output truncated]";
+  const split = conciseOutput("A😀B", 2);
+  assert.equal(split, `A${marker}`);
+  assert.equal(hasUnpairedSurrogate(split), false);
+
+  const retained = conciseOutput("A😀B", 3);
+  assert.equal(retained, `A😀${marker}`);
+  assert.equal(hasUnpairedSurrogate(retained), false);
+  assert.ok(retained.startsWith("A😀"));
+
+  const exactFit = conciseOutput("A😀", 3);
+  assert.equal(exactFit, "A😀");
+  assert.equal(exactFit.includes("[output truncated]"), false);
+  assert.equal(hasUnpairedSurrogate(exactFit), false);
+
+  const trimmed = conciseOutput("  A😀B  ", 2);
+  assert.equal(trimmed, `A${marker}`);
+  assert.equal(hasUnpairedSurrogate(trimmed), false);
+
+  const loneHigh = conciseOutput("A\uD83dB", 2);
+  assert.equal(loneHigh, `A\uD83d${marker}`);
+  assert.equal(hasUnpairedSurrogate(loneHigh.split("\n")[0]), true);
+
+  const loneLow = conciseOutput("A\uDC00B", 2);
+  assert.equal(loneLow, `A\uDC00${marker}`);
+  assert.equal(hasUnpairedSurrogate(loneLow.split("\n")[0]), true);
+
+  const ascii = conciseOutput("ABCDEF", 3);
+  assert.equal(ascii, `ABC${marker}`);
+  assert.equal(hasUnpairedSurrogate(ascii), false);
+
+  const bmp = conciseOutput("A中B", 2);
+  assert.equal(bmp, `A中${marker}`);
+  assert.equal(hasUnpairedSurrogate(bmp), false);
+
+  assert.equal(conciseOutput("ABCDEF", 0), marker);
+  assert.equal(hasUnpairedSurrogate(conciseOutput("😀", 0)), false);
+
+  const secret = "exact-secret-value";
+  const redacted = conciseOutput(`prefix ${secret} 😀tail`, 31, [secret]);
+  assert.equal(redacted, `prefix [REDACTED_EXACT_VALUE] \n[output truncated]`);
+  assert.doesNotMatch(redacted, /exact-secret-value/);
+  assert.match(redacted, /REDACTED_EXACT_VALUE/);
+  assert.equal(hasUnpairedSurrogate(redacted), false);
 });

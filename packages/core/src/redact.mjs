@@ -81,5 +81,10 @@ export function redact(text, sensitiveValues = []) {
 export function conciseOutput(text, maxLength = 4000, sensitiveValues = []) {
   const safe = redact(text, sensitiveValues).trim();
   if (safe.length <= maxLength) return safe;
-  return `${safe.slice(0, maxLength)}\n[output truncated]`;
+  let end = maxLength;
+  const high = safe.charCodeAt(end - 1);
+  const low = safe.charCodeAt(end);
+  // Only back up when truncation would split a well-formed UTF-16 surrogate pair.
+  if (high >= 0xD800 && high <= 0xDBFF && low >= 0xDC00 && low <= 0xDFFF) end -= 1;
+  return `${safe.slice(0, end)}\n[output truncated]`;
 }
