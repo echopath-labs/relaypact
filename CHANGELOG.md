@@ -2,7 +2,7 @@
 
 All notable public changes to RelayPact are recorded here.
 
-## [0.3.1] - 2026-09-18 - Release
+## [0.3.1] - 2026-09-19 - Release
 
 ### Fixed
 - Align TaskEnvelope schema path, text, array and profile constraints with runtime validation; add independent differential checks and document runtime-only semantic checks.

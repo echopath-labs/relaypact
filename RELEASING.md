@@ -40,7 +40,7 @@ the exact SPDX identifier `Apache-2.0`. License drift is a release blocker.
 
 ## 0.3.1 release-time documentation closeout
 
-The checked-in metadata describes 0.3.1 Release, dated 2026-09-18.
+The checked-in metadata describes 0.3.1 Release, dated 2026-09-19.
 The release process merges reviewed documentation before publishing the tag
 and ordinary GitHub Release. Confirm both remote objects exist before treating the
 version as installable; metadata alone does not establish publication.

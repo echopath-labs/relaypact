@@ -178,7 +178,7 @@ async function copyCandidatePackage(t) {
     await writeFile(target, text + '\n0.3.1 Release source candidate\n`v0.3.1` is not released\n`v0.3.1` 尚未发布\n');
   }
   const changelog = path.join(root, "CHANGELOG.md");
-  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.3.1] - 2026-09-18 - Release", "## [0.3.1] - Unreleased - Release"));
+  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.3.1] - 2026-09-19 - Release", "## [0.3.1] - Unreleased - Release"));
   const { validatePackage: validateCandidate } = await import(pathToFileURL(validator).href);
   assert.deepEqual(await validateCandidate(root), []);
   return { root, validateCandidate };
@@ -253,7 +253,7 @@ test("versioned documentation requires complete install identity without publica
   }
   for (const [file, from, to, expected] of [
     ["CHANGELOG.md", "### Compatibility", "### Compatibility\n\nThis is an unreleased source candidate.", "CHANGELOG.md must not retain candidate-only status"],
-    ["RELEASING.md", "The checked-in metadata describes 0.3.1 Release, dated 2026-09-18.", "The checked-in state is a 0.3.1 source candidate. The release date is intentionally unset.", "RELEASING.md must describe the dated versioned current state."]
+    ["RELEASING.md", "The checked-in metadata describes 0.3.1 Release, dated 2026-09-19.", "The checked-in state is a 0.3.1 source candidate. The release date is intentionally unset.", "RELEASING.md must describe the dated versioned current state."]
   ]) {
     const target = path.join(root, file);
     const valid = await readFile(target, "utf8");
@@ -263,7 +263,7 @@ test("versioned documentation requires complete install identity without publica
   }
   const checklist = path.join(root, "RELEASING.md");
   const validChecklist = await readFile(checklist, "utf8");
-  await writeFile(checklist, validChecklist.replace("dated 2026-09-18.", "dated 2026-09-15."));
+  await writeFile(checklist, validChecklist.replace("dated 2026-09-19.", "dated 2026-09-15."));
   assert((await validatePackage(root)).includes("RELEASING.md and CHANGELOG.md release dates must agree."));
   await writeFile(checklist, validChecklist);
   const security = path.join(root, "SECURITY.md");
@@ -289,7 +289,7 @@ test("versioned documentation requires complete install identity without publica
   }
   await writeFile(manual, validManual);
   const changelog = path.join(root, "CHANGELOG.md");
-  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.3.1] - 2026-09-18 - Release", "## [0.3.1] - Unreleased - Release"));
+  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.3.1] - 2026-09-19 - Release", "## [0.3.1] - Unreleased - Release"));
   const chinese = path.join(root, "README.zh-CN.md");
   await writeFile(chinese, (await readFile(chinese, "utf8")).replace("安装目标版本：**v0.3.1**", "最新已发布版本：**v0.3.1**"));
   const errors = await validatePackage(root);
