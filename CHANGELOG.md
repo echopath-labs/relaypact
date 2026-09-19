@@ -2,12 +2,17 @@
 
 All notable public changes to RelayPact are recorded here.
 
-## [Unreleased]
+## [0.3.1] - 2026-09-19 - Release
 
 ### Fixed
 - Align TaskEnvelope schema path, text, array and profile constraints with runtime validation; add independent differential checks and document runtime-only semantic checks.
 - Return exit code 2 for blocked execution across run/correction commands; 0 remains completed and 1 remains failed/rejected/error. Shell automation that previously treated blocked as success must handle 2 explicitly. Completion still does not imply Host acceptance.
 - Align branch instructions with permitted Codex task branches and document release-tag protection.
+
+### Compatibility
+- Blocked execution now returns exit code 2 instead of 0; automation must inspect the JSON outcome and handle this status explicitly.
+- Host acceptance, route maturity and native harness prerequisites remain unchanged. Schema validity alone does not certify runtime semantic checks or execution readiness.
+- Development checks now require `npm ci --ignore-scripts`; runtime plugin installation has no new dependencies.
 
 ## [0.3.0] - 2026-09-17 - Release
 
@@ -232,3 +237,5 @@ All notable public changes to RelayPact are recorded here.
 [0.2.0]: https://github.com/echopath-labs/relaypact/compare/v0.1.2...v0.2.0
 
 [0.3.0]: https://github.com/echopath-labs/relaypact/compare/v0.2.0...v0.3.0
+
+[0.3.1]: https://github.com/echopath-labs/relaypact/compare/v0.3.0...v0.3.1

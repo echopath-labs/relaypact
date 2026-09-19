@@ -1,6 +1,6 @@
 {
   "name": "relaypact",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Bounded, evidence-driven delegation between AI agents.",
   "type": "module",
   "private": true,
