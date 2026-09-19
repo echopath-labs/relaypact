@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "relaypact",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Host guidance for bounded Agent delegation and evidence-based acceptance, with tools for explicitly supported executor harnesses.",
   "author": {
     "name": "EchoPath Labs",

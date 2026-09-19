@@ -131,3 +131,31 @@ executor, read [workbuddy.md](workbuddy.md). Both use `run-workbuddy` with a
 mandatory edition; native desktop configuration is preserved. The initial route
 supports bounded Read/Write tasks and fresh-task correction, with Host checks and
 acceptance kept independent.
+
+## Waiting, interruption and process evidence
+
+Keep the execution identity returned by the selected harness or Host tool and
+wait for that invocation. Do not start another copy of the same validation just
+because the first has not returned. Use only cancellation operations actually
+supported by that route and host; the commands above do not imply a universal
+cancel or orphan-recovery command.
+
+On POSIX systems, the current process runner signals the process group it
+started on timeout/cancellation and attempts group cleanup when the child closes.
+Descendants that create another process group or session can survive this
+cleanup. Windows behavior is different and is not a process-tree guarantee.
+A parent exit, `codex_interrupted`, or `groupCleanupAttempted` proves neither
+that every descendant stopped nor that a cancelled test completed.
+
+If interruption leaves execution uncertain, preserve state and distinguish
+known-running, known-stopped and unverified processes. Any further termination
+must use task-owned process identities revalidated against current observations,
+within existing authority; never kill by broad process name or reuse an old PID
+list blindly. If identity or termination cannot be verified, report the blocker
+and keep the affected workspace/capsule intact. Do not edit lifecycle files to
+force recovery or claim a clean stop.
+
+A supported `reject` or `abandon` archives a review decision subject to its route
+checks. It is not a universal descendant-process cleanup operation, permission
+to delete a capsule, or evidence that all work has stopped. Keep the Host's
+process observations separate from the terminal review result.

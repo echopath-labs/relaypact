@@ -33,3 +33,18 @@ original structured result and available execution identity. Review eligibility
 is evidence for the Host decision, not the decision itself. Follow the selected
 route's [invocation reference](invocation.md) for correction and terminal actions;
 do not edit generated results or lifecycle state to make them eligible.
+
+## Review command behavior as well as files
+
+A clean path-scope result covers the effects that check observed; it does not
+prove obedience to every instruction. Review available command evidence for
+prohibited full-suite execution, overlapping duplicate checks and work started
+after stop conditions. Attribute worker claims and Host observations separately.
+Do not claim command compliance when telemetry is unavailable.
+
+Treat observed violations of the agreed execution constraints as reasons to
+withhold acceptance even if changed files are within their allowlist. Missing
+context, a failed check and an instruction violation require different remedies;
+none authorizes the executor to enlarge its own scope. After interruption,
+review the process-stop evidence described in [invocation.md](invocation.md)
+separately from the candidate patch and the recorded rejection or abandonment.

@@ -86,3 +86,23 @@ control evidence have separate limits. Unsafe links, live filesystem changes,
 and scope breaches remain independent failures. Raising bytes does not bypass
 these checks or permit ignored-file mutations. Do not delete dependencies, skip
 ignored paths, move live caches, or patch the installed adapter to evade a bound.
+
+## Validation execution agreement
+
+For potentially expensive checks, distinguish worker checks from later Host
+acceptance checks. Name the exact commands, working directory, expected scope
+and deadline; explicitly state which full suites must wait for Host review.
+These instructions constrain the worker but do not create an OS command sandbox.
+
+Require the executor to start a check once and retain its process/session
+identity. While it is running, wait or poll that same invocation; silence or a
+slow result is not permission to start a duplicate. Rerun after a verified
+terminal result only when a changed artifact, failure or other concrete reason
+justifies it. If the executor cannot observe completion, it must report the
+uncertainty and stop starting more checks. Preserve the available execution
+identity for Host follow-up instead of claiming the test finished.
+
+Choose the smallest task with useful, verifiable output and sufficient context.
+Consider preparation, execution, waiting, review and correction costs together;
+delegation does not inherently save tokens. This agreement is usable without
+ForgeRail or another governance tool.
