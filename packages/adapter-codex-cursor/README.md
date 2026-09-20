@@ -63,7 +63,7 @@ such a receipt cannot acquire cleanup authority retroactively.
 For nonzero exits or signals, a bounded native EPERM/EACCES filesystem error
 with a supported syscall and complete quoted path arguments in stderr produces a fixed permission-denial summary with a local permissions
 check suggestion. Plain error lines and Node's bracketed inspected-Error rendering
-are recognized. Inspected property blocks require indented content and a standalone
+are recognized. Inspected property blocks require at least one nonblank indented content line and a standalone
 closing brace; incomplete or unsupported wrappers retain a generic failure. Paths
 may contain apostrophes, while their final quote and argument boundaries remain required. This is a diagnostic
 indication, not proof of the root cause.

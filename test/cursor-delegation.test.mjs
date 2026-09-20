@@ -2176,6 +2176,9 @@ const inspectedPermissionText = format(inspectedPermissionError);
 assert.ok(inspectedPermissionText.startsWith("[Error: EACCES:"));
 
 for (const [name, stderr, recognized, overrides] of [
+  ["empty-property-block", "[Error: EACCES: permission denied, opendir '/workspace'] {\n}", false, {}],
+  ["blank-property-block", "[Error: EACCES: permission denied, opendir '/workspace'] {\n\n  \n\t\n}", false, {}],
+  ["padded-property-block", "[Error: EACCES: permission denied, opendir '/workspace'] {\n  \n  code: 'EACCES'\n\t\n}", true, {}],
   ["unclosed-property-block", "[Error: EACCES: permission denied, opendir '/workspace'] {", false, {}],
   ["unclosed-property-values", "[Error: EACCES: permission denied, opendir '/workspace'] {\n  code: 'EACCES'", false, {}],
   ["property-value-brace", "[Error: EACCES: permission denied, opendir '/workspace'] {\n  value: '}'", false, {}],
@@ -2188,7 +2191,7 @@ for (const [name, stderr, recognized, overrides] of [
   ["apostrophe-unclosed", "EACCES: permission denied, open '/tmp/lock'ed/file", false, {}],
   ["node-inspected-error", inspectedPermissionText, true, {}],
   ["bracketed-no-properties", "[Error: EPERM: operation not permitted, mkdir '/private/home']", true, {}],
-  ["bracketed-rename", "[Error: EPERM: operation not permitted, rename '/old' -> '/new'] {\n}", true, {}],
+  ["bracketed-rename", "[Error: EPERM: operation not permitted, rename '/old' -> '/new'] {\n  code: 'EPERM'\n}", true, {}],
   ["bracket-missing-close", "[Error: EACCES: permission denied, opendir '/workspace/private'", false, {}],
   ["bracket-missing-open", "Error: EACCES: permission denied, opendir '/workspace/private'] {", false, {}],
   ["bracket-trailing-text", "[Error: EACCES: permission denied, opendir '/workspace/private'] arbitrary", false, {}],

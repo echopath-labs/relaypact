@@ -1003,8 +1003,12 @@ function cursorFailureSummary(stderr) {
     const inspected = /^\[(Error: .+)\]( \{)?$/u.exec(line);
     if (inspected?.[2]) {
       let end = index + 1;
-      while (end < lines.length && /^(?:[ \t]+.*)?$/u.test(lines[end])) end++;
-      if (lines[end] !== "}") return false;
+      let hasPropertyContent = false;
+      while (end < lines.length && /^(?:[ \t]+.*)?$/u.test(lines[end])) {
+        if (/^[ \t]+\S/u.test(lines[end])) hasPropertyContent = true;
+        end++;
+      }
+      if (!hasPropertyContent || lines[end] !== "}") return false;
     }
     const operation = nativeError.exec(inspected?.[1] ?? line)?.[1];
     return operation !== undefined && (onePath.test(operation) || twoPaths.test(operation));
