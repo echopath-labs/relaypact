@@ -992,8 +992,15 @@ export function cursorPrivateSession(result) {
 // Recognize only bounded native error signatures. Never include diagnostic text:
 // stderr is untrusted and can contain paths, credentials or session handles.
 function cursorFailureSummary(stderr) {
-  if (typeof stderr === "string" && stderr.length <= 8192 &&
-      /(?:^|\r?\n)(?:Error: )?(?:EPERM: operation not permitted|EACCES: permission denied), (?:mkdir|open|scandir|stat|access|read|write|unlink|rename)\b/u.test(stderr)) {
+  const nativeError = /^(?:Error: )?(?:EPERM: operation not permitted|EACCES: permission denied), (.+)$/u;
+  const onePath = /^(?:mkdir|rmdir|open|scandir|readdir|stat|lstat|statfs|access|read|write|unlink|chmod|chown|lchown|utime|utimes|lutimes|readlink|realpath|truncate) '[^\r\n']+'$/u;
+  const twoPaths = /^(?:rename|link|symlink|copyfile) '[^\r\n']+' -> '[^\r\n']+'$/u;
+  const recognized = typeof stderr === "string" && stderr.length <= 8192 &&
+    stderr.split(/\r?\n/u).some((line) => {
+      const operation = nativeError.exec(line)?.[1];
+      return operation !== undefined && (onePath.test(operation) || twoPaths.test(operation));
+    });
+  if (recognized) {
     return "Cursor executor process failed: stderr indicates a filesystem permission denial (EPERM/EACCES). Check permissions for Cursor state directories and the task workspace in the current execution environment; no permission change was attempted.";
   }
   return "Cursor executor process failed.";

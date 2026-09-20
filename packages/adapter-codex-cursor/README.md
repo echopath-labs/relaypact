@@ -61,7 +61,7 @@ such a receipt cannot acquire cleanup authority retroactively.
 ### Failed-process diagnostics
 
 For nonzero exits or signals, a bounded native EPERM/EACCES filesystem error
-in stderr produces a fixed permission-denial summary with a local permissions
+with a supported syscall and complete quoted path arguments in stderr produces a fixed permission-denial summary with a local permissions
 check suggestion. This is a diagnostic indication, not proof of the root cause.
 Raw stderr, paths, credentials and session handles are not copied into the
 summary. Unknown, malformed or oversized diagnostics retain a generic failure;

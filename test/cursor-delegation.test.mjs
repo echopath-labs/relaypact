@@ -2172,6 +2172,16 @@ for (const [name, stderr, recognized, overrides] of [
   ["eperm", "Error: EPERM: operation not permitted, mkdir '/private/home/session-private'", true, {}],
   ["eacces", "EACCES: permission denied, open '/workspace/private'", true, {}],
   ["secrets", "Error: EPERM: operation not permitted, mkdir '/private/home'\nBearer sensitive-provider-value session_id=private-session api_key=private-key", true, {}],
+  ["lstat", "Error: EACCES: permission denied, lstat '/workspace'", true, {}],
+  ["chmod", "Error: EPERM: operation not permitted, chmod '/workspace'", true, {}],
+  ["rename", "Error: EACCES: permission denied, rename '/old' -> '/new'", true, {}],
+  ["crlf-stack", "Error: EPERM: operation not permitted, mkdir '/workspace'\r\n    at nativeCall", true, {}],
+  ["provider-text", "EACCES: permission denied, open provider connection", false, {}],
+  ["missing-path", "EPERM: operation not permitted, mkdir", false, {}],
+  ["unclosed-path", "EPERM: operation not permitted, mkdir '/workspace", false, {}],
+  ["trailing-text", "EPERM: operation not permitted, mkdir '/workspace' unrelated", false, {}],
+  ["rename-missing-destination", "EPERM: operation not permitted, rename '/workspace'", false, {}],
+  ["unknown-operation", "EPERM: operation not permitted, connect '/workspace'", false, {}],
   ["unknown", "provider failed: private-provider-response", false, {}],
   ["malformed", '{"message":"EPERM"}', false, {}],
   ["oversized", "Error: EPERM: operation not permitted, mkdir " + "x".repeat(8192), false, {}],
@@ -2179,8 +2189,9 @@ for (const [name, stderr, recognized, overrides] of [
   ["timeout", "Error: EPERM: operation not permitted, mkdir '/private/home'", false, { timedOut: true }],
   ["cancelled", "Error: EPERM: operation not permitted, mkdir '/private/home'", false, { cancelled: true }]
 ]) {
-  test(`Cursor failure evidence safely classifies ${name}`, async () => {
+  test(`Cursor failure evidence safely classifies ${name}`, async (t) => {
     const root = await createGitRepository();
+    t.after(() => rm(root, { recursive: true, force: true }));
     const result = await runDelegation(makeEnvelope(root), {
       readOnly: true,
       readiness: { state: "ready", command: "cursor-agent", version: "2026.08.31-test", authenticated: true, structuredOutput: true,
