@@ -993,7 +993,7 @@ export function cursorPrivateSession(result) {
 // stderr is untrusted and can contain paths, credentials or session handles.
 function cursorFailureSummary(stderr) {
   const nativeError = /^(?:Error: )?(?:EPERM: operation not permitted|EACCES: permission denied), (.+)$/u;
-  const onePath = /^(?:mkdir|rmdir|open|scandir|readdir|stat|lstat|statfs|access|read|write|unlink|chmod|chown|lchown|utime|utimes|lutimes|readlink|realpath|truncate) '[^\r\n']+'$/u;
+  const onePath = /^(?:mkdir|mkdtemp|rmdir|open|opendir|scandir|readdir|stat|lstat|statfs|access|read|write|unlink|chmod|chown|lchown|utime|utimes|lutimes|readlink|realpath|truncate) '[^\r\n']+'$/u;
   const twoPaths = /^(?:rename|link|symlink|copyfile) '[^\r\n']+' -> '[^\r\n']+'$/u;
   const recognized = typeof stderr === "string" && stderr.length <= 8192 &&
     stderr.split(/\r?\n/u).some((line) => {
