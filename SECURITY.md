@@ -2,10 +2,10 @@
 
 ## Supported Versions
 
-The RelayPact v0.3.2 target is an ordinary GitHub Release for Host-supervised delegation.
+The RelayPact v0.3.3 target is an ordinary GitHub Release for Host-supervised delegation.
 Security fixes are provided on a best-effort basis for the current release line.
-Until the [v0.3.2 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.2)
-is visible, that supported release remains v0.3.1. Once v0.3.2 is published,
+Until the [v0.3.3 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3)
+is visible, that supported release remains v0.3.2. Once v0.3.3 is published,
 support moves to the latest published `0.3.x` release. Unreleased commits, older
 snapshots and locally modified adapters are not supported release channels.
 

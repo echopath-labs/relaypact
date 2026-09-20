@@ -8,7 +8,7 @@ RelayPact 给 Host Agent（甲方）一套稳定的委派与验收参考。Host 
 
 [Host Skill](skills/relaypact/SKILL.md) 说明这些通用要求，具体工具参考按需读取。
 [八个审查案例](examples/host-delegation-cases.md) 给出可观察的行为预期。
-0.3.2 包含这份规约及实验性 Cursor、WorkBuddy 路线。通用 Host 措辞不代表新增
+0.3.3 包含这份规约及实验性 Cursor、WorkBuddy 路线。通用 Host 措辞不代表新增
 其他 Host 产品支持；支持矩阵中接纳的 Host 仍为 Codex。
 
 根 Plugin 的默认路线是 **Codex → Codex**。RelayPact 提供流程、
@@ -30,11 +30,11 @@ RelayPact 给 Host Agent（甲方）一套稳定的委派与验收参考。Host 
 
 ## 发布状态
 
-v0.3.2 的发布目标是面向 Host 监督下实际委派工作的普通 GitHub Release。委派机制与约束
+v0.3.3 的发布目标是面向 Host 监督下实际委派工作的普通 GitHub Release。委派机制与约束
 将继续通过审核与实践优化。产品发布状态与各适配路线的成熟度分别标注。
 
-- 源码包元数据：**0.3.2**。
-- 安装目标版本：**v0.3.2**。
+- 源码包元数据：**0.3.3**。
+- 安装目标版本：**v0.3.3**。
 - 支持状态：`codex-codex` 是 `public-preview`；`codex-pi` 保持
   `experimental`、inactive；`codex-cursor` 已包含源码，但仍是
   `experimental`，且不在根 Plugin 中激活。WorkBuddy 两版同样为显式选择的实验性乙方。
@@ -59,22 +59,22 @@ Node.js 20 或更高版本、Git、Codex CLI 0.147.0 或更高版本，并且
 某个版本的精确候选通过公开 CI 后才声明该版本通过 Ubuntu 验证。暂不声明支持
 Windows。
 
-## 用 v0.3.2 release 在五分钟内开始
+## 用 v0.3.3 release 在五分钟内开始
 
-使用版本化 `v0.3.2` tag 完成可复现的 release 安装。安装前确认
-[GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.2) 已可见；
+使用版本化 `v0.3.3` tag 完成可复现的 release 安装。安装前确认
+[GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3) 已可见；
 包版本元数据或 PR 本身不代表已发布。
 
-安装前必须确认 [v0.3.2 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.2) 已可见。
-若尚不可用，停止这组安装步骤，改用 [v0.3.1](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.1)。
+安装前必须确认 [v0.3.3 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3) 已可见。
+若尚不可用，停止这组安装步骤，改用 [v0.3.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.2)。
 本文的版本化说明不代表远端发布已经完成。
 
 把下面的提示词交给一个协调 Codex：
 
 ```text
-请把 https://github.com/echopath-labs/relaypact 的版本化 v0.3.2 release tag
+请把 https://github.com/echopath-labs/relaypact 的版本化 v0.3.3 release tag
 克隆到目标仓库之外的本地工具目录。记录精确 checkout commit，将它与 peel 后的
-v0.3.2 tag commit 做精确比较，并确认 package.json 和 plugin.json 都报告 0.3.2。
+v0.3.3 tag commit 做精确比较，并确认 package.json 和 plugin.json 都报告 0.3.3。
 读取 README.md 与最近的 AGENTS.md。验证 Node.js 20 或更高版本、Git、
 Codex CLI 0.147.0 或更高版本和 `codex exec --help`。通过 local marketplace
 安装根 Agent Plugin，不启动 worker，然后运行安装后 Skill-local 的 `support`
@@ -87,13 +87,13 @@ apply、commit、push、tag、publish、release 或 deploy 任何内容。
 
 ```bash
 set -e
-git clone --branch v0.3.2 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.2
-checkout_commit="$(git -C relaypact-v0.3.2 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.3.2 rev-parse 'v0.3.2^{}')"
+git clone --branch v0.3.3 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.3
+checkout_commit="$(git -C relaypact-v0.3.3 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.3 rev-parse 'v0.3.3^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.3.2
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.2"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.3
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.3"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -105,21 +105,21 @@ codex plugin list --marketplace relaypact-local --json
 
 ## 安装目标版本
 
-执行本节命令前，确认官方 [v0.3.2 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.2) 已可见；若不可见，请停止并使用 [v0.3.1](https://github.com/echopath-labs/relaypact/tree/v0.3.1)。仅有 tag 不满足安装前提。
+执行本节命令前，确认官方 [v0.3.3 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3) 已可见；若不可见，请停止并使用 [v0.3.2](https://github.com/echopath-labs/relaypact/tree/v0.3.2)。仅有 tag 不满足安装前提。
 
-安装目标版本是 `v0.3.2`：
+安装目标版本是 `v0.3.3`：
 
 此前的 `v0.1.2`、`v0.1.1` 与 `v0.1.0` release 仍可用于精确的历史版本安装。
 
 ```bash
 set -e
-git clone --branch v0.3.2 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.2
-checkout_commit="$(git -C relaypact-v0.3.2 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.3.2 rev-parse 'v0.3.2^{}')"
+git clone --branch v0.3.3 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.3
+checkout_commit="$(git -C relaypact-v0.3.3 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.3 rev-parse 'v0.3.3^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.3.2
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.2"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.3
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.3"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -183,12 +183,11 @@ patch，拒绝也不会自动撤销工作区变更。一次性结果在工具层
 - [贡献指南](CONTRIBUTING.md)
 - [NOTICE](NOTICE) 与 [Apache License 2.0](LICENSE)（`Apache-2.0`）
 
-## v0.3.2 变更
+## v0.3.3 变更
 
-- 修复执行器和验证输出截断时切开 Unicode 代理对的问题，保留完整字符。
-- 允许 Host 通过 `execution.filesystemEvidenceMaxBytes` 配置最高 8 GiB 的预算，
-  默认仍为 512 MiB，任务全程保持忽略文件和范围检查。
-- 明确验证上下文准备、等待同一次执行、命令合规证据及进程组取消的限制。
+- 为可识别的 Cursor 文件系统权限错误提供安全、可操作的诊断。
+- 覆盖 Node 错误包装、更多文件操作及含单引号的路径。
+- 不回传原始诊断，保留失败、范围、超时和取消检查。
 
 详情与兼容性说明见 [CHANGELOG](CHANGELOG.md)。
 
