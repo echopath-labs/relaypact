@@ -7,7 +7,7 @@ import { once } from "node:events";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { format, promisify } from "node:util";
 import {
   correctDelegation,
   decideDelegation,
@@ -2168,7 +2168,21 @@ test("direct legacy state defaults to 512 MiB and signed budget mismatch is reje
   await assert.rejects(loadDirectDelegation(prepared.taskRoot), { code: "task_state_mismatch" });
 });
 
+// Exercise Node's own Error renderer, rather than hand-writing its wrapper.
+const inspectedPermissionError = new Error("EACCES: permission denied, opendir '/workspace/private'");
+inspectedPermissionError.stack = undefined;
+Object.assign(inspectedPermissionError, { code: "EACCES", syscall: "opendir", path: "/workspace/private", session_id: "private-session" });
+const inspectedPermissionText = format(inspectedPermissionError);
+assert.ok(inspectedPermissionText.startsWith("[Error: EACCES:"));
+
 for (const [name, stderr, recognized, overrides] of [
+  ["node-inspected-error", inspectedPermissionText, true, {}],
+  ["bracketed-no-properties", "[Error: EPERM: operation not permitted, mkdir '/private/home']", true, {}],
+  ["bracketed-rename", "[Error: EPERM: operation not permitted, rename '/old' -> '/new'] {\n}", true, {}],
+  ["bracket-missing-close", "[Error: EACCES: permission denied, opendir '/workspace/private'", false, {}],
+  ["bracket-missing-open", "Error: EACCES: permission denied, opendir '/workspace/private'] {", false, {}],
+  ["bracket-trailing-text", "[Error: EACCES: permission denied, opendir '/workspace/private'] arbitrary", false, {}],
+  ["bracket-incomplete-path", "[Error: EACCES: permission denied, opendir] {", false, {}],
   ["eperm", "Error: EPERM: operation not permitted, mkdir '/private/home/session-private'", true, {}],
   ["eacces", "EACCES: permission denied, open '/workspace/private'", true, {}],
   ["secrets", "Error: EPERM: operation not permitted, mkdir '/private/home'\nBearer sensitive-provider-value session_id=private-session api_key=private-key", true, {}],

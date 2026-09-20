@@ -997,7 +997,10 @@ function cursorFailureSummary(stderr) {
   const twoPaths = /^(?:rename|link|symlink|copyfile) '[^\r\n']+' -> '[^\r\n']+'$/u;
   const recognized = typeof stderr === "string" && stderr.length <= 8192 &&
     stderr.split(/\r?\n/u).some((line) => {
-      const operation = nativeError.exec(line)?.[1];
+      // util.inspect/console.error can wrap stackless native Errors in brackets.
+      // Strip only a complete wrapper; the underlying signature stays anchored.
+      const inspected = /^\[(Error: .+)\](?: \{)?$/u.exec(line);
+      const operation = nativeError.exec(inspected?.[1] ?? line)?.[1];
       return operation !== undefined && (onePath.test(operation) || twoPaths.test(operation));
     });
   if (recognized) {
