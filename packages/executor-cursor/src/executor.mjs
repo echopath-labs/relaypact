@@ -931,7 +931,7 @@ export async function runExecutor(envelope, options = {}) {
   }
   const parsed = parseCursorEvents(processResult.stdout);
   if (processResult.exitCode !== 0 || processResult.signal) {
-    return { reportedStatus: "failed", summary: "Cursor executor process failed.", residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation(parsed?.events ?? [], options.redactionValues) };
+    return { reportedStatus: "failed", summary: cursorFailureSummary(processResult.stderr), residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation(parsed?.events ?? [], options.redactionValues) };
   }
   if (!parsed) {
     return { reportedStatus: "malformed", summary: "Cursor output did not contain exactly one supported terminal result event.", residualRisks: residualRisks(), ...metadata, modelObservation: modelObservation([]) };
@@ -987,4 +987,34 @@ export function cursorPrivateSession(result) {
       executorFingerprint: evidence.executorFingerprint
     }
     : { handle: null, digest: null, executorCommand: null, executorFingerprint: null };
+}
+
+// Recognize only bounded native error signatures. Never include diagnostic text:
+// stderr is untrusted and can contain paths, credentials or session handles.
+function cursorFailureSummary(stderr) {
+  const nativeError = /^(?:Error: )?(?:EPERM: operation not permitted|EACCES: permission denied), (.+)$/u;
+  const onePath = /^(?:mkdir|mkdtemp|rmdir|open|opendir|scandir|readdir|stat|lstat|statfs|access|read|write|unlink|chmod|chown|lchown|utime|utimes|lutimes|readlink|realpath|truncate) '[^\r\n]+'$/u;
+  const twoPaths = /^(?:rename|link|symlink|copyfile) '[^\r\n]+' -> '[^\r\n]+'$/u;
+  const lines = typeof stderr === "string" && stderr.length <= 8192
+    ? stderr.split(/\r?\n/u) : [];
+  const recognized = lines.some((line, index) => {
+    // Node's inspected Error properties use indented lines and a standalone
+    // closing brace. Do not use a brace inside a value or unrelated log output.
+    const inspected = /^\[(Error: .+)\]( \{)?$/u.exec(line);
+    if (inspected?.[2]) {
+      let end = index + 1;
+      let hasPropertyContent = false;
+      while (end < lines.length && /^(?:[ \t]+.*)?$/u.test(lines[end])) {
+        if (/^[ \t]+\S/u.test(lines[end])) hasPropertyContent = true;
+        end++;
+      }
+      if (!hasPropertyContent || lines[end] !== "}") return false;
+    }
+    const operation = nativeError.exec(inspected?.[1] ?? line)?.[1];
+    return operation !== undefined && (onePath.test(operation) || twoPaths.test(operation));
+  });
+  if (recognized) {
+    return "Cursor executor process failed: stderr indicates a filesystem permission denial (EPERM/EACCES). Check permissions for Cursor state directories and the task workspace in the current execution environment; no permission change was attempted.";
+  }
+  return "Cursor executor process failed.";
 }

@@ -7,7 +7,7 @@ import { once } from "node:events";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { format, promisify } from "node:util";
 import {
   correctDelegation,
   decideDelegation,
@@ -2167,3 +2167,76 @@ test("direct legacy state defaults to 512 MiB and signed budget mismatch is reje
   });
   await assert.rejects(loadDirectDelegation(prepared.taskRoot), { code: "task_state_mismatch" });
 });
+
+// Exercise Node's own Error renderer, rather than hand-writing its wrapper.
+const inspectedPermissionError = new Error("EACCES: permission denied, opendir '/workspace/private'");
+inspectedPermissionError.stack = undefined;
+Object.assign(inspectedPermissionError, { code: "EACCES", syscall: "opendir", path: "/workspace/private", session_id: "private-session" });
+const inspectedPermissionText = format(inspectedPermissionError);
+assert.ok(inspectedPermissionText.startsWith("[Error: EACCES:"));
+
+for (const [name, stderr, recognized, overrides] of [
+  ["empty-property-block", "[Error: EACCES: permission denied, opendir '/workspace'] {\n}", false, {}],
+  ["blank-property-block", "[Error: EACCES: permission denied, opendir '/workspace'] {\n\n  \n\t\n}", false, {}],
+  ["padded-property-block", "[Error: EACCES: permission denied, opendir '/workspace'] {\n  \n  code: 'EACCES'\n\t\n}", true, {}],
+  ["unclosed-property-block", "[Error: EACCES: permission denied, opendir '/workspace'] {", false, {}],
+  ["unclosed-property-values", "[Error: EACCES: permission denied, opendir '/workspace'] {\n  code: 'EACCES'", false, {}],
+  ["property-value-brace", "[Error: EACCES: permission denied, opendir '/workspace'] {\n  value: '}'", false, {}],
+  ["unrelated-close", "[Error: EACCES: permission denied, opendir '/workspace'] {\nunrelated output\n}", false, {}],
+  ["property-close-trailing", "[Error: EACCES: permission denied, opendir '/workspace'] {\n} trailing", false, {}],
+  ["complete-property-crlf", "[Error: EACCES: permission denied, opendir '/workspace'] {\r\n  code: 'EACCES'\r\n}\r\n", true, {}],
+  ["apostrophe-path", "EACCES: permission denied, open '/tmp/lock'ed/file'", true, {}],
+  ["apostrophe-two-paths", "Error: EPERM: operation not permitted, rename '/tmp/old's' -> '/tmp/new's'", true, {}],
+  ["apostrophe-wrapper", "[Error: EACCES: permission denied, open '/tmp/lock'ed/file'] {\n  code: 'EACCES'\n}", true, {}],
+  ["apostrophe-unclosed", "EACCES: permission denied, open '/tmp/lock'ed/file", false, {}],
+  ["node-inspected-error", inspectedPermissionText, true, {}],
+  ["bracketed-no-properties", "[Error: EPERM: operation not permitted, mkdir '/private/home']", true, {}],
+  ["bracketed-rename", "[Error: EPERM: operation not permitted, rename '/old' -> '/new'] {\n  code: 'EPERM'\n}", true, {}],
+  ["bracket-missing-close", "[Error: EACCES: permission denied, opendir '/workspace/private'", false, {}],
+  ["bracket-missing-open", "Error: EACCES: permission denied, opendir '/workspace/private'] {", false, {}],
+  ["bracket-trailing-text", "[Error: EACCES: permission denied, opendir '/workspace/private'] arbitrary", false, {}],
+  ["bracket-incomplete-path", "[Error: EACCES: permission denied, opendir] {", false, {}],
+  ["eperm", "Error: EPERM: operation not permitted, mkdir '/private/home/session-private'", true, {}],
+  ["eacces", "EACCES: permission denied, open '/workspace/private'", true, {}],
+  ["secrets", "Error: EPERM: operation not permitted, mkdir '/private/home'\nBearer sensitive-provider-value session_id=private-session api_key=private-key", true, {}],
+  ["opendir", "Error: EACCES: permission denied, opendir '/workspace'", true, {}],
+  ["mkdtemp", "Error: EACCES: permission denied, mkdtemp '/workspace/prefixXXXXXX'", true, {}],
+  ["opendir-missing-path", "EACCES: permission denied, opendir", false, {}],
+  ["mkdtemp-unclosed-path", "EACCES: permission denied, mkdtemp '/workspace/prefixXXXXXX", false, {}],
+  ["lstat", "Error: EACCES: permission denied, lstat '/workspace'", true, {}],
+  ["chmod", "Error: EPERM: operation not permitted, chmod '/workspace'", true, {}],
+  ["rename", "Error: EACCES: permission denied, rename '/old' -> '/new'", true, {}],
+  ["crlf-stack", "Error: EPERM: operation not permitted, mkdir '/workspace'\r\n    at nativeCall", true, {}],
+  ["provider-text", "EACCES: permission denied, open provider connection", false, {}],
+  ["missing-path", "EPERM: operation not permitted, mkdir", false, {}],
+  ["unclosed-path", "EPERM: operation not permitted, mkdir '/workspace", false, {}],
+  ["trailing-text", "EPERM: operation not permitted, mkdir '/workspace' unrelated", false, {}],
+  ["rename-missing-destination", "EPERM: operation not permitted, rename '/workspace'", false, {}],
+  ["unknown-operation", "EPERM: operation not permitted, connect '/workspace'", false, {}],
+  ["unknown", "provider failed: private-provider-response", false, {}],
+  ["malformed", '{"message":"EPERM"}', false, {}],
+  ["oversized", "Error: EPERM: operation not permitted, mkdir " + "x".repeat(8192), false, {}],
+  ["truncated", "Error: EPERM: operation not permitted, mkdir '/private/home'", false, { stderrTruncated: true }],
+  ["timeout", "Error: EPERM: operation not permitted, mkdir '/private/home'", false, { timedOut: true }],
+  ["cancelled", "Error: EPERM: operation not permitted, mkdir '/private/home'", false, { cancelled: true }]
+]) {
+  test(`Cursor failure evidence safely classifies ${name}`, async (t) => {
+    const root = await createGitRepository();
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const result = await runDelegation(makeEnvelope(root), {
+      readOnly: true,
+      readiness: { state: "ready", command: "cursor-agent", version: "2026.08.31-test", authenticated: true, structuredOutput: true,
+        capabilities: { boundedWorkspace: true, sandbox: true, force: true, resume: true } },
+      async runProcess() { return { exitCode: 1, signal: null, stdout: "", stderr, ...overrides }; }
+    });
+    assert.equal(result.status, "failed");
+    assert.equal(result.hostAcceptance.eligible, false);
+    assert.deepEqual(result.changedPaths, []);
+    assert.equal(result.executor.summary.includes("filesystem permission denial"), recognized);
+    const serialized = JSON.stringify(result);
+    for (const secret of ["/private/home", "session-private", "private-session", "private-key", "sensitive-provider-value", "private-provider-response", "'/workspace/private'"]) {
+      assert.equal(serialized.includes(secret), false, secret);
+    }
+    assert.ok(result.executor.summary.length < 300);
+  });
+}
