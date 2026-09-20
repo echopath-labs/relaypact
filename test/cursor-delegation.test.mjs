@@ -2176,6 +2176,16 @@ const inspectedPermissionText = format(inspectedPermissionError);
 assert.ok(inspectedPermissionText.startsWith("[Error: EACCES:"));
 
 for (const [name, stderr, recognized, overrides] of [
+  ["unclosed-property-block", "[Error: EACCES: permission denied, opendir '/workspace'] {", false, {}],
+  ["unclosed-property-values", "[Error: EACCES: permission denied, opendir '/workspace'] {\n  code: 'EACCES'", false, {}],
+  ["property-value-brace", "[Error: EACCES: permission denied, opendir '/workspace'] {\n  value: '}'", false, {}],
+  ["unrelated-close", "[Error: EACCES: permission denied, opendir '/workspace'] {\nunrelated output\n}", false, {}],
+  ["property-close-trailing", "[Error: EACCES: permission denied, opendir '/workspace'] {\n} trailing", false, {}],
+  ["complete-property-crlf", "[Error: EACCES: permission denied, opendir '/workspace'] {\r\n  code: 'EACCES'\r\n}\r\n", true, {}],
+  ["apostrophe-path", "EACCES: permission denied, open '/tmp/lock'ed/file'", true, {}],
+  ["apostrophe-two-paths", "Error: EPERM: operation not permitted, rename '/tmp/old's' -> '/tmp/new's'", true, {}],
+  ["apostrophe-wrapper", "[Error: EACCES: permission denied, open '/tmp/lock'ed/file'] {\n  code: 'EACCES'\n}", true, {}],
+  ["apostrophe-unclosed", "EACCES: permission denied, open '/tmp/lock'ed/file", false, {}],
   ["node-inspected-error", inspectedPermissionText, true, {}],
   ["bracketed-no-properties", "[Error: EPERM: operation not permitted, mkdir '/private/home']", true, {}],
   ["bracketed-rename", "[Error: EPERM: operation not permitted, rename '/old' -> '/new'] {\n}", true, {}],
