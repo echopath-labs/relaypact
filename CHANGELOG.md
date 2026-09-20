@@ -2,6 +2,15 @@
 
 All notable public changes to RelayPact are recorded here.
 
+## [0.3.3] - 2026-09-20 - Release
+
+### Fixed
+- Return a bounded, static permission-denial diagnostic when a failed Cursor process emits a recognized native EPERM/EACCES filesystem error. Support plain and complete inspected-Error forms, additional filesystem operations, and apostrophes in paths; reject incomplete or empty property wrappers.
+- Keep unknown diagnostics generic, omit raw stderr and private paths, and preserve failure/ineligibility plus capture, timeout and cancellation precedence.
+
+### Compatibility
+- No changes to result schemas, model selection, permissions, executable identity protection or route maturity. Local readiness does not guarantee execution can initialize native state directories.
+
 ## [0.3.2] - 2026-09-19 - Release
 
 ### Fixed
@@ -255,3 +264,5 @@ All notable public changes to RelayPact are recorded here.
 [0.3.1]: https://github.com/echopath-labs/relaypact/compare/v0.3.0...v0.3.1
 
 [0.3.2]: https://github.com/echopath-labs/relaypact/compare/v0.3.1...v0.3.2
+
+[0.3.3]: https://github.com/echopath-labs/relaypact/compare/v0.3.2...v0.3.3
