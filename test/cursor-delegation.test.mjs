@@ -2167,3 +2167,34 @@ test("direct legacy state defaults to 512 MiB and signed budget mismatch is reje
   });
   await assert.rejects(loadDirectDelegation(prepared.taskRoot), { code: "task_state_mismatch" });
 });
+
+for (const [name, stderr, recognized, overrides] of [
+  ["eperm", "Error: EPERM: operation not permitted, mkdir '/private/home/session-private'", true, {}],
+  ["eacces", "EACCES: permission denied, open '/workspace/private'", true, {}],
+  ["secrets", "Error: EPERM: operation not permitted, mkdir '/private/home'\nBearer sensitive-provider-value session_id=private-session api_key=private-key", true, {}],
+  ["unknown", "provider failed: private-provider-response", false, {}],
+  ["malformed", '{"message":"EPERM"}', false, {}],
+  ["oversized", "Error: EPERM: operation not permitted, mkdir " + "x".repeat(8192), false, {}],
+  ["truncated", "Error: EPERM: operation not permitted, mkdir '/private/home'", false, { stderrTruncated: true }],
+  ["timeout", "Error: EPERM: operation not permitted, mkdir '/private/home'", false, { timedOut: true }],
+  ["cancelled", "Error: EPERM: operation not permitted, mkdir '/private/home'", false, { cancelled: true }]
+]) {
+  test(`Cursor failure evidence safely classifies ${name}`, async () => {
+    const root = await createGitRepository();
+    const result = await runDelegation(makeEnvelope(root), {
+      readOnly: true,
+      readiness: { state: "ready", command: "cursor-agent", version: "2026.08.31-test", authenticated: true, structuredOutput: true,
+        capabilities: { boundedWorkspace: true, sandbox: true, force: true, resume: true } },
+      async runProcess() { return { exitCode: 1, signal: null, stdout: "", stderr, ...overrides }; }
+    });
+    assert.equal(result.status, "failed");
+    assert.equal(result.hostAcceptance.eligible, false);
+    assert.deepEqual(result.changedPaths, []);
+    assert.equal(result.executor.summary.includes("filesystem permission denial"), recognized);
+    const serialized = JSON.stringify(result);
+    for (const secret of ["/private/home", "session-private", "private-session", "private-key", "sensitive-provider-value", "private-provider-response", "'/workspace/private'"]) {
+      assert.equal(serialized.includes(secret), false, secret);
+    }
+    assert.ok(result.executor.summary.length < 300);
+  });
+}

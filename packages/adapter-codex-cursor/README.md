@@ -57,3 +57,16 @@ Host integrity key remain after successful deletion for idempotent retries;
 they contain no raw Cursor session handle. A replacement directory at the old
 task path is never deleted by a completed receipt. Legacy terminal tasks without
 such a receipt cannot acquire cleanup authority retroactively.
+
+### Failed-process diagnostics
+
+For nonzero exits or signals, a bounded native EPERM/EACCES filesystem error
+in stderr produces a fixed permission-denial summary with a local permissions
+check suggestion. This is a diagnostic indication, not proof of the root cause.
+Raw stderr, paths, credentials and session handles are not copied into the
+summary. Unknown, malformed or oversized diagnostics retain a generic failure;
+output capture exhaustion, cancellation and timeout retain their own precedence.
+Failure remains ineligible for acceptance. `doctor` verifies local readiness,
+not permission to initialize every runtime state directory. RelayPact does not
+change permissions, disable sandboxing, select a different model or bypass
+executable identity checks in response.
