@@ -26,8 +26,11 @@ For this Codex-to-Codex route: **No additional executor installation is required
 
 Version 0.3.0 introduced experimental **Codex → WorkBuddy** (mainland) and
 **Codex → WorkBuddy AI** (international) executor routes. Select the edition explicitly; each uses its own native desktop
-configuration. The initial macOS route admits bundled CLI 2.137.1 and bounded
+configuration and requires one exact Host-selected model for each invocation.
+The initial macOS route admits bundled CLI 2.137.1 and bounded
 Read/Write tasks, with independent Host checks and fresh-task correction.
+RelayPact preflights and passes that model without a configured fallback; it
+does not change desktop defaults or claim account entitlement or pricing.
 Shell execution and same-session continuation are not admitted. See the
 [WorkBuddy invocation reference](skills/relaypact/references/workbuddy.md).
 

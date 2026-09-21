@@ -2,10 +2,11 @@ import { filesystemEvidenceMaxBytes, validateTaskEnvelope } from "../../contract
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import { assertRepositoryLinks } from "../../core/src/filesystem-evidence.mjs";
 import { runLocalDelegation } from "../../core/src/local-delegation.mjs";
-import { runExecutor } from "../../executor-workbuddy/src/executor.mjs";
+import { runExecutor, workBuddyModelId } from "../../executor-workbuddy/src/executor.mjs";
 
 export async function runDelegation(input, options = {}) {
   options = { ...options, validationEnv: Object.freeze({ ...(options.validationEnv ?? {}) }) };
+  workBuddyModelId(options.model);
   if (options.stateRoot || options.hostInstanceId || options.resumeSessionId || options.correctionPrompt) {
     throw new DelegationError("workbuddy_fresh_task_required", "WorkBuddy currently supports fresh bounded tasks only; same-session correction is not admitted.");
   }

@@ -10,12 +10,14 @@ import { createGitRepository, makeEnvelope } from "../helpers.mjs";
 
 const enabled = process.env.RELAYPACT_WORKBUDDY_SMOKE === "1";
 const edition = process.env.RELAYPACT_WORKBUDDY_EDITION;
+const model = process.env.RELAYPACT_WORKBUDDY_MODEL;
 test("selected WorkBuddy edition: read, bounded write and fresh correction with independent checks", { skip: !enabled, timeout: 210_000 }, async (t) => {
   assert(["mainland", "international"].includes(edition), "Set an explicit RELAYPACT_WORKBUDDY_EDITION.");
+  assert(typeof model === "string" && model.length > 0, "Set an explicit RELAYPACT_WORKBUDDY_MODEL.");
   const readToken = randomBytes(16).toString("hex");
   const root = await createGitRepository(`# Fixture\nVerification token: ${readToken}\n`);
   t.after(() => rm(root, { recursive: true, force: true }));
-  const options = { edition };
+  const options = { edition, model };
   const read = await runDelegation(makeEnvelope(root, {
     taskId: "workbuddy-read", objective: "Read README.md and include its verification token verbatim in the summary of your final JSON result. Do not guess the token; report blocked if you cannot read it.",
     expectedOutcome: "Read the fixture without changing any file.", scope: { readablePaths: ["README.md"] }, execution: { timeoutMs: 60_000 }
@@ -49,6 +51,7 @@ test("selected WorkBuddy edition: read, bounded write and fresh correction with 
 
 test("selected WorkBuddy edition: native Read attempts outside granted scope are denied", { skip: !enabled, timeout: 210_000 }, async (t) => {
   assert(["mainland", "international"].includes(edition));
+  assert(typeof model === "string" && model.length > 0);
   const token = randomBytes(16).toString("hex");
   const root = await realpath(await createGitRepository(`${token}\n`));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -61,7 +64,7 @@ test("selected WorkBuddy edition: native Read attempts outside granted scope are
   for (const { label, readOnly, scope } of cases) {
     let evidence;
     const result = await runExecutor(makeEnvelope(root, { scope, execution: { timeoutMs: 60_000 } }), {
-      edition, workingDirectory: root, readOnly,
+      edition, model, workingDirectory: root, readOnly,
       async runProcess(command, args, options) {
         // Probe enforcement even if the model would obey the agreement without
         // trying Read. Only the prompt changes; production permission settings,

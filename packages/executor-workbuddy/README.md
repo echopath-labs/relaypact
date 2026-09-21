@@ -5,11 +5,15 @@ bundled CLI 2.137.1. `mainland` and `international` are mandatory explicit choic
 application metadata, authentication identity and configuration directories are
 bound independently. No edition or standalone CodeBuddy fallback exists.
 
-The native harness loads its own desktop configuration. RelayPact does not copy
-credentials, set a model, or claim to reproduce a particular open desktop
-conversation's model choice. `doctor` checks distribution identity/configuration
-presence without starting the harness; authentication remains unverified until a
-live invocation. Other CLI versions require fresh compatibility verification.
+The native harness loads its own desktop authentication and configuration.
+RelayPact does not copy credentials or change persistent settings. Every task
+requires one exact Host-selected model, verifies that ID through the admitted
+CLI's bounded `--help` surface, and passes it with one `--model` argument without
+a fallback. Model binding does not prove provider use, entitlement, price or free
+status. `doctor` without a model checks distribution identity/configuration
+presence; `doctor --model` performs the same non-model help preflight used by a
+task. Authentication remains unverified until live invocation. Other CLI
+versions require fresh compatibility verification.
 
 Only Read is enabled in read-only mode; file tasks enable Read/Write with native
 per-invocation path grants. No bare tool-name permission grants are added; native

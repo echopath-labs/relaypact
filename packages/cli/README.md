@@ -44,10 +44,13 @@ all nonzero results as retryable, or interpret completion as acceptance.
 
 The CLI never falls back from one execution harness to another.
 
-`run-workbuddy --edition mainland|international` selects the corresponding
-experimental desktop executor. `--read-only` narrows tools to Read; otherwise
+`run-workbuddy --edition mainland|international --model <model-id>` selects the
+corresponding experimental desktop executor and binds one exact invocation model
+without a fallback. `--read-only` narrows tools to Read; otherwise
 Read/Write use native per-invocation path grants. Use `doctor --route codex-workbuddy --edition mainland`
 or `doctor --route codex-workbuddy-ai --edition international` to
 check identity and configuration presence without starting the harness or
-claiming authenticated readiness. The route is single-shot and leaves Host
+claiming authenticated readiness. Add `--model <model-id>` to doctor to run the
+bounded native help preflight; it sends no task prompt but can contact native
+services or update caches and does not prove entitlement or price. The route is single-shot and leaves Host
 acceptance pending; failed/rejected/malformed results return exit code 1.

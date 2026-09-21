@@ -23,7 +23,9 @@ RelayPact 给 Host Agent（甲方）一套稳定的委派与验收参考。Host 
 
 0.3.0 新增实验性 **Codex → WorkBuddy 大陆版**、**Codex → WorkBuddy AI 国际版**
 乙方路线。
-每次显式选择版本，复用各自桌面原生配置。
+每次显式选择版本，并为本次委派指定一个精确模型 ID；账号与登录仍复用各自桌面原生配置。
+RelayPact 会在发送任务前检查该 ID，并作为唯一 `--model` 参数传入，不配置 fallback，
+也不修改桌面默认设置；该检查不证明账号权益、价格或免费状态。
 首版限定 macOS、内置 CLI 2.137.1，以及 Read/Write 文件任务；由 Host 独立检查和验收。
 修正通过新的有界任务完成，暂不接纳 shell 执行和同会话续跑。详见
 [WorkBuddy 调用参考](skills/relaypact/references/workbuddy.md)。

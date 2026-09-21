@@ -300,6 +300,7 @@ export async function runLocalDelegation(input, options = {}) {
         signal: executor.signal,
         summary: safeText(executor.summary),
         ...(executor.failureCode ? { failureCode: executor.failureCode } : {}),
+        ...(executor.modelBinding ? { modelBinding: { ...executor.modelBinding, value: safeText(executor.modelBinding.value) } } : {}),
         ...(executor.modelObservation ? { modelObservation: { ...executor.modelObservation, value: executor.modelObservation.value === null ? null : safeText(executor.modelObservation.value) } } : {})
       },
       hostAcceptance: { status: "pending", eligible: status === "completed", decidedBy: null },

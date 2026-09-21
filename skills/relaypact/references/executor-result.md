@@ -34,6 +34,12 @@ is evidence for the Host decision, not the decision itself. Follow the selected
 route's [invocation reference](invocation.md) for correction and terminal actions;
 do not edit generated results or lifecycle state to make them eligible.
 
+When present, `modelBinding` records the exact Host-selected model argument and
+the preflight used before launch. It is configuration evidence, not provider
+observation. Compare it separately with `modelObservation`; an unavailable
+observation must remain unavailable, and a reported mismatch makes the delivery
+ineligible. Neither field proves price, free status or account entitlement.
+
 ## Review command behavior as well as files
 
 A clean path-scope result covers the effects that check observed; it does not

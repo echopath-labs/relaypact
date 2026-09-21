@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, truncate, writeFile } 
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { discoverWorkBuddy, inspectWorkBuddy, parseWorkBuddyResult, runExecutor } from "../packages/executor-workbuddy/src/executor.mjs";
+import { discoverWorkBuddy, inspectWorkBuddy, parseWorkBuddyResult, parseWorkBuddySupportedModels, runExecutor } from "../packages/executor-workbuddy/src/executor.mjs";
 import { runDelegation } from "../packages/adapter-codex-workbuddy/src/run-delegation.mjs";
 import { runCli } from "../packages/cli/src/main.mjs";
 import { createGitRepository, makeEnvelope } from "./helpers.mjs";
@@ -13,6 +13,14 @@ function terminal(status = "completed", extra = {}) {
 }
 function processResult(records = [terminal()], extra = {}) {
   return { exitCode: 0, signal: null, stdout: JSON.stringify(records), stderr: "", ...extra };
+}
+const FIXTURE_MODEL = "deepseek-v4.1-flash";
+function modelHelpResult(models = [FIXTURE_MODEL], extra = {}) {
+  return {
+    exitCode: 0, signal: null,
+    stdout: `  --model <model>  Model for the current session. Currently supported: (${models.join(", ")})\n`,
+    stderr: "", ...extra
+  };
 }
 async function installation(t, edition = "mainland") {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "relaypact-workbuddy-test-")));
@@ -31,7 +39,10 @@ async function installation(t, edition = "mainland") {
   await writeFile(path.join(cli, "dist/codebuddy-headless.js"), "// offline fixture bundle\n");
   const workingDirectory = path.join(root, "workspace");
   await mkdir(workingDirectory);
-  return { edition, appPath, home, workingDirectory, platform: "darwin" };
+  return {
+    edition, model: FIXTURE_MODEL, appPath, home, workingDirectory, platform: "darwin",
+    runModelProbe: async () => modelHelpResult()
+  };
 }
 
 for (const edition of ["mainland", "international"]) {
@@ -43,6 +54,8 @@ for (const edition of ["mainland", "international"]) {
     const ready = await discoverWorkBuddy(options);
     assert.equal(ready.state, "available");
     assert.equal(ready.authentication, "unverified");
+    assert.equal(ready.model, FIXTURE_MODEL);
+    assert.equal(ready.modelPreflight, "supported_by_native_help");
     assert.equal(ready.resumable, false);
     const opposite = await discoverWorkBuddy({ ...options, edition: edition === "mainland" ? "international" : "mainland" });
     assert.equal(opposite.reason, "workbuddy_edition_mismatch");
@@ -74,9 +87,12 @@ test("only a unique successful terminal and structured task status establish com
   assert.deepEqual(parseWorkBuddyResult(JSON.stringify([terminal("completed", { permission_denials: [{}] })])), { status: "blocked" });
   assert.deepEqual(parseWorkBuddyResult(JSON.stringify([terminal("blocked")])), { status: "blocked", summary: "fixture" });
   assert.deepEqual(parseWorkBuddyResult(JSON.stringify([terminal("completed", { is_error: true })])), { status: "failed" });
+  assert.deepEqual(parseWorkBuddyResult(JSON.stringify([terminal("completed", { model: FIXTURE_MODEL })])), { status: "completed", summary: "fixture", model: FIXTURE_MODEL });
+  assert.deepEqual(parseWorkBuddySupportedModels(modelHelpResult([FIXTURE_MODEL, "other-model"]).stdout), [FIXTURE_MODEL, "other-model"]);
+  assert.equal(parseWorkBuddySupportedModels(`${modelHelpResult().stdout}${modelHelpResult().stdout}`), null);
 });
 
-test("launch preserves native roots, narrows tools, omits model/auth overrides and suppresses raw output", async (t) => {
+test("launch preserves native roots, binds one model, narrows tools and suppresses raw output", async (t) => {
   const options = await installation(t, "international");
   let runtimeRoot;
   const output = await runExecutor(makeEnvelope(options.workingDirectory), { ...options, workingDirectory: options.workingDirectory,
@@ -92,7 +108,9 @@ test("launch preserves native roots, narrows tools, omits model/auth overrides a
       assert(!args.includes("--allowedTools"), "Bare allowedTools would override path-limited grants.");
       assert(args.includes("--no-session-persistence"));
       assert(args.includes("--strict-mcp-config"));
-      assert(!args.includes("--model") && !args.includes("--resume") && !args.includes("-y"));
+      assert.equal(args.filter((value) => value === "--model").length, 1);
+      assert.equal(args[args.indexOf("--model") + 1], FIXTURE_MODEL);
+      assert(!args.includes("--fallback-model") && !args.includes("--resume") && !args.includes("-y"));
       assert.equal(launch.env.CODEBUDDY_CONFIG_DIR, path.join(options.home, ".workbuddy-ai"));
       assert.equal(launch.env.WORKBUDDY_CONFIG_DIR, launch.env.CODEBUDDY_CONFIG_DIR);
       assert.equal(launch.env.HOME, options.home);
@@ -103,9 +121,58 @@ test("launch preserves native roots, narrows tools, omits model/auth overrides a
     }
   });
   assert.equal(output.reportedStatus, "completed");
+  assert.deepEqual(output.modelBinding, {
+    value: FIXTURE_MODEL, source: "host_argument", mechanism: "process_argument",
+    assurance: "preflight_supported", fallbackAllowed: false, boundAt: output.modelBinding.boundAt
+  });
+  assert.equal(output.modelObservation.state, "unavailable");
   assert(!JSON.stringify(output).includes("fake-private-provider-token"));
   assert(!JSON.stringify(output).includes("private-session"));
   await assert.rejects(readFile(path.join(runtimeRoot, "anything")), { code: "ENOENT" });
+});
+
+test("model selection is required, bounded and verified before task execution", async (t) => {
+  const options = await installation(t);
+  await assert.rejects(runDelegation(makeEnvelope(options.workingDirectory), { ...options, model: undefined }), { code: "workbuddy_model_required" });
+  let launches = 0;
+  const invalid = await runExecutor(makeEnvelope(options.workingDirectory), {
+    ...options, model: "--paid-model", runProcess: async () => { launches += 1; return processResult(); }
+  });
+  assert.equal(invalid.failureCode, "workbuddy_model_invalid");
+  const unsupported = await runExecutor(makeEnvelope(options.workingDirectory), {
+    ...options, model: "other-model", runModelProbe: async () => modelHelpResult([FIXTURE_MODEL]),
+    runProcess: async () => { launches += 1; return processResult(); }
+  });
+  assert.equal(unsupported.failureCode, "workbuddy_model_unsupported");
+  for (const extra of [{ exitCode: 1 }, { timedOut: true }, { cancelled: true }, { stdoutTruncated: true }, { stderrTruncated: true }]) {
+    const unavailable = await runExecutor(makeEnvelope(options.workingDirectory), {
+      ...options, runModelProbe: async () => modelHelpResult([FIXTURE_MODEL], extra),
+      runProcess: async () => { launches += 1; return processResult(); }
+    });
+    assert.equal(unavailable.failureCode, "workbuddy_model_probe_unavailable");
+  }
+  const malformed = await runExecutor(makeEnvelope(options.workingDirectory), {
+    ...options, runModelProbe: async () => ({ ...modelHelpResult(), stdout: "Usage: codebuddy" }),
+    runProcess: async () => { launches += 1; return processResult(); }
+  });
+  assert.equal(malformed.failureCode, "workbuddy_model_probe_unavailable");
+  assert.equal(launches, 0);
+});
+
+test("reported model evidence is checked independently from the Host binding", async (t) => {
+  const options = await installation(t);
+  const matched = await runExecutor(makeEnvelope(options.workingDirectory), {
+    ...options, runProcess: async () => processResult([terminal("completed", { model: FIXTURE_MODEL })])
+  });
+  assert.equal(matched.reportedStatus, "completed");
+  assert.equal(matched.modelObservation.value, FIXTURE_MODEL);
+  const mismatch = await runExecutor(makeEnvelope(options.workingDirectory), {
+    ...options, runProcess: async () => processResult([terminal("completed", { model: "other-model" })])
+  });
+  assert.equal(mismatch.reportedStatus, "failed");
+  assert.equal(mismatch.failureCode, "workbuddy_model_mismatch");
+  assert.equal(mismatch.modelBinding.value, FIXTURE_MODEL);
+  assert.equal(mismatch.modelObservation.value, "other-model");
 });
 
 test("timeout, cancellation, truncation and zero-exit login errors cannot pass", async (t) => {
@@ -149,6 +216,9 @@ test("Host rejects a claimed success when independent validation or path scope f
   const absent = await runDelegation(input, { ...options, runProcess: async () => processResult() });
   assert.equal(absent.status, "failed");
   assert.equal(absent.hostAcceptance.eligible, false);
+  assert.equal(absent.executor.modelBinding.value, FIXTURE_MODEL);
+  assert.equal(absent.executor.modelBinding.fallbackAllowed, false);
+  assert.equal(absent.executor.modelObservation.state, "unavailable");
   const breach = await runDelegation(input, { ...options, runProcess: async () => { await writeFile(path.join(root, "private.txt"), "breach"); return processResult(); } });
   assert.equal(breach.status, "rejected");
   assert.deepEqual(breach.scope.breaches, ["private.txt"]);
@@ -168,8 +238,8 @@ test("read-only prohibits file changes even within the original writable scope",
   assert(!envelope.scope.forbiddenPaths.includes("**"));
 });
 
-test("CLI requires explicit edition and rejects unsupported continuation/model options", async () => {
-  for (const args of [["run-workbuddy", "--envelope", "missing"], ["run-workbuddy", "--edition", "international", "--envelope", "missing", "--state-root", "state"], ["run-workbuddy", "--edition", "mainland", "--envelope", "missing", "--model", "other"], ["run-pi", "--edition", "mainland", "--envelope", "missing"]]) {
+test("CLI requires explicit edition/model and rejects unsupported continuation options", async () => {
+  for (const args of [["run-workbuddy", "--envelope", "missing"], ["run-workbuddy", "--edition", "mainland", "--envelope", "missing"], ["run-workbuddy", "--edition", "international", "--model", FIXTURE_MODEL, "--envelope", "missing", "--state-root", "state"], ["run-pi", "--edition", "mainland", "--envelope", "missing"]]) {
     const io = { stdout: { write() { assert.fail("must not dispatch"); } }, stderr: { write() {} }, exitCode: 0 };
     await runCli(args, io);
     assert.equal(io.exitCode, 1);
@@ -217,6 +287,12 @@ test("doctor accepts each matrix route only with its matching explicit edition",
     assert.equal(io.exitCode, 0);
     assert.equal(JSON.parse(stdout).edition, edition);
     assert.equal(JSON.parse(stdout).state, "available");
+    stdout = ""; stderr = ""; io.exitCode = 0;
+    await runCli(["doctor", "--route", route, "--edition", edition, "--model", FIXTURE_MODEL, "--app", installationOptions.appPath], io, { doctor: installationOptions });
+    assert.equal(stderr, "");
+    assert.equal(io.exitCode, 0);
+    assert.equal(JSON.parse(stdout).model, FIXTURE_MODEL);
+    assert.equal(JSON.parse(stdout).modelPreflight, "supported_by_native_help");
     for (const selection of [[], ["--edition", edition === "mainland" ? "international" : "mainland"]]) {
       stdout = ""; stderr = ""; io.exitCode = 0;
       await runCli(["doctor", "--route", route, ...selection, "--app", installationOptions.appPath], io, { doctor: installationOptions });

@@ -102,7 +102,7 @@ const ROUTE_EXPECTATIONS = new Map([
     prerequisites: [
       "Node.js 20 or later",
       "macOS",
-      "explicit mainland edition with authenticated WorkBuddy desktop configuration",
+      "explicit mainland edition with authenticated WorkBuddy desktop configuration and an exact Host-selected model",
       "bundled CLI 2.137.1; bounded Read/Write tasks only"
     ],
     deterministicCheck: "npm run check:codex-workbuddy",
@@ -119,7 +119,7 @@ const ROUTE_EXPECTATIONS = new Map([
     prerequisites: [
       "Node.js 20 or later",
       "macOS",
-      "explicit international edition with authenticated WorkBuddy AI desktop configuration",
+      "explicit international edition with authenticated WorkBuddy AI desktop configuration and an exact Host-selected model",
       "bundled CLI 2.137.1; bounded Read/Write tasks only"
     ],
     deterministicCheck: "npm run check:codex-workbuddy",

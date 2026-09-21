@@ -128,6 +128,7 @@ test("readiness uses non-shell argv and rejects credential-like arguments", () =
 test("public JSON schemas are parseable and expose strict context contracts", async () => {
   const taskSchema = JSON.parse(await readFile(path.join(packageRoot, "packages/contracts/schemas/task-envelope.schema.json"), "utf8"));
   const manifestSchema = JSON.parse(await readFile(path.join(packageRoot, "packages/contracts/schemas/context-manifest.schema.json"), "utf8"));
+  const executionSchema = JSON.parse(await readFile(path.join(packageRoot, "packages/contracts/schemas/execution-result.schema.json"), "utf8"));
   const reviewSchema = JSON.parse(await readFile(path.join(packageRoot, "packages/contracts/schemas/host-review-packet.schema.json"), "utf8"));
   assert.equal(taskSchema.$schema, "https://json-schema.org/draft/2020-12/schema");
   assert.equal(taskSchema.additionalProperties, false);
@@ -157,10 +158,42 @@ test("public JSON schemas are parseable and expose strict context contracts", as
   assert.equal(manifestSchema.$defs.readiness.properties.argv, undefined);
   assert.equal(manifestSchema.$defs.readiness.properties.commandFingerprint.pattern, "^sha256:[a-f0-9]{64}$");
   assert.equal(manifestSchema.properties.fingerprint.pattern, "^sha256:[a-f0-9]{64}$");
+  assert.equal(executionSchema.$defs.modelBinding.properties.source.const, "host_argument");
+  assert.equal(executionSchema.$defs.modelBinding.properties.fallbackAllowed.const, false);
+  assert.equal(executionSchema.properties.executor.properties.modelBinding.$ref, "#/$defs/modelBinding");
   for (const field of ["relaypactPromptBytes", "relaypactResultSchemaBytes", "relaypactDeclaredInputBytes"]) {
     assert.equal(reviewSchema.properties.metrics.properties[field].oneOf[0].type, "integer");
     assert.equal(reviewSchema.properties.metrics.properties[field].oneOf[0].minimum, 0);
     assert.equal(reviewSchema.properties.metrics.properties[field].oneOf[1].const, "unavailable");
+  }
+});
+
+test("execution result model binding is strict and remains separate from observation", async () => {
+  const schema = JSON.parse(await readFile(path.join(packageRoot, "packages/contracts/schemas/execution-result.schema.json"), "utf8"));
+  const validate = new Ajv2020({ strict: false, formats: { "date-time": true } }).compile(schema);
+  const result = JSON.parse(await readFile(path.join(packageRoot, "examples/execution-result.completed.json"), "utf8"));
+  result.executor.modelBinding = {
+    value: "deepseek-v4.1-flash",
+    source: "host_argument",
+    mechanism: "process_argument",
+    assurance: "preflight_supported",
+    fallbackAllowed: false,
+    boundAt: "2026-09-21T00:00:00.000Z"
+  };
+  result.executor.modelObservation = {
+    state: "unavailable", value: null, source: "unavailable", assurance: "unknown",
+    observedAt: "2026-09-21T00:00:00.000Z"
+  };
+  assert.equal(validate(result), true, JSON.stringify(validate.errors));
+  for (const mutation of [
+    { fallbackAllowed: true },
+    { value: "--another-model" },
+    { assurance: "reported" },
+    { extra: true }
+  ]) {
+    const invalid = structuredClone(result);
+    Object.assign(invalid.executor.modelBinding, mutation);
+    assert.equal(validate(invalid), false, JSON.stringify(mutation));
   }
 });
 
