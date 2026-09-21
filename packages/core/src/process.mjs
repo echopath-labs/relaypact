@@ -55,6 +55,7 @@ export function runProcess(command, args, options = {}) {
     processGroup = process.platform !== "win32",
     outputEncoding = "utf8",
     argv0 = undefined,
+    onSpawn = undefined,
     signal: abortSignal = undefined
   } = options;
 
@@ -67,6 +68,7 @@ export function runProcess(command, args, options = {}) {
       ...(argv0 === undefined ? {} : { argv0 }),
       stdio: ["pipe", "pipe", "pipe"]
     });
+    child.once("spawn", () => onSpawn?.());
 
     const stdoutCapture = capture(maxCaptureBytes, outputEncoding);
     const stderrCapture = capture(maxCaptureBytes, outputEncoding);

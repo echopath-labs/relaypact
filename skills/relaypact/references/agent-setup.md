@@ -5,7 +5,8 @@ artifacts that route requires. The shared Host requirements do not require CLI
 setup. Codex uses an envelope, worker profile registry and private lifecycle
 roots; Cursor uses an envelope and optional persistent lifecycle roots; Pi and
 WorkBuddy use an envelope. WorkBuddy also requires an explicit mainland or
-international edition. These direct executors do not require a Codex profile registry.
+international edition and one exact Host-selected model ID. These direct
+executors do not require a Codex profile registry.
 
 The Agent prepares configuration; the human or coordinating host owns material
 authority and final acceptance.
@@ -27,7 +28,10 @@ For WorkBuddy, explicitly select `doctor --route codex-workbuddy --edition mainl
 or `doctor --route codex-workbuddy-ai --edition international`;
 it checks distribution identity and configuration presence,
 not authentication. See [workbuddy.md](workbuddy.md) for native configuration and
-bounded file-task limits.
+bounded file-task limits. Add `--model <model-id>` to preflight the admitted
+native help list before a task. That probe does not invoke a model, but can
+contact native services or update caches and does not establish entitlement,
+price or free status.
 Use `support-matrix.json` as the route-status authority. Treat doctor as local
 readiness only: report the Codex CLI version, `codex exec`, packaged Skill,
 marketplace/plugin visibility, aggregate state, and remediation. `needs_setup`

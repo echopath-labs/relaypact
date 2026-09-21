@@ -206,6 +206,10 @@ export async function runLocalDelegation(input, options = {}) {
       ...(security.sensitiveValues ?? []),
       ...validationSensitiveValues
     ])];
+    const modelBindingCollision = executor.modelBinding &&
+      containsExactSensitiveValue(executor.modelBinding.value, evidenceSensitiveValues);
+    const modelObservationCollision = typeof executor.modelObservation?.value === "string" &&
+      containsExactSensitiveValue(executor.modelObservation.value, evidenceSensitiveValues);
 
     let postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore, maxBytes);
     let after = postflight.after;
@@ -216,6 +220,7 @@ export async function runLocalDelegation(input, options = {}) {
     let breaches = evaluatePathScope(changedPaths, envelope.scope);
     if (baselinePathEvidence.breach) breaches.push(baselinePathEvidence.breach);
     if (pathEvidence.breach) breaches.push(pathEvidence.breach);
+    if (modelBindingCollision) breaches.push("evidence:model binding overlaps a protected value");
     const initialCredentialBreach = await inspectChangedFilesForSensitiveValues(
       repository.gitRoot, changedPaths, security, validationSensitiveValues
     );
@@ -300,7 +305,10 @@ export async function runLocalDelegation(input, options = {}) {
         signal: executor.signal,
         summary: safeText(executor.summary),
         ...(executor.failureCode ? { failureCode: executor.failureCode } : {}),
-        ...(executor.modelObservation ? { modelObservation: { ...executor.modelObservation, value: executor.modelObservation.value === null ? null : safeText(executor.modelObservation.value) } } : {})
+        ...(executor.modelBinding && !modelBindingCollision ? { modelBinding: { ...executor.modelBinding, value: executor.modelBinding.value } } : {}),
+        ...(executor.modelObservation ? { modelObservation: modelObservationCollision
+          ? { state: "unavailable", value: null, source: "unavailable", assurance: "unknown", observedAt: executor.modelObservation.observedAt }
+          : { ...executor.modelObservation, value: executor.modelObservation.value } } : {})
       },
       hostAcceptance: { status: "pending", eligible: status === "completed", decidedBy: null },
       residualRisks

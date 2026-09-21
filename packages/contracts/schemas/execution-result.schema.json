@@ -30,6 +30,19 @@
         "assurance": { "enum": ["reported", "selector_alias", "unknown"] },
         "observedAt": { "type": "string", "format": "date-time" }
       }
+    },
+    "modelBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "source", "mechanism", "assurance", "fallbackAllowed", "boundAt"],
+      "properties": {
+        "value": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+        "source": { "const": "host_argument" },
+        "mechanism": { "const": "process_argument" },
+        "assurance": { "const": "preflight_supported" },
+        "fallbackAllowed": { "const": false },
+        "boundAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "required": [
@@ -99,7 +112,8 @@
         "signal": { "type": ["string", "null"] },
         "summary": { "type": "string" },
         "failureCode": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,79}$" },
-        "modelObservation": { "$ref": "#/$defs/modelObservation" }
+        "modelObservation": { "$ref": "#/$defs/modelObservation" },
+        "modelBinding": { "$ref": "#/$defs/modelBinding" }
       }
     },
     "hostAcceptance": {

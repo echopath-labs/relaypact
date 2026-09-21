@@ -382,6 +382,7 @@ These private archives remain user-owned data.
 | `codex exec` unavailable | Repair or upgrade the Codex CLI installation; no separate executor package exists. |
 | `doctor` returns `needs_setup` | Add the intended source or release checkout as `relaypact-local`, install the plugin, start a new task, and rerun doctor from the installed Skill. |
 | Plugin installed but Skill absent | Start a new Codex task and verify `codex plugin list --marketplace relaypact-local --json`. |
+| WorkBuddy model preflight blocked | Supply one exact native model ID, confirm the selected edition's admitted CLI advertises it, and recheck current price or free status in the native product. RelayPact never substitutes a default or fallback. |
 | Native authentication unavailable | Repair the selected host Codex profile; never paste credentials into envelope/profile files. |
 | Dirty target repository | Record and explicitly acknowledge every pre-existing path, or restore a clean tree before delegation. |
 | No approved worker profile | Let the coordinating Agent prepare credential-free metadata and stop for route/auth availability decisions. |
@@ -394,7 +395,9 @@ These private archives remain user-owned data.
 The coordinating Agent and independent executor make separate model requests.
 An executor run or correction can therefore consume additional tokens, quota,
 time, or cost according to the selected route. Doctor and support do not make a
-provider request.
+model request. An explicitly model-scoped WorkBuddy doctor starts the native
+CLI help path, which can contact native services or update caches without
+proving account entitlement or price.
 
 Private task state can contain a sanitized source capsule, task-scoped Codex
 home, candidate patch, and review evidence. Terminal decisions archive evidence

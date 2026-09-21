@@ -128,7 +128,8 @@ A Host review of a one-shot result does not create a tool terminal record.
 
 For an explicitly selected mainland WorkBuddy or international WorkBuddy AI
 executor, read [workbuddy.md](workbuddy.md). Both use `run-workbuddy` with a
-mandatory edition; native desktop configuration is preserved. The initial route
+mandatory edition and exact Host-selected model; native desktop authentication
+and persistent configuration are preserved. The initial route
 supports bounded Read/Write tasks and fresh-task correction, with Host checks and
 acceptance kept independent.
 

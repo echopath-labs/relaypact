@@ -2,10 +2,15 @@ import { filesystemEvidenceMaxBytes, validateTaskEnvelope } from "../../contract
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import { assertRepositoryLinks } from "../../core/src/filesystem-evidence.mjs";
 import { runLocalDelegation } from "../../core/src/local-delegation.mjs";
-import { runExecutor } from "../../executor-workbuddy/src/executor.mjs";
+import { containsExactSensitiveValue } from "../../core/src/redact.mjs";
+import { runExecutor, workBuddyModelId } from "../../executor-workbuddy/src/executor.mjs";
 
 export async function runDelegation(input, options = {}) {
   options = { ...options, validationEnv: Object.freeze({ ...(options.validationEnv ?? {}) }) };
+  const model = workBuddyModelId(options.model);
+  if (containsExactSensitiveValue(model, Object.values(options.validationEnv))) {
+    throw new DelegationError("workbuddy_model_sensitive_collision", "The selected WorkBuddy model overlaps a protected validation value and cannot be retained as exact evidence.");
+  }
   if (options.stateRoot || options.hostInstanceId || options.resumeSessionId || options.correctionPrompt) {
     throw new DelegationError("workbuddy_fresh_task_required", "WorkBuddy currently supports fresh bounded tasks only; same-session correction is not admitted.");
   }

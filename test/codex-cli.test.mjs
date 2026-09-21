@@ -252,8 +252,8 @@ test("CLI subprocess emits blocked JSON with exit 2 for unavailable optional exe
   for (const command of [
     ["run-pi", "--executor", pi],
     ["run-cursor", "--executor", path.join(inputs, "missing-cursor")],
-    ["run-workbuddy", "--edition", "mainland", "--app", path.join(inputs, "missing-mainland.app")],
-    ["run-workbuddy", "--edition", "international", "--app", path.join(inputs, "missing-international.app")]
+    ["run-workbuddy", "--edition", "mainland", "--model", "deepseek-v4.1-flash", "--app", path.join(inputs, "missing-mainland.app")],
+    ["run-workbuddy", "--edition", "international", "--model", "deepseek-v4.1-flash", "--app", path.join(inputs, "missing-international.app")]
   ]) {
     await writeFile(envelope, JSON.stringify(makeEnvelope(repository, command[0] === "run-pi" ? { executionProfile: { provider: "fixture", model: "fixture" } } : {})));
     await assert.rejects(execFileAsync(process.execPath, [wrapper, ...command, "--envelope", envelope]), error => {

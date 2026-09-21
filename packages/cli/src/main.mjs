@@ -16,9 +16,9 @@ function usage() {
     "  relaypact run-codex --envelope <file> --profiles <file> --state-root <dir> --host-instance <id>",
     "  relaypact correct-codex --task-root <dir> --profiles <file> --prompt <file>",
     "  relaypact decide-codex --task-root <dir> --profiles <file> --action <accept|reject|abandon> --actor <id> --archive-root <dir>",
-    "  relaypact run-workbuddy --edition <mainland|international> --envelope <file> [--app <app-path>] [--read-only]  # experimental",
-    "  relaypact doctor --route codex-workbuddy --edition mainland [--app <app-path>]",
-    "  relaypact doctor --route codex-workbuddy-ai --edition international [--app <app-path>]",
+    "  relaypact run-workbuddy --edition <mainland|international> --model <model-id> --envelope <file> [--app <app-path>] [--read-only]  # experimental",
+    "  relaypact doctor --route codex-workbuddy --edition mainland [--model <model-id>] [--app <app-path>]",
+    "  relaypact doctor --route codex-workbuddy-ai --edition international [--model <model-id>] [--app <app-path>]",
     "  relaypact run-pi --envelope <file> [--executor <pi-path>]  # experimental",
     "  relaypact run-cursor --envelope <file> [--executor <cursor-path>] [--read-only] [--state-root <dir> --host-instance <id>]  # experimental",
     "  relaypact correct-cursor --task-root <dir> --prompt <file> [--executor <cursor-path>]  # experimental",
@@ -42,6 +42,7 @@ function parseArgs(argv) {
     }
     if (key === "--envelope" && value) options.envelope = value;
     else if (key === "--edition" && value) options.edition = value;
+    else if (key === "--model" && value) options.model = value;
     else if (key === "--app" && value) options.appPath = value;
     else if (key === "--executor" && value) options.executor = value;
     else if (key === "--route" && value) options.route = value;
@@ -66,10 +67,10 @@ function parseArgs(argv) {
   if (workbuddy) {
     if (!["mainland", "international"].includes(options.edition)) throw new Error("WorkBuddy requires --edition mainland or international.");
     if (command === "doctor" && WORKBUDDY_ROUTES[options.route] !== options.edition) throw new Error("The WorkBuddy route and edition must match.");
-    const allowed = new Set(command === "doctor" ? ["route", "edition", "appPath"] : ["edition", "appPath", "envelope", "readOnly"]);
+    const allowed = new Set(command === "doctor" ? ["route", "edition", "model", "appPath"] : ["edition", "model", "appPath", "envelope", "readOnly"]);
     if (Object.keys(options).some((key) => !allowed.has(key))) throw new Error("Unsupported option for the selected WorkBuddy route.");
-    if (command === "run-workbuddy" && !options.envelope) throw new Error(usage());
-  } else if (options.edition || options.appPath) throw new Error(usage());
+    if (command === "run-workbuddy" && (!options.envelope || !options.model)) throw new Error(usage());
+  } else if (options.edition || options.model || options.appPath) throw new Error(usage());
   if (command === "run-pi" && !options.envelope) throw new Error(usage());
   if (command === "run-cursor" && !options.envelope) throw new Error(usage());
   if (command === "run-cursor" && Boolean(options.stateRoot) !== Boolean(options.hostInstanceId)) throw new Error(usage());
@@ -182,7 +183,7 @@ async function decideCodex(options) {
 async function runWorkBuddy(options) {
   const { runDelegation } = await import("../../adapter-codex-workbuddy/src/run-delegation.mjs");
   return runDelegation(await readJson(options.envelope), {
-    edition: options.edition, appPath: options.appPath, readOnly: options.readOnly === true
+    edition: options.edition, model: options.model, appPath: options.appPath, readOnly: options.readOnly === true
   });
 }
 
@@ -242,7 +243,7 @@ export async function runCli(argv, io = process, runtime = {}) {
     else if (options.command === "doctor") {
       if (Object.hasOwn(WORKBUDDY_ROUTES, options.route)) {
         const { discoverWorkBuddy } = await import("../../executor-workbuddy/src/executor.mjs");
-        const readiness = await discoverWorkBuddy({ ...runtime.doctor, edition: options.edition, appPath: options.appPath });
+        const readiness = await discoverWorkBuddy({ ...runtime.doctor, edition: options.edition, model: options.model, appPath: options.appPath });
         result = { ...readiness, status: readiness.state === "available" ? "completed" : "blocked" };
       } else if (options.route === "codex-cursor") {
         const { runCursorDoctor } = await import("./doctor.mjs");
