@@ -211,10 +211,6 @@ export async function runExecutor(envelope, options = {}) {
     options.signal?.throwIfAborted();
     const identity = await inspectWorkBuddy(options);
     await inspectWorkBuddyModel(identity, model, options);
-    modelBinding = {
-      value: model, source: "host_argument", mechanism: "process_argument",
-      assurance: "preflight_supported", fallbackAllowed: false, boundAt: new Date().toISOString()
-    };
     const workingDirectory = await realpath(options.workingDirectory);
     const nativeEnvelope = { ...envelope, repository: { ...envelope.repository, root: await realpath(envelope.repository.root) } };
     const settings = await permissionSettings(nativeEnvelope, options.readOnly === true);
@@ -237,10 +233,15 @@ export async function runExecutor(envelope, options = {}) {
     const current = await inspectWorkBuddy({ ...options, appPath: identity.appPath, home: identity.home });
     if (current.fingerprint !== identity.fingerprint || current.configDir !== identity.configDir) fail("workbuddy_identity_changed");
     options.signal?.throwIfAborted();
-    const result = await (options.runProcess ?? runProcess)(process.execPath, args, {
+    const taskRun = (options.runProcess ?? runProcess)(process.execPath, args, {
       cwd: workingDirectory, env, timeoutMs: envelope.execution?.timeoutMs ?? 120_000,
       maxCaptureBytes: 2 * 1024 * 1024, signal: options.signal
     });
+    modelBinding = {
+      value: model, source: "host_argument", mechanism: "process_argument",
+      assurance: "preflight_supported", fallbackAllowed: false, boundAt: new Date().toISOString()
+    };
+    const result = await taskRun;
     if (result.timedOut || result.cancelled || result.signal || result.stdoutTruncated || result.stderrTruncated) {
       return outcome("failed", "WorkBuddy did not complete within the process and evidence bounds.", result, "workbuddy_process_failed", modelBinding);
     }

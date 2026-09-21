@@ -246,6 +246,21 @@ test("identity mutation and same-session requests stop before spawning", async (
   const result = await runExecutor(makeEnvelope(options.workingDirectory), { ...options, beforeVerifiedLaunch: async () => writeFile(path.join(options.appPath, "Contents/Resources/app.asar.unpacked/cli/bin/codebuddy"), "changed"), runProcess: async () => { calls++; return processResult(); } });
   assert.equal(calls, 0);
   assert.equal(result.failureCode, "workbuddy_identity_changed");
+  assert(!Object.hasOwn(result, "modelBinding"));
+  const controller = new AbortController();
+  const cancelled = await runExecutor(makeEnvelope(options.workingDirectory), {
+    ...options, signal: controller.signal,
+    beforeVerifiedLaunch: async () => controller.abort(),
+    runProcess: async () => assert.fail("a pre-launch cancellation must not invoke WorkBuddy")
+  });
+  assert.equal(cancelled.reportedStatus, "failed");
+  assert(!Object.hasOwn(cancelled, "modelBinding"));
+  const notStarted = await runExecutor(makeEnvelope(options.workingDirectory), {
+    ...options,
+    runProcess: () => { throw new Error("runner did not start"); }
+  });
+  assert.equal(notStarted.failureCode, "workbuddy_launch_failed");
+  assert(!Object.hasOwn(notStarted, "modelBinding"));
   assert.equal((await runExecutor(makeEnvelope(options.workingDirectory), { ...options, resumeSessionId: "session" })).failureCode, "workbuddy_fresh_task_required");
   await assert.rejects(runDelegation({}, { ...options, stateRoot: "state" }), { code: "workbuddy_fresh_task_required" });
 });
