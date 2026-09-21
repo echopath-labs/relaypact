@@ -88,6 +88,12 @@ test("only a unique successful terminal and structured task status establish com
   assert.deepEqual(parseWorkBuddyResult(JSON.stringify([terminal("blocked")])), { status: "blocked", summary: "fixture" });
   assert.deepEqual(parseWorkBuddyResult(JSON.stringify([terminal("completed", { is_error: true })])), { status: "failed" });
   assert.deepEqual(parseWorkBuddyResult(JSON.stringify([terminal("completed", { model: FIXTURE_MODEL })])), { status: "completed", summary: "fixture", model: FIXTURE_MODEL });
+  for (const modelEvidence of [
+    { model: "invalid model" }, { model_name: "invalid/model" }, { model: null },
+    { model: FIXTURE_MODEL, model_name: "other-model" }
+  ]) {
+    assert.equal(parseWorkBuddyResult(JSON.stringify([terminal("completed", modelEvidence)])), null);
+  }
   assert.deepEqual(parseWorkBuddySupportedModels(modelHelpResult([FIXTURE_MODEL, "other-model"]).stdout), [FIXTURE_MODEL, "other-model"]);
   assert.equal(parseWorkBuddySupportedModels(`${modelHelpResult().stdout}${modelHelpResult().stdout}`), null);
 });
@@ -198,6 +204,17 @@ test("reported model evidence is checked independently from the Host binding", a
   assert.equal(mismatch.failureCode, "workbuddy_model_mismatch");
   assert.equal(mismatch.modelBinding.value, FIXTURE_MODEL);
   assert.equal(mismatch.modelObservation.value, "other-model");
+  for (const modelEvidence of [
+    { model: "invalid model" }, { model_name: "invalid/model" }, { model: null },
+    { model: FIXTURE_MODEL, model_name: "other-model" }
+  ]) {
+    const malformed = await runExecutor(makeEnvelope(options.workingDirectory), {
+      ...options, runProcess: async () => processResult([terminal("completed", modelEvidence)])
+    });
+    assert.equal(malformed.reportedStatus, "malformed");
+    assert.equal(malformed.failureCode, "workbuddy_result_invalid");
+    assert.equal(malformed.modelObservation.state, "unavailable");
+  }
 });
 
 test("timeout, cancellation, truncation and zero-exit login errors cannot pass", async (t) => {

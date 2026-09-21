@@ -150,7 +150,11 @@ export function parseWorkBuddyResult(stdout) {
   try { payload = JSON.parse(terminal.result.trim().split("\n").at(-1)); } catch { return null; }
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || !["completed", "blocked", "failed"].includes(payload.status) || typeof payload.summary !== "string" || !payload.summary.trim()) return null;
   // Only the explicit task delivery is eligible for redaction and bounded display; never forward the transcript or provider metadata.
-  const reportedModel = [terminal.model, terminal.model_name].find((value) => typeof value === "string" && MODEL_ID.test(value));
+  const reportedModelFields = ["model", "model_name"].filter((key) => Object.hasOwn(terminal, key));
+  if (reportedModelFields.some((key) => typeof terminal[key] !== "string" || !MODEL_ID.test(terminal[key]))) return null;
+  const reportedModels = [...new Set(reportedModelFields.map((key) => terminal[key]))];
+  if (reportedModels.length > 1) return null;
+  const reportedModel = reportedModels[0];
   return { status: payload.status, summary: payload.summary, ...(reportedModel ? { model: reportedModel } : {}) };
 }
 
