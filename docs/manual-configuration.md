@@ -143,8 +143,9 @@ the installed Skill directory. Do not assume the current directory is the
 plugin checkout.
 
 The support matrix identifies `codex-codex` as `public-preview`, with
-`codex-pi` and `codex-cursor` as explicit `experimental` routes. `support`
-reports that static contract. Default `doctor` separately
+`codex-pi`, `codex-cursor`, `codex-workbuddy`, and `codex-workbuddy-ai` as
+explicit `experimental` routes. `support` reports that static contract. Default
+`doctor` separately
 checks the current Node.js, Git, Codex CLI, `codex exec`, packaged Skill,
 marketplace, and plugin visibility without reading authentication, contacting a
 provider, or starting a worker:
@@ -419,7 +420,8 @@ these directories in a public repository or publicly synchronized folder.
 - **Harness:** the Agent loop, tools, context, permissions, and result behavior;
   the public-preview worker keeps the Codex harness.
 - **Route:** the selected Coordinating Host to Executor Harness pair, such as
-  `codex-codex`, `codex-pi`, or `codex-cursor`.
+  `codex-codex`, `codex-pi`, `codex-cursor`, `codex-workbuddy`, or
+  `codex-workbuddy-ai`.
 - **Profile:** host-owned, non-secret metadata selecting the worker command,
   model alias, reasoning effort, and environment names for a harness that
   supports profiles. Cursor model configuration remains Cursor-owned and is not
