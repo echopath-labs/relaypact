@@ -97,6 +97,35 @@ test("dirty tree override requires and records acknowledged paths", async () => 
   assert(result.residualRisks.some((item) => item.includes("acknowledged uncommitted changes")));
 });
 
+test("unchanged acknowledged dirty paths are preserved without write authority", async () => {
+  const root = await createGitRepository();
+  await writeFile(path.join(root, "baseline.txt"), "preserve me\n");
+  const envelope = makeEnvelope(root, {
+    repository: { dirtyTree: { allow: true, acknowledgedPaths: ["baseline.txt"] } },
+    scope: { allowedPaths: ["allowed.txt"] }
+  });
+  const result = await execute(envelope, "success");
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.baseline.dirtyPathsBefore, ["baseline.txt"]);
+  assert.deepEqual(result.changedPaths, ["allowed.txt"]);
+  assert.deepEqual(result.scope.breaches, []);
+  assert.equal(result.validations[0].status, "passed");
+});
+
+test("acknowledged dirty paths retain no executor write authority", async () => {
+  const root = await createGitRepository();
+  await writeFile(path.join(root, "baseline.txt"), "preserve me\n");
+  const envelope = makeEnvelope(root, {
+    repository: { dirtyTree: { allow: true, acknowledgedPaths: ["baseline.txt"] } },
+    scope: { allowedPaths: ["allowed.txt"] }
+  });
+  const result = await execute(envelope, "baseline-breach");
+  assert.equal(result.status, "rejected");
+  assert.ok(result.changedPaths.includes("baseline.txt"));
+  assert.ok(result.scope.breaches.includes("baseline.txt"));
+  assert.equal(result.validations[0].reason, "scope_breach");
+});
+
 test("staged rename requires acknowledgement of both source and destination", async () => {
   const root = await createGitRepository();
   await writeFile(path.join(root, "outside.txt"), "outside\n");
