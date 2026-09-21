@@ -11,7 +11,7 @@ invocation and evidence tools for that work.
 The [Host Skill](skills/relaypact/SKILL.md) states those shared requirements;
 its references explain the selected tools only when needed. See
 [eight review cases](examples/host-delegation-cases.md) for concrete expectations.
-Version 0.3.3 includes this guidance and experimental Cursor and WorkBuddy routes.
+Version 0.3.4 includes this guidance and experimental Cursor and WorkBuddy routes.
 General Host wording does not add support for
 other Host products; Codex remains the admitted Host in the support matrix.
 
@@ -36,12 +36,12 @@ Shell execution and same-session continuation are not admitted. See the
 
 ## Release status
 
-The v0.3.3 target is an ordinary GitHub Release for practical, Host-supervised delegation.
+The v0.3.4 target is an ordinary GitHub Release for practical, Host-supervised delegation.
 Delegation mechanisms and constraints continue to evolve through review and use.
 Product release status is separate from each adapter's maturity in the support matrix.
 
-- Source package metadata: **0.3.3**.
-- Release target: **v0.3.3**.
+- Source package metadata: **0.3.4**.
+- Release target: **v0.3.4**.
 - Support: `codex-codex` is `public-preview`; `codex-pi` remains
   `experimental` and inactive; `codex-cursor` is source-included,
   `experimental`, and inactive at the root Plugin. WorkBuddy and WorkBuddy AI
@@ -74,24 +74,24 @@ and Codex CLI 0.147.0 or later with both `codex --version` and
 for a release only after its exact candidate passes public CI. Windows support
 is not yet claimed.
 
-## Five-minute start with the v0.3.3 release
+## Five-minute start with the v0.3.4 release
 
-Use the versioned `v0.3.3` tag for a reproducible release installation.
-Confirm the [GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3)
+Use the versioned `v0.3.4` tag for a reproducible release installation.
+Confirm the [GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.4)
 is available before installing; package metadata or a PR alone is not publication.
 
-Before installing, confirm the [v0.3.3 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3) is visible.
-If unavailable, stop these installation steps and use [v0.3.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.2) instead.
+Before installing, confirm the [v0.3.4 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.4) is visible.
+If unavailable, stop these installation steps and use [v0.3.3](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3) instead.
 These versioned instructions are not a publication announcement.
 
 Give a coordinating Codex instance this prompt:
 
 ```text
-Clone the versioned v0.3.3 release tag from
+Clone the versioned v0.3.4 release tag from
 https://github.com/echopath-labs/relaypact into a local tools directory outside
 my target repository. Record the exact checkout commit, verify it against the
-peeled v0.3.3 tag commit, and verify that package.json and plugin.json both
-report 0.3.3.
+peeled v0.3.4 tag commit, and verify that package.json and plugin.json both
+report 0.3.4.
 Read README.md and the nearest AGENTS.md. Verify Node.js 20 or later, Git,
 Codex CLI 0.147.0 or later, and `codex exec --help`. Install the root Agent
 Plugin through its local marketplace, start no worker, then run the installed
@@ -105,13 +105,13 @@ The equivalent release commands are:
 
 ```bash
 set -e
-git clone --branch v0.3.3 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.3
-checkout_commit="$(git -C relaypact-v0.3.3 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.3.3 rev-parse 'v0.3.3^{}')"
+git clone --branch v0.3.4 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.4
+checkout_commit="$(git -C relaypact-v0.3.4 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.4 rev-parse 'v0.3.4^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.3.3
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.3"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.4
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.4"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -124,22 +124,22 @@ documentation file.
 
 ## Install the versioned release
 
-Before running this block, confirm the official [v0.3.3 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3) is visible. If it is unavailable, stop and use [v0.3.2](https://github.com/echopath-labs/relaypact/tree/v0.3.2). A tag alone does not satisfy this precondition.
+Before running this block, confirm the official [v0.3.4 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.4) is visible. If it is unavailable, stop and use [v0.3.3](https://github.com/echopath-labs/relaypact/tree/v0.3.3). A tag alone does not satisfy this precondition.
 
-The installation target is `v0.3.3`:
+The installation target is `v0.3.4`:
 
 The previous `v0.1.2`, `v0.1.1` and `v0.1.0` releases remain available for exact
 historical installs.
 
 ```bash
 set -e
-git clone --branch v0.3.3 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.3
-checkout_commit="$(git -C relaypact-v0.3.3 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.3.3 rev-parse 'v0.3.3^{}')"
+git clone --branch v0.3.4 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.4
+checkout_commit="$(git -C relaypact-v0.3.4 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.4 rev-parse 'v0.3.4^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.3.3
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.3"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.4
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.4"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -212,11 +212,14 @@ only supported persistent modes can record a tool terminal decision.
 - [Contribution guide](CONTRIBUTING.md)
 - [NOTICE](NOTICE) and [Apache License 2.0](LICENSE) (`Apache-2.0`)
 
-## Changes in v0.3.3
+## Changes in v0.3.4
 
-- Return safe, actionable permission-denial diagnostics for recognized Cursor filesystem failures.
-- Cover Node error wrappers, additional filesystem operations and paths containing apostrophes.
-- Keep raw diagnostics private and preserve failure, scope, timeout and cancellation checks.
+- Bind each WorkBuddy invocation to one exact Host-selected model without fallback,
+  and keep launch-confirmed binding evidence separate from native observation.
+- Support complete machine-readable Git status and index output above the generic
+  128 KiB process limit, with an independent 64 MiB fail-closed bound.
+- Preserve unchanged acknowledged dirty baseline files without treating them as
+  executor writes; real modifications remain subject to the original scope.
 
 See the [changelog](CHANGELOG.md) for details and compatibility notes.
 
@@ -240,4 +243,6 @@ filesystem evidence budget is 512 MiB; installed monorepos can exceed it even
 with clean Git status. Version 0.3.2 adds explicit Host configuration through
 `execution.filesystemEvidenceMaxBytes` (up to 8 GiB), retained throughout the task.
 See [the budget reference](skills/relaypact/references/task-envelope.md#filesystem-evidence-budget)
-for configuration, costs and remaining limits. Version 0.3.1 keeps the fixed limit.
+for configuration, costs and remaining limits. Version 0.3.4 separately allows
+up to 64 MiB of machine-readable Git stdout; that fixed bound is not expanded by
+the filesystem budget. Version 0.3.1 keeps the fixed filesystem limit.
