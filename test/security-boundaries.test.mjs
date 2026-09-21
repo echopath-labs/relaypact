@@ -65,9 +65,20 @@ const profile = {
 };
 
 test("process capture reports truncation and hard timeout settlement", async () => {
-  const output = await runProcess(process.execPath, ["-e", "process.stdout.write('x'.repeat(200000))"]);
+  let spawnAcknowledgements = 0;
+  const output = await runProcess(process.execPath, ["-e", "process.stdout.write('x'.repeat(200000))"], {
+    onSpawn: () => { spawnAcknowledgements += 1; }
+  });
+  assert.equal(spawnAcknowledgements, 1);
   assert.equal(output.stdoutTruncated, true);
   assert.ok(Buffer.byteLength(output.stdout) <= 128 * 1024);
+
+  const root = await createDirectory();
+  let failedSpawnAcknowledged = false;
+  await assert.rejects(runProcess(path.join(root, "missing-executable"), [], {
+    onSpawn: () => { failedSpawnAcknowledged = true; }
+  }), { code: "ENOENT" });
+  assert.equal(failedSpawnAcknowledged, false);
 
   const started = performance.now();
   const timeout = await runProcess(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {

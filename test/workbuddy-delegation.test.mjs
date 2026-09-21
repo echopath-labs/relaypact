@@ -257,7 +257,7 @@ test("identity mutation and same-session requests stop before spawning", async (
   assert(!Object.hasOwn(cancelled, "modelBinding"));
   const notStarted = await runExecutor(makeEnvelope(options.workingDirectory), {
     ...options,
-    runProcess: () => { throw new Error("runner did not start"); }
+    runProcess: async () => { throw new Error("runner did not start"); }
   });
   assert.equal(notStarted.failureCode, "workbuddy_launch_failed");
   assert(!Object.hasOwn(notStarted, "modelBinding"));
