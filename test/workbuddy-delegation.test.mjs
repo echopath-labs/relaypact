@@ -134,6 +134,10 @@ test("launch preserves native roots, binds one model, narrows tools and suppress
 test("model selection is required, bounded and verified before task execution", async (t) => {
   const options = await installation(t);
   await assert.rejects(runDelegation(makeEnvelope(options.workingDirectory), { ...options, model: undefined }), { code: "workbuddy_model_required" });
+  await assert.rejects(runDelegation(makeEnvelope(options.workingDirectory), {
+    ...options, validationEnv: { COLLISION: "v4" },
+    runProcess: async () => assert.fail("a model/evidence collision must stop before execution")
+  }), { code: "workbuddy_model_sensitive_collision" });
   let launches = 0;
   const invalid = await runExecutor(makeEnvelope(options.workingDirectory), {
     ...options, model: "--paid-model", runProcess: async () => { launches += 1; return processResult(); }
@@ -157,6 +161,27 @@ test("model selection is required, bounded and verified before task execution", 
   });
   assert.equal(malformed.failureCode, "workbuddy_model_probe_unavailable");
   assert.equal(launches, 0);
+});
+
+test("structured model binding is preserved exactly instead of narrative-redacted", async (t) => {
+  const options = await installation(t);
+  const root = await createGitRepository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const model = "sk-abcdefgh";
+  const result = await runDelegation(makeEnvelope(root), {
+    ...options, model, runModelProbe: async () => modelHelpResult([model]),
+    runProcess: async () => processResult()
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.executor.modelBinding.value, model);
+  const defensive = await runDelegation(makeEnvelope(root), {
+    ...options,
+    securityEvidence: () => ({ sensitiveValues: ["v4"], credentialEvidenceTrusted: true }),
+    runProcess: async () => processResult()
+  });
+  assert.equal(defensive.status, "rejected");
+  assert(!Object.hasOwn(defensive.executor, "modelBinding"));
+  assert(defensive.scope.breaches.includes("evidence:model binding overlaps a protected value"));
 });
 
 test("reported model evidence is checked independently from the Host binding", async (t) => {
