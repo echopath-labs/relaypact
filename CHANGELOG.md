@@ -2,6 +2,18 @@
 
 All notable public changes to RelayPact are recorded here.
 
+## [0.3.4] - 2026-09-21 - Release
+
+### Fixed
+- Require one exact Host-selected model for each WorkBuddy or WorkBuddy AI invocation, preflight that ID against the admitted native CLI, pass it without fallback, and retain launch-confirmed binding evidence separately from any native model observation. Malformed or mismatched reported model evidence now makes delivery ineligible.
+- Give machine-readable Git commands an independent 64 MiB stdout evidence bound while retaining the 128 KiB diagnostic stderr bound. Repositories whose complete status or index output exceeds the generic process limit can now reach delegation; actual bound exhaustion still fails closed.
+- Exclude byte-identical acknowledged dirty baseline paths from delegated `changedPaths` without granting write authority. Content, type or mode changes to those paths remain observable and subject to the original scope.
+
+### Compatibility
+- WorkBuddy routes remain experimental and now require `--model <model-id>` for task execution. Model preflight and binding do not prove provider use, account entitlement, price or free status, and RelayPact never substitutes another model.
+- The 64 MiB Git stdout bound is independent from `execution.filesystemEvidenceMaxBytes`; increasing the filesystem budget does not increase Git command capture.
+- Codex remains the admitted Host. Codex-to-Codex remains public-preview; Pi, Cursor, WorkBuddy and WorkBuddy AI remain explicitly selected experimental routes.
+
 ## [0.3.3] - 2026-09-20 - Release
 
 ### Fixed
@@ -266,3 +278,5 @@ All notable public changes to RelayPact are recorded here.
 [0.3.2]: https://github.com/echopath-labs/relaypact/compare/v0.3.1...v0.3.2
 
 [0.3.3]: https://github.com/echopath-labs/relaypact/compare/v0.3.2...v0.3.3
+
+[0.3.4]: https://github.com/echopath-labs/relaypact/compare/v0.3.3...v0.3.4

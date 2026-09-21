@@ -8,7 +8,7 @@ does not authorize broader access or automatic patch application.
 
 The [Host Skill](../skills/relaypact/SKILL.md) defines the shared delegation and
 review requirements. Read this manual when using the CLI tools, whose schemas
-and lifecycle constraints remain required. Version 0.3.3 includes the shared
+and lifecycle constraints remain required. Version 0.3.4 includes the shared
 Host guidance and the experimental Cursor adapter.
 
 ## Execution exit codes since v0.3.1
@@ -40,6 +40,9 @@ registry; Cursor needs lifecycle roots only in persistent mode. Direct execution
 can already have modified the workspace when review starts: acceptance does not
 apply a separate capsule patch and rejection does not revert those changes.
 Use the selected route's [invocation reference](../skills/relaypact/references/invocation.md).
+Acknowledgement permits an existing dirty path to remain byte-identical; it does
+not grant write authority. A content, type or mode change is still reported as
+delegated work and evaluated against the original scope.
 
 For Codex-to-Codex, RelayPact supplies scope controls, execution isolation,
 evidence and an acceptance lifecycle. The delegated executor
@@ -58,24 +61,24 @@ codex exec --help
 
 ## Release state and version verification
 
-The installation target is `v0.3.3`. Package and Plugin version fields
+The installation target is `v0.3.4`. Package and Plugin version fields
 alone are not release identity; verify the official tag's peeled commit.
 
-Before installing, confirm the [v0.3.3 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3) is visible.
-If unavailable, stop these installation steps and use [v0.3.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.2) instead.
+Before installing, confirm the [v0.3.4 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.4) is visible.
+If unavailable, stop these installation steps and use [v0.3.3](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3) instead.
 These versioned instructions are not a publication announcement.
 
 Install and verify the target release only after confirming its availability:
 
 ```bash
 set -e
-git clone --branch v0.3.3 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.3
-checkout_commit="$(git -C relaypact-v0.3.3 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.3.3 rev-parse 'v0.3.3^{}')"
+git clone --branch v0.3.4 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.4
+checkout_commit="$(git -C relaypact-v0.3.4 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.4 rev-parse 'v0.3.4^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.3.3
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.3"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.4
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.4"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -384,7 +387,8 @@ These private archives remain user-owned data.
 | Plugin installed but Skill absent | Start a new Codex task and verify `codex plugin list --marketplace relaypact-local --json`. |
 | WorkBuddy model preflight blocked | Supply one exact native model ID, confirm the selected edition's admitted CLI advertises it, and recheck current price or free status in the native product. RelayPact never substitutes a default or fallback. |
 | Native authentication unavailable | Repair the selected host Codex profile; never paste credentials into envelope/profile files. |
-| Dirty target repository | Record and explicitly acknowledge every pre-existing path, or restore a clean tree before delegation. |
+| Dirty target repository | Record and explicitly acknowledge every pre-existing path, or restore a clean tree before delegation. Acknowledgement permits preservation only; add a path to `allowedPaths` only when the executor may modify it. |
+| `git_output_truncated` | Machine-readable Git stdout exceeded its independent 64 MiB bound. Reduce or split the repository/task; `execution.filesystemEvidenceMaxBytes` does not raise this Git limit. |
 | No approved worker profile | Let the coordinating Agent prepare credential-free metadata and stop for route/auth availability decisions. |
 | State/archive rejected | Use pre-existing real, non-symlink directories outside the target repository; use restrictive permissions where supported. |
 | Provider or stream failure | Fail closed; inspect the provider-specific guide and do not silently change provider, model, router, or harness. |

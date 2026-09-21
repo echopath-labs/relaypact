@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 const CANONICAL_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const PROJECT_NAME = "relaypact";
 const PROJECT_DISPLAY_NAME = "RelayPact";
-const PROJECT_VERSION = "0.3.3";
+const PROJECT_VERSION = "0.3.4";
 const PROJECT_RELEASE_STATE = "versioned";
-const LATEST_PUBLISHED_VERSION = "0.3.2";
+const LATEST_PUBLISHED_VERSION = "0.3.3";
 const PROJECT_LICENSE = "Apache-2.0";
 const PROJECT_REPOSITORY = "https://github.com/echopath-labs/relaypact";
 const PROJECT_MARKETPLACE = "relaypact-local";
@@ -279,7 +279,7 @@ async function validateProjectOnboarding(root, errors) {
       })) {
         errors.push(`${relative} must put the Release availability precondition before installation commands in each install section.`);
       }
-      if (/unreleased|not a published\s+release|does not include these candidate changes|not part of the v0\.3\.3 installation|only in reviewed source|尚未发布|尚未包含|不包含在下文安装|不包含这些候选改动/iu.test(text)) {
+      if (/unreleased|not a published\s+release|does not include these candidate changes|not part of the v0\.3\.4 installation|only in reviewed source|尚未发布|尚未包含|不包含在下文安装|不包含这些候选改动/iu.test(text)) {
         errors.push(`${relative} must not retain candidate-only release status.`);
       }
       if (/latest published release|最新已发布版本/iu.test(files[relative] ?? "")) {
@@ -300,7 +300,7 @@ async function validateProjectOnboarding(root, errors) {
       `[${PROJECT_VERSION}]: https://github.com/echopath-labs/relaypact/compare/v${LATEST_PUBLISHED_VERSION}...v${PROJECT_VERSION}`
     ], "CHANGELOG.md", errors);
     const currentChangelog = (files["CHANGELOG.md"] ?? "").split(`## [${PROJECT_VERSION}]`)[1]?.split("\n## [")[0] ?? "";
-    if (/unreleased|source candidate|latest published release remains|no v0\.3\.3 tag/iu.test(currentChangelog)) {
+    if (/unreleased|source candidate|latest published release remains|no v0\.3\.4 tag/iu.test(currentChangelog)) {
       errors.push("CHANGELOG.md must not retain candidate-only status in the current release section.");
     }
     requireText((files["SECURITY.md"] ?? "").replace(/\s+/gu, " "), [
@@ -308,8 +308,8 @@ async function validateProjectOnboarding(root, errors) {
       `Once v${PROJECT_VERSION} is published, support moves to the latest published \`0.3.x\` release.`
     ], "SECURITY.md", errors);
     const checklist = files["RELEASING.md"] ?? "";
-    if (!/The checked-in metadata describes 0\.3\.3 Release, dated \d{4}-\d{2}-\d{2}\./u.test(checklist)
-        || /The checked-in state is a 0\.3\.3 source candidate|is intentionally unset/u.test(checklist)) {
+    if (!/The checked-in metadata describes 0\.3\.4 Release, dated \d{4}-\d{2}-\d{2}\./u.test(checklist)
+        || /The checked-in state is a 0\.3\.4 source candidate|is intentionally unset/u.test(checklist)) {
       errors.push("RELEASING.md must describe the dated versioned current state.");
     }
     const heading = files["CHANGELOG.md"]?.split("\n").find((line) => line.startsWith(`## [${PROJECT_VERSION}]`));
@@ -317,7 +317,7 @@ async function validateProjectOnboarding(root, errors) {
       errors.push("CHANGELOG.md must include the dated Release heading.");
     }
     const changelogDate = heading?.match(/ - (\d{4}-\d{2}-\d{2}) - Release$/u)?.[1];
-    const checklistDate = checklist.match(/The checked-in metadata describes 0\.3\.3 Release, dated (\d{4}-\d{2}-\d{2})\./u)?.[1];
+    const checklistDate = checklist.match(/The checked-in metadata describes 0\.3\.4 Release, dated (\d{4}-\d{2}-\d{2})\./u)?.[1];
     if (changelogDate && checklistDate && changelogDate !== checklistDate) {
       errors.push("RELEASING.md and CHANGELOG.md release dates must agree.");
     }

@@ -7,14 +7,14 @@ reviewable Codex-to-Codex candidate. RelayPact uses an independent `codex exec`
 from the existing Codex CLI; there is no second executor package.
 
 RelayPact's shared purpose is to guide the Host's delegation and acceptance.
-This tutorial covers the v0.3.3 Codex capsule tooling. Its
+This tutorial covers the v0.3.4 Codex capsule tooling. Its
 [Host guidance](../skills/relaypact/SKILL.md) separates common responsibilities
 from CLI setup.
 The candidate in this tutorial remains unapplied until a later authorized action.
 
 Current release truth:
 
-- This guide targets `v0.3.3`; `v0.1.2` and `v0.1.1` remain available.
+- This guide targets `v0.3.4`; `v0.1.2` and `v0.1.1` remain available.
 - This guide installs the versioned tag and verifies its peeled commit SHA.
 - Pi is experimental and inactive; it is not installed, loaded, or used here.
 
@@ -36,19 +36,19 @@ Codex Desktop alone does not prove that the CLI or `codex exec` is available.
 The independent worker makes a separate model request and may consume additional
 quota or cost.
 
-## Minute 1: install and verify the v0.3.3 release
+## Minute 1: install and verify the v0.3.4 release
 
-Before installing, confirm the [v0.3.3 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3) is visible.
-If unavailable, stop these installation steps and use [v0.3.2](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.2) instead.
+Before installing, confirm the [v0.3.4 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.4) is visible.
+If unavailable, stop these installation steps and use [v0.3.3](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.3) instead.
 These versioned instructions are not a publication announcement.
 
 Give the coordinating Codex instance this prompt:
 
 ```text
-Clone the versioned v0.3.3 release tag from
+Clone the versioned v0.3.4 release tag from
 https://github.com/echopath-labs/relaypact into a local tools directory outside
 my target repository. Record the exact checkout commit SHA and verify it against
-the peeled v0.3.3 tag commit. Verify package.json and plugin.json both report 0.3.3; read README.md
+the peeled v0.3.4 tag commit. Verify package.json and plugin.json both report 0.3.4; read README.md
 and the nearest AGENTS.md; verify Node.js 20+, Git, Codex CLI 0.147.0+, and
 `codex exec --help`. Install the root Plugin through its local marketplace.
 Without reading credentials, contacting a provider, or starting a worker, run
@@ -62,13 +62,13 @@ The equivalent release commands are:
 
 ```bash
 set -e
-git clone --branch v0.3.3 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.3
-checkout_commit="$(git -C relaypact-v0.3.3 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.3.3 rev-parse 'v0.3.3^{}')"
+git clone --branch v0.3.4 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.4
+checkout_commit="$(git -C relaypact-v0.3.4 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.4 rev-parse 'v0.3.4^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.3.3
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.3"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.4
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.4"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
