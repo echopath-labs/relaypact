@@ -97,6 +97,12 @@ function mergePaths(...collections) {
   return [...new Set(collections.flat())].sort();
 }
 
+function changedCandidatePaths(before, postflight) {
+  const dirtyBefore = new Set(before.dirtyPaths);
+  const newlyDirtyPaths = postflight.after.dirtyPaths.filter((relative) => !dirtyBefore.has(relative));
+  return mergePaths(newlyDirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
+}
+
 function sanitizeChangedPathEvidence(changedPaths, security, additionalValues = []) {
   if (security.credentialEvidenceTrusted !== true) {
     return { paths: [], breach: "evidence:credential inventory changed" };
@@ -213,7 +219,7 @@ export async function runLocalDelegation(input, options = {}) {
 
     let postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore, maxBytes);
     let after = postflight.after;
-    let changedPaths = mergePaths(after.dirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
+    let changedPaths = changedCandidatePaths(before, postflight);
     const baselinePathEvidence = sanitizeChangedPathEvidence(before.dirtyPaths, security, validationSensitiveValues);
     let pathEvidence = sanitizeChangedPathEvidence(changedPaths, security, validationSensitiveValues);
     changedPaths = pathEvidence.paths;
@@ -249,7 +255,7 @@ export async function runLocalDelegation(input, options = {}) {
       executionSettled = true;
       postflight = await collectPostflight(repository, before, pathBaseline, gitControlsBefore, gitIndexBefore, maxBytes);
       after = postflight.after;
-      changedPaths = mergePaths(after.dirtyPaths, postflight.committedPaths, postflight.filesystemPaths);
+      changedPaths = changedCandidatePaths(before, postflight);
       pathEvidence = sanitizeChangedPathEvidence(changedPaths, security, validationSensitiveValues);
       changedPaths = pathEvidence.paths;
       breaches = evaluatePathScope(changedPaths, envelope.scope);

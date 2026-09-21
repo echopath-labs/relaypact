@@ -50,6 +50,8 @@ export function runProcess(command, args, options = {}) {
     timeoutMs = 30_000,
     input = undefined,
     maxCaptureBytes = MAX_CAPTURE_BYTES,
+    maxStdoutCaptureBytes = maxCaptureBytes,
+    maxStderrCaptureBytes = maxCaptureBytes,
     terminationGraceMs = DEFAULT_TERMINATION_GRACE_MS,
     hardSettleGraceMs = DEFAULT_HARD_SETTLE_GRACE_MS,
     processGroup = process.platform !== "win32",
@@ -70,8 +72,8 @@ export function runProcess(command, args, options = {}) {
     });
     child.once("spawn", () => onSpawn?.());
 
-    const stdoutCapture = capture(maxCaptureBytes, outputEncoding);
-    const stderrCapture = capture(maxCaptureBytes, outputEncoding);
+    const stdoutCapture = capture(maxStdoutCaptureBytes, outputEncoding);
+    const stderrCapture = capture(maxStderrCaptureBytes, outputEncoding);
     let timedOut = false;
     let cancelled = false;
     let hardKilled = false;

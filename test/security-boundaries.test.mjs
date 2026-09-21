@@ -73,6 +73,15 @@ test("process capture reports truncation and hard timeout settlement", async () 
   assert.equal(output.stdoutTruncated, true);
   assert.ok(Buffer.byteLength(output.stdout) <= 128 * 1024);
 
+  const asymmetric = await runProcess(process.execPath, ["-e", [
+    "process.stdout.write('o'.repeat(200000));",
+    "process.stderr.write('e'.repeat(200000));"
+  ].join("")], { maxStdoutCaptureBytes: 256 * 1024 });
+  assert.equal(asymmetric.stdoutTruncated, false);
+  assert.equal(Buffer.byteLength(asymmetric.stdout), 200_000);
+  assert.equal(asymmetric.stderrTruncated, true);
+  assert.ok(Buffer.byteLength(asymmetric.stderr) <= 128 * 1024);
+
   const root = await createDirectory();
   let failedSpawnAcknowledged = false;
   await assert.rejects(runProcess(path.join(root, "missing-executable"), [], {
@@ -319,13 +328,31 @@ test("process runner terminates same-group descendants after the leader exits", 
   }
 });
 
-test("machine Git evidence fails closed instead of parsing a truncated prefix", async () => {
+test("machine Git evidence remains complete above the generic process capture bound", async () => {
   const root = await createGitRepository();
+  const paths = [];
   for (let index = 0; index < 1500; index += 1) {
     const name = `${String(index).padStart(4, "0")}-${"x".repeat(90)}.txt`;
+    paths.push(name);
     await writeFile(path.join(root, name), "x");
   }
-  await assert.rejects(getStatusPaths(root), (error) => error.code === "git_output_truncated");
+  const statusOutput = await execFileAsync("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
+    cwd: root,
+    encoding: null
+  });
+  assert.ok(statusOutput.stdout.byteLength > 128 * 1024);
+  assert.deepEqual(await getStatusPaths(root), paths);
+
+  await execFileAsync("git", ["add", "--all"], { cwd: root });
+  await execFileAsync("git", ["commit", "-m", "test: large index"], { cwd: root });
+  const indexOutput = await execFileAsync("git", ["ls-files", "--stage", "-v", "-z"], {
+    cwd: root,
+    encoding: null
+  });
+  assert.ok(indexOutput.stdout.byteLength > 128 * 1024);
+  const snapshot = await snapshotGitIndex(root);
+  assert.equal(snapshot.entries.length, paths.length + 1);
+  assert.deepEqual(snapshot.entries.map((entry) => entry.path), [...paths, "README.md"]);
 });
 
 test("canonical Git index identity ignores stat cache and preserves unusual paths", async () => {

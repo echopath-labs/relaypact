@@ -7,6 +7,8 @@ import { minimalEnvironment } from "./environment.mjs";
 import { normalizeRelativePath } from "../../contracts/src/path-policy.mjs";
 import { runProcess } from "./process.mjs";
 
+const MAX_GIT_STDOUT_BYTES = 64 * 1024 * 1024;
+
 function controlledArgs(args, gitControl) {
   return [
     ...(gitControl?.gitDir ? [`--git-dir=${gitControl.gitDir}`, `--work-tree=${gitControl.workTree}`] : []),
@@ -25,7 +27,13 @@ async function runGit(args, cwd, { allowFailure = false, gitControl = undefined,
       GIT_OPTIONAL_LOCKS: "0"
     }
   });
-  const result = await runProcess("git", controlledArgs(args, gitControl), { cwd, env, timeoutMs: 30_000, outputEncoding });
+  const result = await runProcess("git", controlledArgs(args, gitControl), {
+    cwd,
+    env,
+    timeoutMs: 30_000,
+    outputEncoding,
+    maxStdoutCaptureBytes: MAX_GIT_STDOUT_BYTES
+  });
   if (result.stdoutTruncated || result.stderrTruncated) {
     throw new DelegationError("git_output_truncated", `Git command output exceeded the evidence capture bound: git ${args.join(" ")}.`);
   }

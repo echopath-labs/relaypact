@@ -58,6 +58,10 @@ switch (scenario) {
     write("private.txt", "out of scope\n");
     result("completed", "Executor reported completion.");
     break;
+  case "baseline-breach":
+    write("baseline.txt", "executor changed acknowledged baseline\n");
+    result("completed", "Executor reported completion.");
+    break;
   case "ignored-breach":
     write("allowed.txt", "delegated edit\n");
     write("ignored.txt", "ignored out of scope\n");
