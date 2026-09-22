@@ -15,6 +15,7 @@ function processResult(records = [terminal()], extra = {}) {
   return { exitCode: 0, signal: null, stdout: JSON.stringify(records), stderr: "", ...extra };
 }
 const FIXTURE_MODEL = "deepseek-v4.1-flash";
+const HELP_CAPTURE_BYTES = 256 * 1024;
 function modelHelpResult(models = [FIXTURE_MODEL], extra = {}) {
   return {
     exitCode: 0, signal: null,
@@ -57,6 +58,7 @@ for (const edition of ["mainland", "international"]) {
     assert.equal(ready.model, FIXTURE_MODEL);
     assert.equal(ready.modelPreflight, "supported_by_native_help");
     assert.equal(ready.resumable, false);
+    assert(!Object.hasOwn(ready, "modelDiscovery"));
     const opposite = await discoverWorkBuddy({ ...options, edition: edition === "mainland" ? "international" : "mainland" });
     assert.equal(opposite.reason, "workbuddy_edition_mismatch");
   });
@@ -95,7 +97,9 @@ test("only a unique successful terminal and structured task status establish com
     assert.equal(parseWorkBuddyResult(JSON.stringify([terminal("completed", modelEvidence)])), null);
   }
   assert.deepEqual(parseWorkBuddySupportedModels(modelHelpResult([FIXTURE_MODEL, "other-model"]).stdout), [FIXTURE_MODEL, "other-model"]);
+  assert.deepEqual(parseWorkBuddySupportedModels(modelHelpResult([FIXTURE_MODEL, FIXTURE_MODEL, "other-model"]).stdout), [FIXTURE_MODEL, "other-model"]);
   assert.equal(parseWorkBuddySupportedModels(`${modelHelpResult().stdout}${modelHelpResult().stdout}`), null);
+  assert.equal(parseWorkBuddySupportedModels("x".repeat(HELP_CAPTURE_BYTES + 1)), null);
 });
 
 test("launch preserves native roots, binds one model, narrows tools and suppresses raw output", async (t) => {
@@ -153,7 +157,10 @@ test("model selection is required, bounded and verified before task execution", 
     ...options, model: "other-model", runModelProbe: async () => modelHelpResult([FIXTURE_MODEL]),
     runProcess: async () => { launches += 1; return processResult(); }
   });
+  assert.equal(unsupported.reportedStatus, "blocked");
   assert.equal(unsupported.failureCode, "workbuddy_model_unsupported");
+  assert(!Object.hasOwn(unsupported, "modelBinding"));
+  assert(!Object.hasOwn(unsupported, "modelDiscovery"));
   for (const extra of [{ exitCode: 1 }, { timedOut: true }, { cancelled: true }, { stdoutTruncated: true }, { stderrTruncated: true }]) {
     const unavailable = await runExecutor(makeEnvelope(options.workingDirectory), {
       ...options, runModelProbe: async () => modelHelpResult([FIXTURE_MODEL], extra),
@@ -167,6 +174,65 @@ test("model selection is required, bounded and verified before task execution", 
   });
   assert.equal(malformed.failureCode, "workbuddy_model_probe_unavailable");
   assert.equal(launches, 0);
+});
+
+test("an unsupported exact model exposes only sanitized canonical IDs and never raw help", async (t) => {
+  const options = await installation(t);
+  const unsupported = await discoverWorkBuddy({ ...options, model: "other-model" });
+  assert.equal(unsupported.state, "blocked");
+  assert.equal(unsupported.reason, "workbuddy_model_unsupported");
+  assert.equal(unsupported.authentication, "unverified");
+  assert.deepEqual(unsupported.modelDiscovery, { source: "native_help", supportedModels: [FIXTURE_MODEL] });
+  // A miss stays a miss: no substituted model, preflight claim, default or fallback.
+  for (const absent of ["model", "modelPreflight", "modelBinding", "defaultModel", "fallback", "fallbackModel", "normalized", "substituted"]) {
+    assert(!Object.hasOwn(unsupported, absent));
+  }
+  for (const claim of ["entitlement", "provider", "price", "free", "freeStatus", "authenticationVerified"]) {
+    assert(!Object.hasOwn(unsupported, claim));
+  }
+  const serialized = JSON.stringify(unsupported);
+  assert(!serialized.includes("--model <model>") && !serialized.includes("Currently supported") && !serialized.includes("Model for the current session"));
+  // Exact matching remains case-sensitive: an upper-cased variant is not normalized into a match.
+  const mismatchedCase = await discoverWorkBuddy({ ...options, model: FIXTURE_MODEL.toUpperCase() });
+  assert.equal(mismatchedCase.state, "blocked");
+  assert.equal(mismatchedCase.reason, "workbuddy_model_unsupported");
+  assert.deepEqual(mismatchedCase.modelDiscovery.supportedModels, [FIXTURE_MODEL]);
+  // A wider admitted list is reported verbatim, deduplicated and still bounded.
+  const wider = await discoverWorkBuddy({ ...options, model: "absent-model",
+    runModelProbe: async () => modelHelpResult([FIXTURE_MODEL, "other-model", FIXTURE_MODEL]) });
+  assert.deepEqual(wider.modelDiscovery, { source: "native_help", supportedModels: [FIXTURE_MODEL, "other-model"] });
+  const manyModels = [...Array(65).keys()].map((index) => `model-${index}`);
+  const supportedBeyondDiscoveryLimit = await discoverWorkBuddy({ ...options, model: "model-64",
+    runModelProbe: async () => modelHelpResult(manyModels) });
+  assert.equal(supportedBeyondDiscoveryLimit.state, "available");
+  assert.equal(supportedBeyondDiscoveryLimit.model, "model-64");
+  const boundedDiscovery = await discoverWorkBuddy({ ...options, model: "absent-model",
+    runModelProbe: async () => modelHelpResult(manyModels) });
+  assert.equal(boundedDiscovery.modelDiscovery.supportedModels.length, 64);
+  assert.deepEqual(boundedDiscovery.modelDiscovery.supportedModels, manyModels.slice(0, 64));
+  // A malformed exact ID never reaches the probe and exposes no discovery.
+  const malformed = await discoverWorkBuddy({ ...options, model: "invalid model" });
+  assert.equal(malformed.reason, "workbuddy_model_invalid");
+  assert(!Object.hasOwn(malformed, "modelDiscovery"));
+});
+
+test("model discovery stays fail-closed for malformed, duplicated, oversized, invalid and failed probes", async (t) => {
+  const options = await installation(t);
+  const probes = [
+    ["malformed help", async () => ({ ...modelHelpResult(), stdout: "Usage: codebuddy" })],
+    ["duplicated help block", async () => ({ ...modelHelpResult(), stdout: `${modelHelpResult().stdout}${modelHelpResult().stdout}` })],
+    ["oversized output", async () => ({ ...modelHelpResult(), stdout: `--model <model>  Model for the current session. Currently supported: (${FIXTURE_MODEL})\n${"x".repeat(HELP_CAPTURE_BYTES)}` })],
+    ["invalid ID token", async () => modelHelpResult(["invalid model"])],
+    ["failed probe", async () => modelHelpResult([FIXTURE_MODEL], { exitCode: 1 })],
+    ["truncated probe", async () => modelHelpResult([FIXTURE_MODEL], { stdoutTruncated: true })],
+    ["timed out probe", async () => modelHelpResult([FIXTURE_MODEL], { timedOut: true })]
+  ];
+  for (const [name, runModelProbe] of probes) {
+    const result = await discoverWorkBuddy({ ...options, model: "other-model", runModelProbe });
+    assert.equal(result.state, "blocked", name);
+    assert.equal(result.reason, "workbuddy_model_probe_unavailable", name);
+    assert(!Object.hasOwn(result, "modelDiscovery"), name);
+  }
 });
 
 test("structured model binding is preserved exactly instead of narrative-redacted", async (t) => {
@@ -358,6 +424,21 @@ test("doctor accepts each matrix route only with its matching explicit edition",
       assert.match(stderr, /edition/);
     }
   }
+});
+
+test("doctor reports bounded model discovery for an unsupported exact model", async (t) => {
+  const options = await installation(t);
+  let stdout = "", stderr = "";
+  const io = { stdout: { write(text) { stdout += text; } }, stderr: { write(text) { stderr += text; } }, exitCode: 0 };
+  await runCli(["doctor", "--route", "codex-workbuddy", "--edition", "mainland", "--model", "other-model", "--app", options.appPath], io, { doctor: options });
+  assert.equal(stderr, "");
+  assert.equal(io.exitCode, 1);
+  const result = JSON.parse(stdout);
+  assert.equal(result.status, "blocked");
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reason, "workbuddy_model_unsupported");
+  assert.deepEqual(result.modelDiscovery, { source: "native_help", supportedModels: [FIXTURE_MODEL] });
+  assert(!stdout.includes("Currently supported") && !stdout.includes("Model for the current session"));
 });
 
 test("read-only rejects an acknowledged dirty baseline before native execution", async (t) => {

@@ -14,6 +14,7 @@ const ADMITTED_CLI_VERSION = "2.137.1";
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MODEL_HELP_TIMEOUT_MS = 30_000;
 const MODEL_HELP_CAPTURE_BYTES = 256 * 1024;
+const MODEL_DISCOVERY_LIMIT = 64;
 const RISKS = [
   "Native WorkBuddy configuration, plugins and startup services remain harness-owned; startup can write caches and contact services.",
   "The Host-bound model argument and help preflight do not prove provider use, account entitlement, price or free status; model observation remains separate.",
@@ -32,6 +33,7 @@ function selectedEdition(edition) {
   return EDITIONS[edition];
 }
 
+// Only the bounded canonical IDs already parsed from the admitted help are eligible; raw native help is never retained or returned.
 export function parseWorkBuddySupportedModels(stdout) {
   if (typeof stdout !== "string" || Buffer.byteLength(stdout, "utf8") > MODEL_HELP_CAPTURE_BYTES) return null;
   const matches = [...stdout.matchAll(/--model <model>[^\r\n]*Currently supported:\s*\(([^\r\n()]*)\)/gu)];
@@ -39,6 +41,10 @@ export function parseWorkBuddySupportedModels(stdout) {
   const models = matches[0][1].split(",").map((value) => value.trim()).filter(Boolean);
   if (models.length === 0 || models.some((value) => !MODEL_ID.test(value))) return null;
   return [...new Set(models)];
+}
+
+function nativeModelDiscovery(supported) {
+  return { source: "native_help", supportedModels: supported.slice(0, MODEL_DISCOVERY_LIMIT) };
 }
 
 function nativeEnvironment(identity, temporaryRoot) {
@@ -68,7 +74,10 @@ export async function inspectWorkBuddyModel(identity, value, options = {}) {
     }
     const supported = parseWorkBuddySupportedModels(result.stdout);
     if (!supported) fail("workbuddy_model_probe_unavailable");
-    if (!supported.includes(model)) fail("workbuddy_model_unsupported");
+    // Exact, case-sensitive membership stays the only admission rule; a miss returns canonical IDs, never a substitute.
+    if (!supported.includes(model)) {
+      throw new DelegationError("workbuddy_model_unsupported", "The selected WorkBuddy model is not advertised by the admitted native CLI.", nativeModelDiscovery(supported));
+    }
     return { model, source: "native_help", supported: true };
   } finally {
     if (temporaryRoot) await rm(temporaryRoot, { recursive: true, force: true }).catch(() => {});
@@ -131,7 +140,10 @@ export async function discoverWorkBuddy(options = {}) {
         ? ["The native help probe sends no task prompt but can contact native services or update caches.", "Model support does not prove login, account entitlement, provider use, price or free status."]
         : ["Authentication and the model used by a future fresh task remain unverified."] };
   } catch (error) {
-    return { state: "blocked", reason: error instanceof DelegationError ? error.code : "workbuddy_installation_unavailable", authentication: "unverified" };
+    const reason = error instanceof DelegationError ? error.code : "workbuddy_installation_unavailable";
+    // A failed exact match still fails closed; only the already-sanitized canonical IDs are surfaced for discovery.
+    const discovery = reason === "workbuddy_model_unsupported" ? error.details : undefined;
+    return { state: "blocked", reason, authentication: "unverified", ...(discovery ? { modelDiscovery: discovery } : {}) };
   }
 }
 

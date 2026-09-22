@@ -35,7 +35,11 @@ Without `--model`, doctor checks only installation and native configuration
 presence. With `--model`, it additionally starts the verified CLI's bounded
 `--help` path and requires the exact ID in that admitted version's supported
 list before any task prompt is sent. This help probe does not invoke a model but
-can contact native services or update native caches. `available` is not an
+can contact native services or update native caches. If the exact ID is not in
+that admitted list, doctor stays blocked and returns `modelDiscovery`: the
+bounded, sanitized canonical IDs already parsed from the same help. Raw native
+help is never returned, and no normalization, default, fallback or substitution
+is applied. `available` is not an
 authentication, account-entitlement, price or free-status claim. A login/provider
 failure in a live task stays blocked/failed and must be resolved in that edition.
 Both doctor routes require the matching explicit edition; conflicting selections

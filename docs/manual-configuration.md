@@ -386,7 +386,7 @@ These private archives remain user-owned data.
 | `codex exec` unavailable | Repair or upgrade the Codex CLI installation; no separate executor package exists. |
 | `doctor` returns `needs_setup` | Add the intended source or release checkout as `relaypact-local`, install the plugin, start a new task, and rerun doctor from the installed Skill. |
 | Plugin installed but Skill absent | Start a new Codex task and verify `codex plugin list --marketplace relaypact-local --json`. |
-| WorkBuddy model preflight blocked | Supply one exact native model ID, confirm the selected edition's admitted CLI advertises it, and recheck current price or free status in the native product. RelayPact never substitutes a default or fallback. |
+| WorkBuddy model preflight blocked | Supply one exact native model ID. A model-scoped WorkBuddy `doctor` that does not find the ID stays blocked and returns `modelDiscovery` with only the sanitized canonical IDs parsed from that admitted help. Confirm the ID, then recheck current price or free status in the native product. RelayPact never substitutes a default or fallback. |
 | Native authentication unavailable | Repair the selected host Codex profile; never paste credentials into envelope/profile files. |
 | Dirty target repository | Record and explicitly acknowledge every pre-existing path, or restore a clean tree before delegation. Acknowledgement permits preservation only; add a path to `allowedPaths` only when the executor may modify it. |
 | `git_output_truncated` | Machine-readable Git stdout exceeded its independent 64 MiB bound. Reduce or split the repository/task; `execution.filesystemEvidenceMaxBytes` does not raise this Git limit. |

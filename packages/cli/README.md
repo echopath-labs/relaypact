@@ -52,5 +52,9 @@ or `doctor --route codex-workbuddy-ai --edition international` to
 check identity and configuration presence without starting the harness or
 claiming authenticated readiness. Add `--model <model-id>` to doctor to run the
 bounded native help preflight; it sends no task prompt but can contact native
-services or update caches and does not prove entitlement or price. The route is single-shot and leaves Host
+services or update caches and does not prove entitlement or price. When the
+exact ID is not in that admitted help, doctor stays blocked and adds
+`modelDiscovery` with only the sanitized canonical IDs parsed from the same
+help; raw native help is never returned and no default, fallback or substitution
+is applied. The route is single-shot and leaves Host
 acceptance pending; failed/rejected/malformed results return exit code 1.
