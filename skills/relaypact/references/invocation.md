@@ -138,14 +138,18 @@ version, required flags or bounded probe completion cannot be verified:
 ```text
 node <skill-directory>/scripts/relaypact.mjs doctor
   --route codex-pi
-  [--executor <pi-path>]
+  [--executor <absolute-pi-path>]
 ```
 
 ```text
 node <skill-directory>/scripts/relaypact.mjs run-pi
   --envelope <task-envelope.json>
-  [--executor <pi-path>]
+  [--executor <absolute-pi-path>]
 ```
+
+An explicit Pi executor path must be absolute. RelayPact fingerprints and
+snapshots the complete launch identity and requires every argument used by the
+adapter, including conditional `--thinking`, before execution.
 
 A Host review of a one-shot result does not create a tool terminal record.
 

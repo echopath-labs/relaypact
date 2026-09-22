@@ -247,7 +247,14 @@ test("CLI subprocess emits blocked JSON with exit 2 for unavailable optional exe
   context.after(async () => { await rm(repository, { recursive: true, force: true }); await rm(inputs, { recursive: true, force: true }); });
   const envelope = path.join(inputs, "envelope.json");
   await writeFile(envelope, JSON.stringify(makeEnvelope(repository)));
-  const pi = path.join(inputs, "blocked-pi.mjs");
+  const piPackage = path.join(inputs, "pi-package");
+  await mkdir(piPackage);
+  const pi = path.join(piPackage, "blocked-pi.mjs");
+  await writeFile(path.join(piPackage, "package.json"), JSON.stringify({
+    name: "blocked-pi-fixture",
+    private: true,
+    bin: { pi: "blocked-pi.mjs" }
+  }));
   await writeFile(pi, '#!/usr/bin/env node\nconsole.log(JSON.stringify({status: "blocked", summary: "Host clarification required", residualRisks: []}));\n', { mode: 0o755 });
   for (const command of [
     ["run-pi", "--executor", pi],

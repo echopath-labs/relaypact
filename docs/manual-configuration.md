@@ -160,9 +160,11 @@ status. It does not invoke a model, retain account output, or prove live model
 availability. Live execution is evaluated only after the user explicitly
 selects and invokes the route.
 
-Selected-route Pi doctor requires Pi 0.84.0 or later, binds the selected
-executable identity, and verifies the exact noninteractive flags used by the
-adapter. It runs only `--version` and `--help` from disposable HOME, settings,
+Selected-route Pi doctor requires Pi 0.84.0 or later, binds and snapshots the
+complete selected launch identity, including its Node package bundle and runtime
+when applicable, and verifies the exact noninteractive flags used by the adapter,
+including conditional `--thinking`. An explicit `--executor` path must be
+absolute. It runs only `--version` and `--help` from disposable HOME, settings,
 session and working directories. Native bootstrap writes stay inside that
 temporary root and are deleted afterward; global/project Pi settings and
 authentication are not read or modified. Missing, unsupported, mutated,

@@ -6,10 +6,12 @@ Skill and is not a prerequisite for Codex-to-Codex execution.
 This adapter translates the neutral delegation contract into a non-interactive
 Pi invocation and normalizes the outcome for Codex review.
 
-Run `relaypact doctor --route codex-pi [--executor <pi-path>]` before selecting
+Run `relaypact doctor --route codex-pi [--executor <absolute-pi-path>]` before selecting
 the route. Doctor requires Pi 0.84.0 or later and checks the exact print/text,
 no-session, tool-selection, route-binding and project-resource-disabling flags
-used here. It probes only `--version` and `--help` inside disposable Pi state;
+used here, including `--thinking` when reasoning is selected. It binds and
+snapshots the complete Pi launch identity; relative path executors are refused.
+It probes only `--version` and `--help` inside disposable Pi state;
 it does not read authentication, invoke a model or prove provider availability.
 
 Zero write authority is translated before launch: when `allowedPaths` is empty,

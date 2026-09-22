@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { validateTaskEnvelope } from "../packages/contracts/src/envelope.mjs";
 import { parseStatusPaths } from "../packages/core/src/git.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
-import { discoverPiCli } from "../packages/executor-pi/src/executor.mjs";
+import { discoverPiCli, materializePiExecutable, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
 const fakePi = fileURLToPath(new URL("./fixtures/fake-pi.mjs", import.meta.url));
@@ -47,7 +47,7 @@ test("CLI reads an envelope file and emits a structured result", async () => {
 const readyPiHelp = [
   "--print", "--mode text json", "--no-session", "--no-extensions", "--no-skills",
   "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve",
-  "--tools", "--provider", "--model"
+  "--tools", "--provider", "--model", "--thinking"
 ].join(" ");
 const piIdentity = (fingerprint = "a".repeat(64)) => ({
   command: "/fixture/pi",
@@ -103,7 +103,7 @@ test("Pi doctor discovery blocks unsupported, missing, and mutated executables",
   const unsupported = piDoctorFixture({ version: piProbeResult("0.83.9\n") });
   assert.equal((await discoverPiCli({ ...unsupported, executorCommand: "/fixture/pi" })).reason, "unsupported_version");
 
-  const missingCapability = piDoctorFixture({ help: piProbeResult(readyPiHelp.replace("--tools", "")) });
+  const missingCapability = piDoctorFixture({ help: piProbeResult(readyPiHelp.replace("--thinking", "")) });
   assert.equal((await discoverPiCli({ ...missingCapability, executorCommand: "/fixture/pi" })).reason, "unsupported_capabilities");
 
   const missing = piDoctorFixture({ identities: [] });
@@ -113,6 +113,66 @@ test("Pi doctor discovery blocks unsupported, missing, and mutated executables",
   const mutationResult = await discoverPiCli({ ...mutated, executorCommand: "/fixture/pi" });
   assert.equal(mutationResult.reason, "mutated");
   assert.equal(mutationResult.executableFingerprint, null);
+});
+
+test("Pi executable resolution rejects working-directory-relative launch paths", async () => {
+  assert.equal(await resolvePiExecutable("./fake-pi.mjs", { environment: { PATH: process.env.PATH } }), null);
+});
+
+test("Pi delegation never resolves a relative executor inside the target repository", async () => {
+  const root = await createGitRepository();
+  const relativeExecutor = path.join(root, "target-pi.mjs");
+  await writeFile(relativeExecutor, [
+    "#!/usr/bin/env node",
+    'import { writeFileSync } from "node:fs";',
+    'writeFileSync("allowed.txt", "target-controlled executor ran\\n");',
+    'process.stdout.write(JSON.stringify({ status: "completed", summary: "ran" }));'
+  ].join("\n"));
+  await chmod(relativeExecutor, 0o700);
+  await execFileAsync("git", ["add", "target-pi.mjs"], { cwd: root });
+  await execFileAsync("git", ["commit", "-m", "test: add target executor"], { cwd: root });
+
+  const result = await runDelegation(withFixturePiRoute(makeEnvelope(root)), {
+    executorCommand: "./target-pi.mjs"
+  });
+  assert.equal(result.status, "failed");
+  assert.match(result.executor.summary, /could not be resolved/u);
+  await assert.rejects(readFile(path.join(root, "allowed.txt"), "utf8"), { code: "ENOENT" });
+});
+
+test("Pi launch identity covers imported package files and execution uses an immutable snapshot", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const entry = path.join(root, "pi.mjs");
+  const dependency = path.join(root, "version.mjs");
+  await writeFile(path.join(root, "package.json"), JSON.stringify({
+    name: "fixture-pi",
+    private: true,
+    type: "module",
+    bin: { pi: "pi.mjs" }
+  }));
+  await writeFile(entry, [
+    "#!/usr/bin/env node",
+    'import { version } from "./version.mjs";',
+    'if (process.argv.includes("--version")) process.stdout.write(`${version}\\n`);'
+  ].join("\n"));
+  await chmod(entry, 0o700);
+  await writeFile(dependency, 'export const version = "0.84.0";\n');
+
+  const before = await resolvePiExecutable(entry);
+  assert.equal(before?.kind, "node-package");
+  const snapshot = await materializePiExecutable(before);
+  context.after(() => snapshot.cleanup());
+
+  await writeFile(dependency, 'export const version = "9.9.9";\n');
+  const after = await resolvePiExecutable(entry);
+  assert.notEqual(after?.executableFingerprint, before.executableFingerprint);
+
+  const { stdout } = await execFileAsync(snapshot.identity.launchCommand, [
+    ...snapshot.identity.launchPrefix,
+    "--version"
+  ]);
+  assert.equal(stdout, "0.84.0\n");
 });
 
 test("Pi doctor discovery blocks timed-out, truncated, and settings-write probes without retaining diagnostics", async () => {

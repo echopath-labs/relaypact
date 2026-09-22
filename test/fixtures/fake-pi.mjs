@@ -19,7 +19,7 @@ if (process.argv.includes("--help")) {
     "Usage: pi [options] [prompt]",
     "--print --mode <mode> (text, json, rpc) --no-session --no-extensions --no-skills",
     "--no-prompt-templates --no-themes --no-context-files --no-approve",
-    "--tools <tools> --provider <provider> --model <model>"
+    "--tools <tools> --provider <provider> --model <model> --thinking <level>"
   ].join("\n"));
   process.exit(0);
 }
