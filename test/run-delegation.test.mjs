@@ -153,7 +153,7 @@ test("zero write direct execution rejects repository validation before launch", 
       launched = true;
       throw new Error("must not launch");
     }
-  }), { code: "zero_write_validation_unsupported" });
+  }), { code: "read_only_validation_unsupported" });
   assert.equal(launched, false);
 });
 

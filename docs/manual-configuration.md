@@ -447,9 +447,10 @@ node ./bin/relaypact.mjs run-cursor \
 Add `--read-only` to use Cursor plan mode without RelayPact granting `--force`.
 An envelope with `allowedPaths: []` forces the same read-only mode even when the
 flag is omitted; RelayPact does not grant `--force` for zero write authority.
-For this zero-write direct-workspace invocation, set `validation: []`. RelayPact
-rejects repository validation commands before launch because they may create
-caches or coverage; run them in an external read-only or disposable environment.
+For every direct-workspace read-only invocation, whether selected by the flag or
+derived from empty `allowedPaths`, set `validation: []`. RelayPact rejects
+repository validation commands before launch because they may create caches or
+coverage; run them in an external read-only or disposable environment.
 
 Use `--executor /absolute/path/to/cursor-agent` when discovery should be bound
 to one installation. RelayPact verifies version, required non-interactive and

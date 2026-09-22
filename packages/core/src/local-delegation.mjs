@@ -174,10 +174,10 @@ async function collectPostflight(repository, before, pathBaseline, gitControlsBe
 export async function runLocalDelegation(input, options = {}) {
   if (typeof options.execute !== "function") throw new TypeError("A local executor callback is required.");
   const envelope = validateTaskEnvelope(input);
-  if (envelope.scope.allowedPaths.length === 0 && envelope.validation.length > 0) {
+  if ((options.readOnly === true || envelope.scope.allowedPaths.length === 0) && envelope.validation.length > 0) {
     throw new DelegationError(
-      "zero_write_validation_unsupported",
-      "Direct-workspace zero-write tasks cannot run repository validation commands. Use an external read-only or disposable validation environment and leave validation empty."
+      "read_only_validation_unsupported",
+      "Direct-workspace read-only tasks cannot run repository validation commands. Use an external read-only or disposable validation environment and leave validation empty."
     );
   }
   const maxBytes = filesystemEvidenceMaxBytes(envelope);

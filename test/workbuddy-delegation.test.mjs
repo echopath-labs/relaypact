@@ -368,6 +368,22 @@ test("read-only zero write authority rejects every file change", async (t) => {
   assert(!envelope.scope.forbiddenPaths.includes("**"));
 });
 
+test("explicit WorkBuddy read-only mode rejects repository validation before launch", async (t) => {
+  const options = await installation(t);
+  const root = await createGitRepository();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let launched = false;
+  await assert.rejects(runDelegation(makeEnvelope(root), {
+    ...options,
+    readOnly: true,
+    runProcess: async () => {
+      launched = true;
+      throw new Error("must not launch");
+    }
+  }), { code: "read_only_validation_unsupported" });
+  assert.equal(launched, false);
+});
+
 test("CLI requires explicit edition/model and rejects unsupported continuation options", async () => {
   for (const args of [["run-workbuddy", "--envelope", "missing"], ["run-workbuddy", "--edition", "mainland", "--envelope", "missing"], ["run-workbuddy", "--edition", "international", "--model", FIXTURE_MODEL, "--envelope", "missing", "--state-root", "state"], ["run-pi", "--edition", "mainland", "--envelope", "missing"]]) {
     const io = { stdout: { write() { assert.fail("must not dispatch"); } }, stderr: { write() {} }, exitCode: 0 };
@@ -385,7 +401,10 @@ test("read grants respect explicit authority and original prohibitions in both m
     for (const readablePaths of [undefined, [], ["README.md"]]) {
       for (const forbiddenPaths of [["private.txt"], ["**"]]) {
         const scope = { allowedPaths: ["allowed.txt"], forbiddenPaths, ...(readablePaths === undefined ? {} : { readablePaths }) };
-        const result = await runDelegation(makeEnvelope(root, { scope }), { ...options, readOnly, runProcess: async (command, args) => {
+        const result = await runDelegation(makeEnvelope(root, {
+          scope,
+          ...(readOnly ? { validation: [] } : {})
+        }), { ...options, readOnly, runProcess: async (command, args) => {
           const settings = JSON.parse(args[args.indexOf("--settings") + 1]).permissions;
           assert.deepEqual(settings.ask, [`Read(/${canonicalRoot}/**)`]);
           assert.deepEqual(settings.allow.filter((rule) => rule.startsWith("Read(")),
