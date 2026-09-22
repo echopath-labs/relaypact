@@ -12,8 +12,12 @@ CLI's bounded `--help` surface, and passes it with one `--model` argument withou
 a fallback. Model binding does not prove provider use, entitlement, price or free
 status. `doctor` without a model checks distribution identity/configuration
 presence; `doctor --model` performs the same non-model help preflight used by a
-task. Authentication remains unverified until live invocation. Other CLI
-versions require fresh compatibility verification.
+task. When that exact ID is absent from the admitted list, doctor and task
+execution both stay blocked, and the doctor result adds `modelDiscovery`: the
+bounded, sanitized canonical IDs already parsed from the same help. Raw native
+help is never retained or returned, and no normalization, default, fallback or
+substitution is applied. Authentication remains unverified until live invocation.
+Other CLI versions require fresh compatibility verification.
 
 Only Read is enabled in read-only mode; file tasks enable Read/Write with native
 per-invocation path grants. No bare tool-name permission grants are added; native
