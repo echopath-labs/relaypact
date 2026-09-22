@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, chmod, copyFile, cp, lstat, mkdir, open, readFile, readlink, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, cp, lstat, mkdir, open, readFile, readlink, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { createIsolatedEnvironment, minimalEnvironment } from "../../core/src/environment.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import {
@@ -31,6 +31,7 @@ const REQUIRED_PI_FLAGS = Object.freeze([
 const SETTINGS_WRITE_FAILURE = /(?:(?:EPERM|EACCES|EROFS|permission denied|operation not permitted)[^\r\n]*(?:settings\.json\.lock|global settings)|(?:settings\.json\.lock|global settings)[^\r\n]*(?:EPERM|EACCES|EROFS|permission denied|operation not permitted))/iu;
 const ENVIRONMENT_REFERENCE = /^[A-Z_][A-Z0-9_]*$/u;
 const AUTH_ENVIRONMENT_REFERENCE = /^\$(?:\{([A-Z_][A-Z0-9_]*)\}|([A-Z_][A-Z0-9_]*))$/u;
+const SEMANTIC_VERSION_PATTERN = String.raw`\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?`;
 
 function attachExecutorSecurity(result, evidence) {
   Object.defineProperty(result, EXECUTOR_SECURITY, { value: evidence, enumerable: false });
@@ -45,17 +46,52 @@ function plainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
 }
 
+function parseSemanticVersion(value) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u.exec(value);
+  if (!match) return null;
+  const core = match.slice(1, 4);
+  const prerelease = match[4]?.split(".") ?? [];
+  if (core.some((part) => part.length > 1 && part.startsWith("0"))) return null;
+  if (prerelease.some((part) => /^\d+$/u.test(part) && part.length > 1 && part.startsWith("0"))) return null;
+  return {
+    core,
+    prerelease
+  };
+}
+
 function compareVersions(left, right) {
-  const a = left.split(".").map(Number);
-  const b = right.split(".").map(Number);
+  const a = parseSemanticVersion(left);
+  const b = parseSemanticVersion(right);
+  if (!a || !b) return Number.NaN;
   for (let index = 0; index < 3; index += 1) {
-    if (a[index] !== b[index]) return a[index] - b[index];
+    if (a.core[index] !== b.core[index]) return BigInt(a.core[index]) < BigInt(b.core[index]) ? -1 : 1;
+  }
+  if (a.prerelease.length === 0 || b.prerelease.length === 0) {
+    if (a.prerelease.length === b.prerelease.length) return 0;
+    return a.prerelease.length === 0 ? 1 : -1;
+  }
+  const length = Math.max(a.prerelease.length, b.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    if (a.prerelease[index] === undefined) return -1;
+    if (b.prerelease[index] === undefined) return 1;
+    if (a.prerelease[index] === b.prerelease[index]) continue;
+    const aNumeric = /^\d+$/u.test(a.prerelease[index]);
+    const bNumeric = /^\d+$/u.test(b.prerelease[index]);
+    if (aNumeric && bNumeric) return BigInt(a.prerelease[index]) < BigInt(b.prerelease[index]) ? -1 : 1;
+    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+    return a.prerelease[index] < b.prerelease[index] ? -1 : 1;
   }
   return 0;
 }
 
 function parsePiVersion(output) {
-  return output.match(/(?:^|\s)(\d+\.\d+\.\d+)(?:[-+][A-Za-z0-9._-]+)?(?:\s|$)/u)?.[1] ?? null;
+  const candidate = new RegExp(`(?:^|\\s)(${SEMANTIC_VERSION_PATTERN})(?=\\s|$)`, "u").exec(output)?.[1] ?? null;
+  return candidate && parseSemanticVersion(candidate) ? candidate : null;
+}
+
+function helpHasOption(output, flag) {
+  const escaped = flag.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`(?:^|[^A-Za-z0-9_-])${escaped}(?=$|[^A-Za-z0-9_-])`, "u").test(output);
 }
 
 function commandCandidates(command, environment) {
@@ -93,11 +129,12 @@ async function firstLine(file) {
   }
 }
 
-async function collectPiBundle(root, relative = "", depth = 0, state = null) {
+async function collectPiBundle(root, relative = "", depth = 0, state = null, options = {}) {
   if (!state) state = { entries: [], bytes: 0, canonicalRoot: await realpath(root) };
   if (depth > MAX_PI_BUNDLE_DEPTH) throw new Error("Pi package exceeds the supported directory depth.");
   const directory = path.join(root, relative);
   for (const name of (await readdir(directory)).sort()) {
+    if (options.excludeNodeModules === true && relative === "" && name === "node_modules") continue;
     const nextRelative = relative ? path.join(relative, name) : name;
     const absolute = path.join(root, nextRelative);
     const info = await lstat(absolute);
@@ -106,10 +143,14 @@ async function collectPiBundle(root, relative = "", depth = 0, state = null) {
       const resolved = await realpath(absolute);
       const prefix = `${state.canonicalRoot}${path.sep}`;
       if (resolved !== state.canonicalRoot && !resolved.startsWith(prefix)) throw new Error("Pi package contains an escaping symbolic link.");
+      const excluded = `${path.join(state.canonicalRoot, "node_modules")}${path.sep}`;
+      if (options.excludeNodeModules === true && (resolved === path.join(state.canonicalRoot, "node_modules") || resolved.startsWith(excluded))) {
+        throw new Error("Pi package contains a symbolic link into dependency storage.");
+      }
       state.entries.push({ path: nextRelative, type: "symlink", target });
     } else if (info.isDirectory()) {
       state.entries.push({ path: nextRelative, type: "directory" });
-      await collectPiBundle(root, nextRelative, depth + 1, state);
+      await collectPiBundle(root, nextRelative, depth + 1, state, options);
     } else if (info.isFile()) {
       state.bytes += info.size;
       if (state.bytes > MAX_PI_BUNDLE_BYTES) throw new Error("Pi package exceeds the supported byte bound.");
@@ -128,18 +169,119 @@ function piBundleFingerprint(entries) {
   return `sha256:${createHash("sha256").update(JSON.stringify(entries)).digest("hex")}`;
 }
 
+async function readPiPackageManifest(root) {
+  const manifestPath = path.join(root, "package.json");
+  const info = await lstat(manifestPath);
+  if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) throw new Error("Pi package manifest is unsafe.");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (!plainObject(manifest)) throw new Error("Pi package manifest is invalid.");
+  return manifest;
+}
+
+function packageNameParts(name) {
+  if (typeof name !== "string") return null;
+  const parts = name.split("/");
+  if (parts.length === 1 && /^[A-Za-z0-9._~-]+$/u.test(parts[0]) && parts[0] !== "." && parts[0] !== "..") return parts;
+  if (parts.length === 2 && /^@[A-Za-z0-9._~-]+$/u.test(parts[0]) && /^[A-Za-z0-9._~-]+$/u.test(parts[1]) && parts[1] !== "." && parts[1] !== "..") return parts;
+  return null;
+}
+
+function packageDependencyRequirements(manifest) {
+  const requirements = new Map();
+  for (const name of Object.keys(plainObject(manifest.dependencies) ? manifest.dependencies : {}).sort()) {
+    requirements.set(name, true);
+  }
+  for (const name of Object.keys(plainObject(manifest.optionalDependencies) ? manifest.optionalDependencies : {}).sort()) {
+    requirements.set(name, false);
+  }
+  for (const name of Object.keys(plainObject(manifest.peerDependencies) ? manifest.peerDependencies : {}).sort()) {
+    const optional = manifest.peerDependenciesMeta?.[name]?.optional === true;
+    if (!requirements.has(name)) requirements.set(name, !optional);
+  }
+  return [...requirements.entries()].sort(([left], [right]) => left.localeCompare(right, "en"));
+}
+
+async function resolveDependencyPackage(root, name) {
+  const parts = packageNameParts(name);
+  if (!parts) throw new Error("Pi package declares an unsupported dependency name.");
+  let directory = root;
+  while (true) {
+    let candidate;
+    try {
+      candidate = await realpath(path.join(directory, "node_modules", ...parts));
+    } catch (error) {
+      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") throw error;
+    }
+    if (candidate) {
+      await readPiPackageManifest(candidate);
+      return candidate;
+    }
+    // Continue through the same ancestor locations used by Node package resolution.
+    const parent = path.dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+}
+
+function piPackageGraphFingerprint(graph) {
+  const portable = {
+    rootId: graph.rootId,
+    nodes: graph.nodes.map(({ id, entries, dependencies }) => ({ id, entries, dependencies }))
+  };
+  return `sha256:${createHash("sha256").update(JSON.stringify(portable)).digest("hex")}`;
+}
+
+async function collectPiPackageGraph(root) {
+  const canonicalRoot = await realpath(root);
+  const roots = new Map([[canonicalRoot, 0]]);
+  const nodes = [{ id: 0, root: canonicalRoot, depth: 0, entries: [], dependencies: [] }];
+  let totalBytes = 0;
+  let totalEntries = 0;
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    const manifest = await readPiPackageManifest(node.root);
+    const bundle = await collectPiBundle(node.root, "", 0, null, { excludeNodeModules: true });
+    node.entries = bundle.entries;
+    totalBytes += bundle.bytes;
+    totalEntries += bundle.entries.length;
+    if (totalBytes > MAX_PI_BUNDLE_BYTES) throw new Error("Pi dependency closure exceeds the supported byte bound.");
+    if (totalEntries > MAX_PI_BUNDLE_FILES) throw new Error("Pi dependency closure exceeds the supported file-count bound.");
+
+    for (const [name, required] of packageDependencyRequirements(manifest)) {
+      const dependencyRoot = await resolveDependencyPackage(node.root, name);
+      if (!dependencyRoot) {
+        if (required) throw new Error("Pi package has an unresolved runtime dependency.");
+        continue;
+      }
+      let target = roots.get(dependencyRoot);
+      if (target === undefined) {
+        const dependencyDepth = node.depth + 1;
+        if (dependencyDepth > MAX_PI_BUNDLE_DEPTH) throw new Error("Pi dependency closure exceeds the supported depth.");
+        target = nodes.length;
+        roots.set(dependencyRoot, target);
+        nodes.push({ id: target, root: dependencyRoot, depth: dependencyDepth, entries: [], dependencies: [] });
+      }
+      node.dependencies.push({ name, target });
+      totalEntries += 1;
+      if (totalEntries > MAX_PI_BUNDLE_FILES) throw new Error("Pi dependency closure exceeds the supported file-count bound.");
+    }
+  }
+  return { rootId: 0, nodes };
+}
+
 async function findPiPackage(entry) {
   let directory = path.dirname(entry);
   while (true) {
-    const manifestPath = path.join(directory, "package.json");
     try {
-      const info = await lstat(manifestPath);
-      if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) throw new Error("unsafe manifest");
-      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      const manifest = await readPiPackageManifest(directory);
       const declared = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.pi;
       if (typeof declared === "string" && await realpath(path.resolve(directory, declared)) === entry) {
-        const bundle = await collectPiBundle(directory);
-        return { root: directory, entry: path.relative(directory, entry), fingerprint: piBundleFingerprint(bundle.entries) };
+        const packageEntry = path.relative(directory, entry);
+        if (packageEntry === "" || packageEntry === ".." || packageEntry.startsWith(`..${path.sep}`) || path.isAbsolute(packageEntry)) {
+          throw new Error("Pi package entry escapes its package root.");
+        }
+        const graph = await collectPiPackageGraph(directory);
+        return { root: directory, entry: packageEntry, graph, fingerprint: piPackageGraphFingerprint(graph) };
       }
     } catch {
       // Continue toward the filesystem root without retaining package diagnostics.
@@ -208,6 +350,7 @@ export async function resolvePiExecutable(command, options = {}) {
         kind: nodePackage ? "node-package" : "native",
         packageRoot: nodePackage?.root ?? null,
         packageEntry: nodePackage?.entry ?? null,
+        packageGraph: nodePackage?.graph ?? null,
         packageFingerprint: nodePackage?.fingerprint ?? null,
         runtimeCommand: nodePackage ? process.execPath : null,
         runtimeFingerprint
@@ -239,24 +382,57 @@ export async function materializePiExecutable(identity) {
       if (await executableFingerprint(executable) !== identity.targetFingerprint) throw new Error("Pi executable changed during snapshot.");
       return { identity: { ...identity, launchCommand: executable, launchPrefix: [] }, cleanup: isolated.cleanup };
     }
-    if (identity.kind !== "node-package" || !path.isAbsolute(identity.packageRoot) || !path.isAbsolute(identity.runtimeCommand)) {
+    if (identity.kind !== "node-package" || !plainObject(identity.packageGraph) || !path.isAbsolute(identity.runtimeCommand)) {
       throw new Error("Pi package identity is incomplete.");
     }
-    const bundle = path.join(isolated.root, "bundle");
-    await cp(identity.packageRoot, bundle, { recursive: true, verbatimSymlinks: true });
-    const copiedBundle = await collectPiBundle(bundle);
-    if (piBundleFingerprint(copiedBundle.entries) !== identity.packageFingerprint) throw new Error("Pi package changed during snapshot.");
+    const store = path.join(isolated.root, "packages");
+    await mkdir(store, { mode: 0o700 });
+    const destinations = new Map();
+    for (const node of identity.packageGraph.nodes) {
+      const destination = path.join(store, String(node.id));
+      destinations.set(node.id, destination);
+      await cp(node.root, destination, {
+        recursive: true,
+        verbatimSymlinks: true,
+        filter(source) {
+          const relative = path.relative(node.root, source);
+          return relative === "" || relative.split(path.sep)[0] !== "node_modules";
+        }
+      });
+      const copiedBundle = await collectPiBundle(destination, "", 0, null, { excludeNodeModules: true });
+      if (piBundleFingerprint(copiedBundle.entries) !== piBundleFingerprint(node.entries)) {
+        throw new Error("Pi package changed during snapshot.");
+      }
+    }
+    for (const node of identity.packageGraph.nodes) {
+      const destination = destinations.get(node.id);
+      for (const dependency of node.dependencies) {
+        const parts = packageNameParts(dependency.name);
+        const target = destinations.get(dependency.target);
+        if (!parts || !target) throw new Error("Pi dependency closure is incomplete.");
+        const link = path.join(destination, "node_modules", ...parts);
+        await mkdir(path.dirname(link), { recursive: true, mode: 0o700 });
+        await symlink(path.relative(path.dirname(link), target), link, process.platform === "win32" ? "junction" : "dir");
+      }
+    }
+    if (piPackageGraphFingerprint(identity.packageGraph) !== identity.packageFingerprint) {
+      throw new Error("Pi dependency closure identity changed during snapshot.");
+    }
     const runtime = path.join(isolated.root, "node");
     await copyFile(identity.runtimeCommand, runtime, fsConstants.COPYFILE_EXCL | (fsConstants.COPYFILE_FICLONE ?? 0));
     await chmod(runtime, 0o500);
     if (await executableFingerprint(runtime) !== identity.runtimeFingerprint) throw new Error("Pi runtime changed during snapshot.");
     return {
-      identity: { ...identity, launchCommand: runtime, launchPrefix: [path.join(bundle, identity.packageEntry)] },
+      identity: {
+        ...identity,
+        launchCommand: runtime,
+        launchPrefix: [path.join(destinations.get(identity.packageGraph.rootId), identity.packageEntry)]
+      },
       cleanup: isolated.cleanup
     };
-  } catch (error) {
+  } catch {
     await isolated.cleanup().catch(() => {});
-    throw error;
+    throw new Error("Pi launch identity could not be snapshotted.");
   }
 }
 
@@ -302,6 +478,7 @@ async function probePi(run, identity, args, environment, cwd) {
 export async function discoverPiCli(options = {}) {
   const run = options.runProcess ?? runProcess;
   const resolveExecutable = options.resolveExecutable ?? resolvePiExecutable;
+  const materializeExecutable = options.materializeExecutable ?? materializePiExecutable;
   const environment = options.environment ?? process.env;
   const selectedCommand = options.executorCommand ?? "pi";
   const identity = await resolveExecutable(selectedCommand, {
@@ -319,7 +496,13 @@ export async function discoverPiCli(options = {}) {
   let reason = null;
   let materialized;
   try {
-    materialized = run === runProcess ? await materializePiExecutable(identity) : null;
+    if (run === runProcess || options.materializeExecutable) {
+      try {
+        materialized = await materializeExecutable(identity);
+      } catch {
+        return unavailablePiReadiness("mutated", { command: identity.command });
+      }
+    }
     const probeIdentity = materialized?.identity ?? identity;
     isolated = await createIsolatedEnvironment(environment, {
       prefix: "relaypact-pi-doctor-",
@@ -351,7 +534,7 @@ export async function discoverPiCli(options = {}) {
       else if (helpProbe.state !== "complete") reason = helpProbe.state;
       else if (helpProbe.exitCode !== 0 || helpProbe.signal) reason = "unsupported";
       else {
-        const supported = Object.fromEntries(REQUIRED_PI_FLAGS.map((flag) => [flag, helpProbe.output.includes(flag)]));
+        const supported = Object.fromEntries(REQUIRED_PI_FLAGS.map((flag) => [flag, helpHasOption(helpProbe.output, flag)]));
         capabilities = {
           nonInteractive: supported["--print"] === true,
           structuredOutput: supported["--mode"] === true && /\btext\b/u.test(helpProbe.output) && /\bjson\b/u.test(helpProbe.output),

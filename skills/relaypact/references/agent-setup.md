@@ -26,8 +26,9 @@ support discovery. Probe Cursor only after explicit route selection with
 `doctor --route codex-cursor`; that diagnostic must not invoke a model.
 Probe Pi only after explicit route selection with
 `doctor --route codex-pi [--executor <absolute-pi-path>]`. It binds and
-snapshots the complete selected launch identity and checks its version and
-required flags, including conditional `--thinking`, inside disposable Pi
+snapshots the complete selected launch identity and resolved runtime dependency
+closure, then checks semantic-version compatibility and complete required option
+tokens, including conditional `--thinking`, inside disposable Pi
 state; it must not read global/project Pi settings, authentication, or invoke a
 model. Readiness does not prove provider availability.
 For WorkBuddy, explicitly select `doctor --route codex-workbuddy --edition mainland`

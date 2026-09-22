@@ -148,8 +148,9 @@ node <skill-directory>/scripts/relaypact.mjs run-pi
 ```
 
 An explicit Pi executor path must be absolute. RelayPact fingerprints and
-snapshots the complete launch identity and requires every argument used by the
-adapter, including conditional `--thinking`, before execution.
+snapshots the complete launch identity and resolved runtime dependency closure,
+uses semantic-version precedence, and requires every complete option token used
+by the adapter, including conditional `--thinking`, before execution.
 
 A Host review of a one-shot result does not create a tool terminal record.
 

@@ -103,8 +103,19 @@ test("Pi doctor discovery blocks unsupported, missing, and mutated executables",
   const unsupported = piDoctorFixture({ version: piProbeResult("0.83.9\n") });
   assert.equal((await discoverPiCli({ ...unsupported, executorCommand: "/fixture/pi" })).reason, "unsupported_version");
 
+  const prerelease = piDoctorFixture({ version: piProbeResult("0.84.0-beta.1\n") });
+  const prereleaseResult = await discoverPiCli({ ...prerelease, executorCommand: "/fixture/pi" });
+  assert.equal(prereleaseResult.reason, "unsupported_version");
+  assert.equal(prereleaseResult.version, "0.84.0-beta.1");
+
+  const laterPrerelease = piDoctorFixture({ version: piProbeResult("0.85.0-beta.1\n") });
+  assert.equal((await discoverPiCli({ ...laterPrerelease, executorCommand: "/fixture/pi" })).state, "ready");
+
   const missingCapability = piDoctorFixture({ help: piProbeResult(readyPiHelp.replace("--thinking", "")) });
   assert.equal((await discoverPiCli({ ...missingCapability, executorCommand: "/fixture/pi" })).reason, "unsupported_capabilities");
+
+  const missingMode = piDoctorFixture({ help: piProbeResult(readyPiHelp.replace("--mode text json", "text json")) });
+  assert.equal((await discoverPiCli({ ...missingMode, executorCommand: "/fixture/pi" })).reason, "unsupported_capabilities");
 
   const missing = piDoctorFixture({ identities: [] });
   assert.equal((await discoverPiCli({ ...missing, executorCommand: "/fixture/pi" })).reason, "missing");
@@ -113,6 +124,21 @@ test("Pi doctor discovery blocks unsupported, missing, and mutated executables",
   const mutationResult = await discoverPiCli({ ...mutated, executorCommand: "/fixture/pi" });
   assert.equal(mutationResult.reason, "mutated");
   assert.equal(mutationResult.executableFingerprint, null);
+});
+
+test("Pi doctor converts snapshot failures into sanitized blocked readiness", async () => {
+  const fixture = piDoctorFixture();
+  const privatePath = ["", "Users", "private", "pi", "package"].join("/");
+  const readiness = await discoverPiCli({
+    ...fixture,
+    executorCommand: "/fixture/pi",
+    materializeExecutable: async () => { throw new Error(`copy failed at ${privatePath}`); }
+  });
+  assert.equal(readiness.state, "blocked");
+  assert.equal(readiness.reason, "mutated");
+  assert.equal(readiness.command, "/fixture/pi");
+  assert.equal(JSON.stringify(readiness).includes(privatePath), false);
+  assert.equal(fixture.calls.length, 0);
 });
 
 test("Pi executable resolution rejects working-directory-relative launch paths", async () => {
@@ -164,6 +190,52 @@ test("Pi launch identity covers imported package files and execution uses an imm
   const snapshot = await materializePiExecutable(before);
   context.after(() => snapshot.cleanup());
 
+  await writeFile(dependency, 'export const version = "9.9.9";\n');
+  const after = await resolvePiExecutable(entry);
+  assert.notEqual(after?.executableFingerprint, before.executableFingerprint);
+
+  const { stdout } = await execFileAsync(snapshot.identity.launchCommand, [
+    ...snapshot.identity.launchPrefix,
+    "--version"
+  ]);
+  assert.equal(stdout, "0.84.0\n");
+});
+
+test("Pi snapshot includes dependencies hoisted beside the selected package", async (context) => {
+  const workspace = await createDirectory();
+  context.after(() => rm(workspace, { recursive: true, force: true }));
+  const modules = path.join(workspace, "node_modules");
+  const packageRoot = path.join(modules, "fixture-pi");
+  const dependencyRoot = path.join(modules, "hoisted-value");
+  await mkdir(packageRoot, { recursive: true });
+  await mkdir(dependencyRoot, { recursive: true });
+  const entry = path.join(packageRoot, "pi.mjs");
+  const dependency = path.join(dependencyRoot, "index.mjs");
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
+    name: "fixture-pi",
+    private: true,
+    type: "module",
+    bin: { pi: "pi.mjs" },
+    dependencies: { "hoisted-value": "1.0.0" }
+  }));
+  await writeFile(entry, [
+    "#!/usr/bin/env node",
+    'import { version } from "hoisted-value";',
+    'if (process.argv.includes("--version")) process.stdout.write(`${version}\\n`);'
+  ].join("\n"));
+  await chmod(entry, 0o700);
+  await writeFile(path.join(dependencyRoot, "package.json"), JSON.stringify({
+    name: "hoisted-value",
+    version: "1.0.0",
+    type: "module",
+    exports: "./index.mjs"
+  }));
+  await writeFile(dependency, 'export const version = "0.84.0";\n');
+
+  const before = await resolvePiExecutable(entry);
+  assert.equal(before?.packageGraph.nodes.length, 2);
+  const snapshot = await materializePiExecutable(before);
+  context.after(() => snapshot.cleanup());
   await writeFile(dependency, 'export const version = "9.9.9";\n');
   const after = await resolvePiExecutable(entry);
   assert.notEqual(after?.executableFingerprint, before.executableFingerprint);

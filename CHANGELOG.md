@@ -5,7 +5,7 @@ All notable public changes to RelayPact are recorded here.
 ## [Unreleased]
 
 ### Added
-- Add `doctor --route codex-pi [--executor <absolute-pi-path>]` as a structured, no-model readiness check for the experimental Pi route. It binds and snapshots the complete launch identity, including the Node package bundle and runtime when applicable, verifies Pi 0.84.0 or later and every CLI capability used by the adapter including conditional `--thinking`, and runs version/help probes from disposable HOME, settings, session and working directories. Relative path executors are rejected.
+- Add `doctor --route codex-pi [--executor <absolute-pi-path>]` as a structured, no-model readiness check for the experimental Pi route. It binds and snapshots the complete launch identity, including the Node package, resolved runtime dependency closure and runtime when applicable, verifies Pi 0.84.0 or later under semantic-version precedence and every complete CLI option token used by the adapter including conditional `--thinking`, and runs version/help probes from disposable HOME, settings, session and working directories. Relative path executors are rejected, and snapshot failures remain sanitized structured blocked results.
 
 ### Compatibility
 - Pi remains experimental and inactive at the root Plugin. Pi doctor does not read authentication, select a provider or model, prove live availability, or permit route fallback. A missing, unsupported, mutated, timed-out, truncated, or settings-isolation-failing probe blocks readiness with sanitized evidence.

@@ -10,15 +10,17 @@ or final acceptance. Provider and model selection
 come from Pi configuration or an explicit non-secret execution profile.
 
 Before a task, `relaypact doctor --route codex-pi [--executor <absolute-pi-path>]`
-resolves and fingerprints the complete selected launch identity, including a
-Node package bundle and runtime when applicable, requires Pi 0.84.0 or later,
-and verifies the noninteractive flags below, including conditional `--thinking`,
-without sending a prompt. Relative path executors are rejected. The probe
+resolves and fingerprints the complete selected launch identity, including the
+Node package, its resolved runtime dependency closure, and runtime when
+applicable, requires Pi 0.84.0 or later under semantic-version precedence, and
+verifies complete noninteractive option tokens below, including conditional
+`--thinking`, without sending a prompt. Relative path executors are rejected. The probe
 uses disposable HOME, settings, session and working directories; any native
 bootstrap files stay inside that disposable root and are deleted afterward.
 Global/project Pi settings and authentication are neither read nor modified.
 Timeout, truncation, executable drift and settings-lock failures block with
-fixed diagnostics that retain no native output or private paths. Probes and
+fixed diagnostics that retain no native output or private paths. Snapshot
+copy or verification failures use the same structured blocked result. Probes and
 tasks execute from a verified private snapshot of that identity.
 
 Pi runs in print/text mode and must return exactly one final JSON object with

@@ -11,8 +11,9 @@ dynamically loaded only for that selected diagnostic route; default `doctor`
 does not load it.
 `doctor --route codex-pi [--executor <absolute-pi-path>]` dynamically loads the
 experimental Pi executor, binds and snapshots its complete launch identity,
-and verifies Pi 0.84.0 or later plus the exact noninteractive flags used by the
-adapter, including conditional `--thinking`. Relative path executors are
+including its resolved runtime dependency closure, and verifies Pi 0.84.0 or
+later under semantic-version precedence plus the exact noninteractive option
+tokens used by the adapter, including conditional `--thinking`. Relative path executors are
 rejected. Its
 version/help probes run with disposable HOME, settings, session and working
 directories, make no model request, and return only sanitized readiness

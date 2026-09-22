@@ -10,7 +10,9 @@ Run `relaypact doctor --route codex-pi [--executor <absolute-pi-path>]` before s
 the route. Doctor requires Pi 0.84.0 or later and checks the exact print/text,
 no-session, tool-selection, route-binding and project-resource-disabling flags
 used here, including `--thinking` when reasoning is selected. It binds and
-snapshots the complete Pi launch identity; relative path executors are refused.
+snapshots the complete Pi launch identity and resolved runtime dependency
+closure; relative path executors are refused. Prereleases below the minimum
+stable version and partial help-option matches are refused.
 It probes only `--version` and `--help` inside disposable Pi state;
 it does not read authentication, invoke a model or prove provider availability.
 
