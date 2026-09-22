@@ -159,6 +159,14 @@ function importedSpecifiers(source) {
   return results;
 }
 
+function staticImportedSpecifiers(source) {
+  const results = [];
+  for (const pattern of [/\bfrom\s+["']([^"']+)["']/gu, /\bimport\s+["']([^"']+)["']/gu]) {
+    for (const match of source.matchAll(pattern)) results.push(match[1]);
+  }
+  return results;
+}
+
 export async function validateArchitecture(rootInput) {
   const root = await realpath(rootInput);
   const errors = [];
@@ -309,13 +317,14 @@ export async function validateArchitecture(rootInput) {
 
   const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
   const doctorSource = await readFile(doctorPath, "utf8").catch(() => "");
-  if (/^import\s+.*executor-cursor/mu.test(doctorSource)) {
+  const doctorStaticImports = staticImportedSpecifiers(doctorSource);
+  if (doctorStaticImports.includes("../../executor-cursor/src/executor.mjs")) {
     errors.push("Default doctor must not statically load the optional Cursor executor.");
   }
   if (!doctorSource.includes('await import("../../executor-cursor/src/executor.mjs")')) {
     errors.push("Cursor doctor must load the Cursor executor only inside the selected diagnostic route.");
   }
-  if (/^import\s+.*executor-pi/mu.test(doctorSource)) {
+  if (doctorStaticImports.includes("../../executor-pi/src/executor.mjs")) {
     errors.push("Default doctor must not statically load the optional Pi executor.");
   }
   if (!doctorSource.includes('await import("../../executor-pi/src/executor.mjs")')) {

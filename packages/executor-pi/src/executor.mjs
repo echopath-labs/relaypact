@@ -94,6 +94,15 @@ function helpHasOption(output, flag) {
   return new RegExp(`(?:^|[^A-Za-z0-9_-])${escaped}(?=$|[^A-Za-z0-9_-])`, "u").test(output);
 }
 
+function helpOptionLine(output, flag) {
+  return output.split(/\r?\n/u).find((line) => helpHasOption(line, flag)) ?? "";
+}
+
+async function cleanupPiResources(...resources) {
+  const results = await Promise.allSettled(resources.filter(Boolean).map((resource) => resource.cleanup()));
+  return results.some((result) => result.status === "rejected");
+}
+
 function commandCandidates(command, environment) {
   if (path.isAbsolute(command)) return [command];
   if (command.includes("/") || command.includes("\\")) return [];
@@ -292,10 +301,10 @@ async function findPiPackage(entry) {
   }
 }
 
-async function resolveVoltaTarget(candidate, environment, run) {
+async function resolveVoltaTarget(candidate, environment, run, tool = "pi") {
   const volta = path.join(path.dirname(candidate), process.platform === "win32" ? "volta.exe" : "volta");
   try {
-    const result = await run(volta, ["which", "pi"], {
+    const result = await run(volta, ["which", tool], {
       env: minimalEnvironment(environment),
       timeoutMs: PI_PROBE_TIMEOUT_MS,
       maxCaptureBytes: 16 * 1024
@@ -307,6 +316,53 @@ async function resolveVoltaTarget(candidate, environment, run) {
   } catch {
     return null;
   }
+}
+
+function nodeCommandFromShebang(shebang) {
+  if (!shebang.startsWith("#!")) return null;
+  const tokens = shebang.slice(2).trim().split(/\s+/u);
+  if (tokens.length === 1 && path.isAbsolute(tokens[0]) && /^node(?:\.exe)?$/iu.test(path.basename(tokens[0]))) {
+    return tokens[0];
+  }
+  if (tokens.length === 2 && path.isAbsolute(tokens[0]) && path.basename(tokens[0]) === "env" && tokens[1] === "node") {
+    return "node";
+  }
+  return null;
+}
+
+async function resolveNodeRuntime(shebang, environment, run) {
+  const command = nodeCommandFromShebang(shebang);
+  if (!command) return null;
+  for (const candidate of commandCandidates(command, environment)) {
+    try {
+      await access(candidate, fsConstants.X_OK);
+      const resolvedCommand = await realpath(candidate);
+      const launcherFingerprint = await executableFingerprint(resolvedCommand);
+      if (!launcherFingerprint) continue;
+      const probe = await run(candidate, ["-p", "process.execPath"], {
+        env: minimalEnvironment(environment),
+        timeoutMs: PI_PROBE_TIMEOUT_MS,
+        maxCaptureBytes: 16 * 1024
+      });
+      if (probe.exitCode !== 0 || probe.signal || probe.timedOut || probe.stdoutTruncated || probe.stderrTruncated) continue;
+      const selected = String(probe.stdout ?? "").trim();
+      if (!path.isAbsolute(selected) || selected.includes("\n") || selected.includes("\r")) continue;
+      const target = await realpath(selected);
+      await access(target, fsConstants.X_OK);
+      const targetFingerprint = await executableFingerprint(target);
+      if (!targetFingerprint) continue;
+      return {
+        command: path.resolve(candidate),
+        resolvedCommand,
+        launcherFingerprint,
+        target,
+        targetFingerprint
+      };
+    } catch {
+      // Try the next absolute PATH candidate without retaining private diagnostics.
+    }
+  }
+  return null;
 }
 
 function piLaunchFingerprint(value) {
@@ -335,12 +391,9 @@ export async function resolvePiExecutable(command, options = {}) {
       const targetFingerprint = await executableFingerprint(target);
       if (!targetFingerprint) continue;
       const shebang = await firstLine(target);
-      const nodePackage = /^#!.*(?:^|[\s/])(?:env\s+)?node(?:\s|$)/u.test(shebang)
-        ? await findPiPackage(target)
-        : null;
-      if (shebang.startsWith("#!") && !nodePackage) continue;
-      const runtimeFingerprint = nodePackage ? await executableFingerprint(process.execPath) : null;
-      if (nodePackage && !runtimeFingerprint) continue;
+      const nodeRuntime = await resolveNodeRuntime(shebang, environment, run);
+      const nodePackage = nodeRuntime ? await findPiPackage(target) : null;
+      if (shebang.startsWith("#!") && (!nodeRuntime || !nodePackage)) continue;
       const identity = {
         command: path.resolve(candidate),
         resolvedCommand,
@@ -352,8 +405,11 @@ export async function resolvePiExecutable(command, options = {}) {
         packageEntry: nodePackage?.entry ?? null,
         packageGraph: nodePackage?.graph ?? null,
         packageFingerprint: nodePackage?.fingerprint ?? null,
-        runtimeCommand: nodePackage ? process.execPath : null,
-        runtimeFingerprint
+        runtimeCommand: nodeRuntime?.target ?? null,
+        runtimeFingerprint: nodeRuntime?.targetFingerprint ?? null,
+        runtimeLaunchCommand: nodeRuntime?.command ?? null,
+        runtimeResolvedCommand: nodeRuntime?.resolvedCommand ?? null,
+        runtimeLauncherFingerprint: nodeRuntime?.launcherFingerprint ?? null
       };
       return { ...identity, executableFingerprint: piLaunchFingerprint(identity) };
     } catch {
@@ -495,14 +551,16 @@ export async function discoverPiCli(options = {}) {
   let capabilities = {};
   let reason = null;
   let materialized;
-  try {
-    if (run === runProcess || options.materializeExecutable) {
-      try {
-        materialized = await materializeExecutable(identity);
-      } catch {
-        return unavailablePiReadiness("mutated", { command: identity.command });
-      }
+  if (run === runProcess || options.materializeExecutable) {
+    try {
+      materialized = await materializeExecutable(identity);
+    } catch {
+      return unavailablePiReadiness("mutated", { command: identity.command });
     }
+  }
+  let readiness;
+  let cleanupFailed = false;
+  try {
     const probeIdentity = materialized?.identity ?? identity;
     isolated = await createIsolatedEnvironment(environment, {
       prefix: "relaypact-pi-doctor-",
@@ -535,9 +593,10 @@ export async function discoverPiCli(options = {}) {
       else if (helpProbe.exitCode !== 0 || helpProbe.signal) reason = "unsupported";
       else {
         const supported = Object.fromEntries(REQUIRED_PI_FLAGS.map((flag) => [flag, helpHasOption(helpProbe.output, flag)]));
+        const modeLine = helpOptionLine(helpProbe.output, "--mode");
         capabilities = {
           nonInteractive: supported["--print"] === true,
-          structuredOutput: supported["--mode"] === true && /\btext\b/u.test(helpProbe.output) && /\bjson\b/u.test(helpProbe.output),
+          structuredOutput: supported["--mode"] === true && /\btext\b/u.test(modeLine) && /\bjson\b/u.test(modeLine),
           toolSelection: supported["--tools"] === true,
           timeout: true,
           noSession: supported["--no-session"] === true,
@@ -558,7 +617,7 @@ export async function discoverPiCli(options = {}) {
     const executableStable = samePiExecutableIdentity(identity, verifiedIdentity);
     if (!executableStable) reason = "mutated";
     if (reason) {
-      return unavailablePiReadiness(reason, {
+      readiness = unavailablePiReadiness(reason, {
         command: identity.command,
         version,
         versionCompatible,
@@ -567,22 +626,25 @@ export async function discoverPiCli(options = {}) {
         executableFingerprint: executableStable ? identity.executableFingerprint : null,
         capabilities
       });
+    } else {
+      readiness = {
+        state: "ready",
+        reason: null,
+        command: identity.command,
+        version,
+        versionCompatible: true,
+        executableStable: true,
+        settingsIsolated: true,
+        executableFingerprint: identity.executableFingerprint,
+        capabilities
+      };
     }
-    return {
-      state: "ready",
-      reason: null,
-      command: identity.command,
-      version,
-      versionCompatible: true,
-      executableStable: true,
-      settingsIsolated: true,
-      executableFingerprint: identity.executableFingerprint,
-      capabilities
-    };
   } finally {
-    await isolated?.cleanup().catch(() => {});
-    await materialized?.cleanup().catch(() => {});
+    cleanupFailed = await cleanupPiResources(isolated, materialized);
   }
+  return cleanupFailed
+    ? unavailablePiReadiness("cleanup_failed", { command: identity.command })
+    : readiness;
 }
 
 function addSensitiveLiteral(value, output) {
@@ -978,11 +1040,9 @@ export async function runExecutor(envelope, options) {
       output: ""
     });
   } finally {
-    const [isolationCleanup] = await Promise.allSettled([
-      isolated?.cleanup(),
-      executableSnapshot?.cleanup()
-    ]);
-    if (isolationCleanup.status === "rejected") throw isolationCleanup.reason;
+    if (await cleanupPiResources(isolated, executableSnapshot)) {
+      throw new Error("Pi temporary state cleanup failed.");
+    }
   }
 
   if (!credentialEvidenceTrusted) {

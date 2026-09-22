@@ -13,7 +13,9 @@ does not load it.
 experimental Pi executor, binds and snapshots its complete launch identity,
 including its resolved runtime dependency closure, and verifies Pi 0.84.0 or
 later under semantic-version precedence plus the exact noninteractive option
-tokens used by the adapter, including conditional `--thinking`. Relative path executors are
+tokens and associated mode values used by the adapter, including conditional
+`--thinking`. The Node runtime comes from the selected entry shebang and
+toolchain. Relative path executors are
 rejected. Its
 version/help probes run with disposable HOME, settings, session and working
 directories, make no model request, and return only sanitized readiness

@@ -454,7 +454,7 @@ test("architecture validation rejects eager Pi loading in default doctor", async
     .replace('const { discoverPiCli, MINIMUM_PI_VERSION } = await import("../../executor-pi/src/executor.mjs");', "")
     .replace(
       'import { MINIMUM_CODEX_VERSION, parseCodexVersion } from "../../executor-codex/src/compatibility.mjs";',
-      'import { MINIMUM_CODEX_VERSION, parseCodexVersion } from "../../executor-codex/src/compatibility.mjs";\nimport { discoverPiCli, MINIMUM_PI_VERSION } from "../../executor-pi/src/executor.mjs";'
+      'import { MINIMUM_CODEX_VERSION, parseCodexVersion } from "../../executor-codex/src/compatibility.mjs";\nimport {\n  discoverPiCli,\n  MINIMUM_PI_VERSION\n} from "../../executor-pi/src/executor.mjs";'
     );
   await writeFile(doctorPath, doctor);
   const errors = await validateArchitecture(root);

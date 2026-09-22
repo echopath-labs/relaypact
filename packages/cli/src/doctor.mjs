@@ -259,7 +259,8 @@ function piReasonDetail(reason, minimumVersion) {
     unsupported_version: `Pi ${minimumVersion} or later is required.`,
     unsupported_capabilities: "The selected Pi executable is missing capabilities required by the adapter.",
     settings_write_attempt: "Pi settings isolation could not be verified because startup reported a settings write failure.",
-    mutated: "The selected Pi executable changed during readiness verification."
+    mutated: "The selected Pi executable changed during readiness verification.",
+    cleanup_failed: "Pi readiness temporary state could not be removed."
   };
   return details[reason] ?? "Pi readiness could not be verified.";
 }

@@ -162,8 +162,9 @@ selects and invokes the route.
 
 Selected-route Pi doctor requires Pi 0.84.0 or later, binds and snapshots the
 complete selected launch identity, including its Node package, resolved runtime
-dependency closure, and Node runtime when applicable, and verifies exact noninteractive option
-tokens used by the adapter, including conditional `--thinking`. Version
+dependency closure, and the Node runtime selected by its entry shebang and
+toolchain. It verifies exact noninteractive option tokens and their associated
+mode values, including conditional `--thinking`. Version
 compatibility uses semantic-version precedence, so a prerelease below 0.84.0
 does not satisfy the minimum. An explicit `--executor` path must be
 absolute. It runs only `--version` and `--help` from disposable HOME, settings,

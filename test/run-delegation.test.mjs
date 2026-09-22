@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, rm, truncate, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, realpath, rm, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -48,7 +48,7 @@ const readyPiHelp = [
   "--print", "--mode text json", "--no-session", "--no-extensions", "--no-skills",
   "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve",
   "--tools", "--provider", "--model", "--thinking"
-].join(" ");
+].join("\n");
 const piIdentity = (fingerprint = "a".repeat(64)) => ({
   command: "/fixture/pi",
   resolvedCommand: "/fixture/pi-runtime",
@@ -117,6 +117,9 @@ test("Pi doctor discovery blocks unsupported, missing, and mutated executables",
   const missingMode = piDoctorFixture({ help: piProbeResult(readyPiHelp.replace("--mode text json", "text json")) });
   assert.equal((await discoverPiCli({ ...missingMode, executorCommand: "/fixture/pi" })).reason, "unsupported_capabilities");
 
+  const unrelatedText = piDoctorFixture({ help: piProbeResult(`${readyPiHelp.replace("--mode text json", "--mode json")}\n--system-prompt <text>`) });
+  assert.equal((await discoverPiCli({ ...unrelatedText, executorCommand: "/fixture/pi" })).reason, "unsupported_capabilities");
+
   const missing = piDoctorFixture({ identities: [] });
   assert.equal((await discoverPiCli({ ...missing, executorCommand: "/fixture/pi" })).reason, "missing");
 
@@ -139,6 +142,21 @@ test("Pi doctor converts snapshot failures into sanitized blocked readiness", as
   assert.equal(readiness.command, "/fixture/pi");
   assert.equal(JSON.stringify(readiness).includes(privatePath), false);
   assert.equal(fixture.calls.length, 0);
+});
+
+test("Pi doctor blocks when either disposable state cleanup fails", async () => {
+  const fixture = piDoctorFixture();
+  const readiness = await discoverPiCli({
+    ...fixture,
+    executorCommand: "/fixture/pi",
+    materializeExecutable: async (identity) => ({
+      identity,
+      cleanup: async () => { throw new Error("snapshot cleanup failed"); }
+    })
+  });
+  assert.equal(readiness.state, "blocked");
+  assert.equal(readiness.reason, "cleanup_failed");
+  assert.equal(fixture.calls.length, 2);
 });
 
 test("Pi executable resolution rejects working-directory-relative launch paths", async () => {
@@ -240,6 +258,44 @@ test("Pi snapshot includes dependencies hoisted beside the selected package", as
   const after = await resolvePiExecutable(entry);
   assert.notEqual(after?.executableFingerprint, before.executableFingerprint);
 
+  const { stdout } = await execFileAsync(snapshot.identity.launchCommand, [
+    ...snapshot.identity.launchPrefix,
+    "--version"
+  ]);
+  assert.equal(stdout, "0.84.0\n");
+});
+
+test("Pi identity snapshots the Node runtime selected by the entry shebang", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const bin = path.join(root, "bin");
+  const packageRoot = path.join(root, "pi-package");
+  await mkdir(bin);
+  await mkdir(packageRoot);
+  const selectedNode = path.join(bin, "selected-node");
+  await copyFile(process.execPath, selectedNode);
+  await chmod(selectedNode, 0o700);
+  const nodeLauncher = path.join(bin, "node");
+  await writeFile(nodeLauncher, `#!/bin/sh\nexec "${selectedNode}" "$@"\n`);
+  await chmod(nodeLauncher, 0o700);
+  const entry = path.join(packageRoot, "pi.mjs");
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
+    name: "fixture-pi-runtime",
+    private: true,
+    type: "module",
+    bin: { pi: "pi.mjs" }
+  }));
+  await writeFile(entry, [
+    "#!/usr/bin/env node",
+    'if (process.argv.includes("--version")) process.stdout.write("0.84.0\\n");'
+  ].join("\n"));
+  await chmod(entry, 0o700);
+
+  const identity = await resolvePiExecutable(entry, { environment: { PATH: bin } });
+  assert.equal(identity?.runtimeCommand, await realpath(selectedNode));
+  assert.notEqual(identity.runtimeCommand, await realpath(process.execPath));
+  const snapshot = await materializePiExecutable(identity);
+  context.after(() => snapshot.cleanup());
   const { stdout } = await execFileAsync(snapshot.identity.launchCommand, [
     ...snapshot.identity.launchPrefix,
     "--version"
