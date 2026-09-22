@@ -812,7 +812,7 @@ function buildCursorArgs(envelope, workingDirectory, options) {
     "--sandbox", "enabled",
     "--workspace", workingDirectory
   ];
-  if (options.readOnly === true) args.push("--mode", "plan");
+  if (options.readOnly === true || envelope.scope.allowedPaths.length === 0) args.push("--mode", "plan");
   else args.push("--force");
   if (options.resumeSessionId) args.push(`--resume=${options.resumeSessionId}`);
   args.push(buildPrompt(envelope, options.correctionPrompt));

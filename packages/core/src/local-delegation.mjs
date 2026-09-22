@@ -2,6 +2,7 @@ import { constants as fsConstants } from "node:fs";
 import { open } from "node:fs/promises";
 import path from "node:path";
 import { filesystemEvidenceMaxBytes, validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
+import { DelegationError } from "../../contracts/src/errors.mjs";
 import { evaluatePathScope } from "../../contracts/src/path-policy.mjs";
 import { createIsolatedEnvironment } from "./environment.mjs";
 import { assertRepositoryLinks, assertFilesystemSnapshot, changedFilesystemPaths, snapshotFilesystem, snapshotGitControls } from "./filesystem-evidence.mjs";
@@ -173,6 +174,12 @@ async function collectPostflight(repository, before, pathBaseline, gitControlsBe
 export async function runLocalDelegation(input, options = {}) {
   if (typeof options.execute !== "function") throw new TypeError("A local executor callback is required.");
   const envelope = validateTaskEnvelope(input);
+  if (envelope.scope.allowedPaths.length === 0 && envelope.validation.length > 0) {
+    throw new DelegationError(
+      "zero_write_validation_unsupported",
+      "Direct-workspace zero-write tasks cannot run repository validation commands. Use an external read-only or disposable validation environment and leave validation empty."
+    );
+  }
   const maxBytes = filesystemEvidenceMaxBytes(envelope);
   const validationEnv = Object.freeze(Object.fromEntries(Object.entries(options.validationEnv ?? {})));
   const validationSensitiveValues = Object.values(validationEnv)

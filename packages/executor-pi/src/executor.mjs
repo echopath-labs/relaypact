@@ -317,6 +317,9 @@ function buildPrompt(envelope) {
     "You are the Delegated Executor. Execute only within the following envelope.",
     "Stop with status blocked if information or authority is missing.",
     "Do not commit, push, widen scope, or expose credentials.",
+    envelope.scope.allowedPaths.length === 0
+      ? "This task has zero write authority. Do not change files; write-capable tools are unavailable."
+      : "Change only the explicitly allowed output paths.",
     "Your final response must be exactly one JSON object with status (completed|blocked|failed), a string summary, and optional residualRisks.",
     "Do not add prose, Markdown fences, or additional JSON objects. Put any explanation inside summary or residualRisks.",
     JSON.stringify(envelope, null, 2)
@@ -324,6 +327,9 @@ function buildPrompt(envelope) {
 }
 
 function buildPiArgs(envelope, route) {
+  const tools = envelope.scope.allowedPaths.length === 0
+    ? "read,grep,find,ls"
+    : "read,bash,edit,write,grep,find,ls";
   const args = [
     "--print",
     // Pi text mode emits only the final assistant response. JSON mode emits
@@ -336,7 +342,7 @@ function buildPiArgs(envelope, route) {
     "--no-themes",
     "--no-context-files",
     "--no-approve",
-    "--tools", "read,bash,edit,write,grep,find,ls"
+    "--tools", tools
   ];
   args.push("--provider", route.provider, "--model", route.model);
   if (route.reasoning) args.push("--thinking", route.reasoning);

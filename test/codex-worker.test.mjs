@@ -118,6 +118,26 @@ test("Codex worker starts without a shell and captures structured completion", a
   );
 });
 
+test("Codex zero write authority uses a read-only sandbox and report-only completion", async () => {
+  const { capsule, envelope } = await fixture();
+  const readOnlyEnvelope = {
+    ...envelope,
+    scope: { ...envelope.scope, allowedPaths: [] }
+  };
+  const invocation = buildCodexExecInvocation({
+    envelope: readOnlyEnvelope,
+    profile,
+    capsule,
+    resultPath: path.join(capsule.controlRoot, "read-only-result.json"),
+    correction: null
+  });
+  assert.equal(invocation.args[invocation.args.indexOf("--sandbox") + 1], "read-only");
+  assert.doesNotMatch(invocation.input, /expected outcome is actually present in the capsule/u);
+  assert.match(invocation.input, /zero write authority/u);
+  assert.match(invocation.input, /expected outcome is fully provided in the structured result/u);
+  assert.match(invocation.input, /"changedFiles":\[\]/u);
+});
+
 test("direct provider home is private, deterministic, and does not inherit global auth", async () => {
   const { capsule } = await fixture();
   const selected = directProfile();
@@ -470,6 +490,22 @@ test("correction invocation resumes the exact delegated thread", async () => {
   assert.ok(invocation.args.includes("worker-thread-1"));
   assert.equal(invocation.args.includes("--profile"), false);
   assert.match(invocation.input, /Correction request 1/);
+});
+
+test("zero write correction preserves the native read-only sandbox", async () => {
+  const { capsule, envelope } = await fixture();
+  const invocation = buildCodexExecInvocation({
+    envelope: { ...envelope, scope: { ...envelope.scope, allowedPaths: [] } },
+    profile,
+    capsule,
+    resultPath: path.join(capsule.controlRoot, "read-only-correction.json"),
+    correction: { threadId: "worker-thread-read-only", sequence: 1, prompt: "Clarify the report." }
+  });
+  const sandboxOverride = invocation.args.indexOf('sandbox_mode="read-only"');
+  assert.ok(sandboxOverride > 0);
+  assert.equal(invocation.args[sandboxOverride - 1], "--config");
+  assert.ok(sandboxOverride < invocation.args.indexOf("worker-thread-read-only"));
+  assert.equal(invocation.args.includes("workspace-write"), false);
 });
 
 test("correction execution measures the exact resumed prompt without retaining it in metrics", async () => {

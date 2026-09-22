@@ -206,6 +206,7 @@ async function permissionSettings(envelope, readOnly) {
 
 export async function runExecutor(envelope, options = {}) {
   options = { ...options };
+  const readOnly = options.readOnly === true || envelope.scope.allowedPaths.length === 0;
   let model;
   try { model = workBuddyModelId(options.model); }
   catch (error) {
@@ -225,15 +226,15 @@ export async function runExecutor(envelope, options = {}) {
     await inspectWorkBuddyModel(identity, model, options);
     const workingDirectory = await realpath(options.workingDirectory);
     const nativeEnvelope = { ...envelope, repository: { ...envelope.repository, root: await realpath(envelope.repository.root) } };
-    const settings = await permissionSettings(nativeEnvelope, options.readOnly === true);
+    const settings = await permissionSettings(nativeEnvelope, readOnly);
     temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-workbuddy-runtime-"));
     const env = nativeEnvironment(identity, temporaryRoot);
-    const tools = options.readOnly === true ? "Read" : "Read,Write";
+    const tools = readOnly ? "Read" : "Read,Write";
     const prompt = [
       "You are a bounded delegated executor using WorkBuddy's native harness. Follow this Host agreement.",
       "Read only context needed for the objective; change only allowed paths. Do not access credentials, publish, commit, delegate, or widen authority.",
       "Commands and external tools are unavailable. Host runs validation independently. If required authority/context is absent, report blocked.",
-      options.readOnly === true ? "This invocation is read-only. Do not change files." : "Only Read and Write are available for this bounded file task.",
+      readOnly ? "This invocation is read-only. Do not change files." : "Only Read and Write are available for this bounded file task.",
       "End with exactly one compact JSON object on the last line: {\"status\":\"completed|blocked|failed\",\"summary\":\"brief result\"}. No markdown fence.",
       JSON.stringify(nativeEnvelope)
     ].join("\n\n");

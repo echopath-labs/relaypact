@@ -347,17 +347,24 @@ test("Host rejects a claimed success when independent validation or path scope f
   assert.deepEqual(breach.scope.breaches, ["private.txt"]);
 });
 
-test("read-only prohibits file changes even within the original writable scope", async (t) => {
+test("read-only zero write authority rejects every file change", async (t) => {
   const options = await installation(t);
   const root = await createGitRepository();
   t.after(() => rm(root, { recursive: true, force: true }));
-  const envelope = makeEnvelope(root);
-  const result = await runDelegation(envelope, { ...options, readOnly: true, runProcess: async (command, args) => {
+  const envelope = makeEnvelope(root, {
+    scope: { allowedPaths: [], readablePaths: ["README.md"] },
+    validation: []
+  });
+  const result = await runDelegation(envelope, { ...options, runProcess: async (command, args) => {
     assert.equal(args[args.indexOf("--tools") + 1], "Read");
+    const settings = JSON.parse(args[args.indexOf("--settings") + 1]).permissions;
+    assert.deepEqual(settings.allow.filter((rule) => rule.startsWith("Write(")), []);
+    assert(settings.deny.includes(`Write(/${await realpath(root)}/**)`));
     await writeFile(path.join(root, "allowed.txt"), "unexpected");
     return processResult();
   } });
   assert.equal(result.status, "rejected");
+  assert.deepEqual(result.scope.breaches, ["allowed.txt"]);
   assert(!envelope.scope.forbiddenPaths.includes("**"));
 });
 
@@ -446,8 +453,12 @@ test("read-only rejects an acknowledged dirty baseline before native execution",
   const root = await createGitRepository();
   t.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(path.join(root, "allowed.txt"), "existing user work");
-  const envelope = makeEnvelope(root, { repository: { dirtyTree: { allow: true, acknowledgedPaths: ["allowed.txt"] } } });
-  await assert.rejects(runDelegation(envelope, { ...options, readOnly: true,
+  const envelope = makeEnvelope(root, {
+    repository: { dirtyTree: { allow: true, acknowledgedPaths: ["allowed.txt"] } },
+    scope: { allowedPaths: [], readablePaths: ["README.md"] },
+    validation: []
+  });
+  await assert.rejects(runDelegation(envelope, { ...options,
     runProcess: async () => assert.fail("dirty baseline must not launch the harness") }), { code: "dirty_tree" });
   assert.equal(envelope.repository.dirtyTree.allow, true);
   assert.equal(await readFile(path.join(root, "allowed.txt"), "utf8"), "existing user work");

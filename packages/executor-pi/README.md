@@ -18,6 +18,11 @@ wrappers are rejected as malformed. The adapter does not guess which embedded
 result to use. Output bounds, independent validation, and Host acceptance still
 apply.
 
+An envelope with `allowedPaths: []` gives Pi only `read`, `grep`, `find`, and
+`ls`; RelayPact omits `bash`, `edit`, and `write` before launch and tells the
+executor that the task has zero write authority. Postflight scope evidence still
+rejects any observed mutation.
+
 The adapter gives Pi a disposable HOME and temporary directory and projects a
 task-scoped `PI_CODING_AGENT_DIR` containing only the selected provider's
 authentication, custom model definition when needed, and safe defaults. It

@@ -127,6 +127,15 @@ switch (scenario) {
     result(bound ? "completed" : "failed", bound ? "Resolved route was host-bound." : "Resolved route was not host-bound.");
     break;
   }
+  case "zero-write-tools": {
+    const tools = process.argv[process.argv.indexOf("--tools") + 1];
+    const prompt = process.argv.at(-1);
+    const bounded = tools === "read,grep,find,ls" &&
+      !tools.includes("bash") && !tools.includes("edit") && !tools.includes("write") &&
+      prompt.includes("zero write authority") && prompt.includes("write-capable tools are unavailable");
+    result(bounded ? "completed" : "failed", bounded ? "Zero write authority preserved." : "Write-capable Pi tools were exposed.");
+    break;
+  }
   case "blocked":
     result("blocked", "A host decision is required.", ["Authority is unresolved."]);
     break;

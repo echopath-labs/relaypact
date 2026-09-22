@@ -29,6 +29,10 @@ node <skill-directory>/scripts/relaypact.mjs run-codex
   --host-instance <coordinating-instance-id>
 ```
 
+An envelope with `allowedPaths: []` selects Codex's native read-only sandbox,
+permits report-only completion with `changedFiles: []`, and preserves that
+sandbox when the same delegated session is corrected.
+
 Use the returned task root for a same-context correction:
 
 ```text
@@ -62,6 +66,13 @@ commits, pushes, tags, publishes, or deploys.
 Execution can write the target workspace immediately unless run in read-only
 mode. Acceptance does not apply a separate patch; rejection does not revert the
 workspace.
+
+An envelope with `allowedPaths: []` forces Cursor read-only plan mode even when
+`--read-only` is omitted. RelayPact never grants `--force` to zero write authority,
+and persistent lifecycle state records that derived read-only mode for correction.
+Set `validation: []` for that direct-workspace task. RelayPact refuses repository
+validation commands before launch because they may write caches or coverage;
+run checks in an external read-only or disposable environment.
 
 For the explicitly selected experimental Cursor route, the one-shot form stays
 pending-only and can be read-only. `--executor` is optional when the compatible
@@ -115,6 +126,10 @@ For the explicitly selected experimental Pi route, use the adapter documented
 by the installed version; do not route Codex or Cursor failures to Pi. This
 route can write the target workspace and returns evidence for Host review;
 it does not provide the persistent correction/terminal commands above.
+When `allowedPaths` is empty, RelayPact omits Pi's `bash`, `edit`, and `write`
+tools before launch and tells the executor that the task has zero write authority.
+Set `validation: []` and run checks in an external read-only or disposable
+environment; repository validation commands are refused before Pi starts.
 
 ```text
 node <skill-directory>/scripts/relaypact.mjs run-pi

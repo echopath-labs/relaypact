@@ -16,7 +16,8 @@ export async function runDelegation(input, options = {}) {
   }
   const bounded = structuredClone(validateTaskEnvelope(input));
   const nativeScope = structuredClone(bounded.scope);
-  if (options.readOnly === true) {
+  options.readOnly = options.readOnly === true || bounded.scope.allowedPaths.length === 0;
+  if (options.readOnly) {
     bounded.scope.forbiddenPaths = [...new Set([...bounded.scope.forbiddenPaths, "**"])];
     bounded.repository.dirtyTree = { allow: false, acknowledgedPaths: [] };
   }

@@ -134,7 +134,8 @@ publish, release, or deploy.
 
 The Agent should refuse a dirty target unless every pre-existing path is
 explicitly acknowledged. Read-only paths belong in `readablePaths`, are
-omitted from `allowedPaths`, and must not match `forbiddenPaths`.
+omitted from `allowedPaths`, and must not match `forbiddenPaths`. A task with no
+output authority uses `allowedPaths: []` rather than a placeholder writable path.
 
 ## Minute 4: review the candidate
 

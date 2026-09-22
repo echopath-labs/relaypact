@@ -18,6 +18,11 @@ The adapter never silently changes provider or model. An unavailable executable,
 profile, model, or required router produces a blocked or failed result for host
 review.
 
+An envelope with `allowedPaths: []` selects Codex's native read-only sandbox,
+permits report-only completion with `changedFiles: []`, and keeps the same
+read-only override for same-session correction. Host mutation evidence remains
+authoritative.
+
 ## Named profiles
 
 Profiles use `examples/codex-worker-profiles.json`. They are host-owned and are

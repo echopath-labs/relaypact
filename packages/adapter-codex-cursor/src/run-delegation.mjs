@@ -45,8 +45,14 @@ function snapshotContext(options) {
   return { environment, validationEnvironment, validationEnv };
 }
 
+function effectiveReadOnly(envelope, options) {
+  return options.readOnly === true ||
+    (Array.isArray(envelope?.scope?.allowedPaths) && envelope.scope.allowedPaths.length === 0);
+}
+
 export async function runDelegation(input, options = {}) {
   options = { ...options, ...snapshotContext(options) };
+  options.readOnly = effectiveReadOnly(input, options);
   if ((options.stateRoot || options.hostInstanceId) && !(options.stateRoot && options.hostInstanceId)) {
     throw new TypeError("Persistent Cursor execution requires both stateRoot and hostInstanceId.");
   }
@@ -57,7 +63,7 @@ export async function runDelegation(input, options = {}) {
     stateRoot: options.stateRoot,
     hostInstanceId: options.hostInstanceId,
     executionContext: snapshotContext(options),
-    executionMode: options.readOnly === true ? "read_only" : "write",
+    executionMode: options.readOnly ? "read_only" : "write",
     ...ROUTE
   });
   const recorded = await executeDirectDelegation(prepared, async (active) => {

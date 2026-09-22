@@ -228,9 +228,38 @@ test("Cursor Auto model observation remains a harness-managed selector alias", a
 
 test("Cursor read-only route uses plan mode and does not grant force", async () => {
   const root = await createGitRepository();
-  const result = await execute(root, "read-only", { readOnly: true });
+  const envelope = makeEnvelope(root, {
+    taskId: "cursor-read-only",
+    scope: { allowedPaths: [], readablePaths: ["README.md"] },
+    validation: []
+  });
+  let launchArgs;
+  const result = await runDelegation(envelope, {
+    readiness: {
+      state: "ready",
+      command: "cursor-agent",
+      version: "2026.08.31-test",
+      authenticated: true,
+      structuredOutput: true,
+      capabilities: { boundedWorkspace: true, sandbox: true, force: true, resume: true }
+    },
+    async runProcess(_command, args) {
+      launchArgs = args;
+      return {
+        exitCode: 0, signal: null, timedOut: false, cancelled: false,
+        stdoutTruncated: false, stderrTruncated: false,
+        stdout: `${JSON.stringify({
+          type: "result", subtype: "success", is_error: false,
+          result: JSON.stringify({ status: "completed", summary: "read-only review complete" })
+        })}\n`,
+        stderr: ""
+      };
+    }
+  });
   assert.equal(result.status, "completed");
   assert.deepEqual(result.changedPaths, []);
+  assert.deepEqual(launchArgs.slice(launchArgs.indexOf("--mode"), launchArgs.indexOf("--mode") + 2), ["--mode", "plan"]);
+  assert(!launchArgs.includes("--force"));
 });
 
 test("Cursor out-of-scope edits are independently rejected", async () => {
@@ -772,9 +801,12 @@ test("persistent Cursor correction preserves the original read-only authority", 
   const root = await createGitRepository();
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-read-only-state-"));
   try {
-    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-read-only" }), {
+    const first = await runDelegation(makeEnvelope(root, {
+      taskId: "cursor-read-only",
+      scope: { allowedPaths: [], readablePaths: ["README.md"] },
+      validation: []
+    }), {
       executorCommand: fakeCursor,
-      readOnly: true,
       stateRoot,
       hostInstanceId: "cursor-host-1"
     });
