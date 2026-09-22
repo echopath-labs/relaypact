@@ -76,7 +76,8 @@ Show the user or host:
 - any decision that cannot be safely inferred.
 
 For every read-only file, keep it in `readablePaths`, omit it from
-`allowedPaths`, and ensure it does not match `forbiddenPaths`. Do not start the
+`allowedPaths`, and ensure it does not match `forbiddenPaths`. Use
+`allowedPaths: []` when the task grants no write authority. Do not start the
 executor with contradictory readable and forbidden authority.
 
 Do not start the executor while material scope, validation, route, credential

@@ -19,13 +19,17 @@ The executor writes only inside a sanitized capsule by default. It must return
 `packages/contracts/schemas/codex-worker-result.schema.json`, and its changed-file and validation
 claims remain separate from host-observed Git and command evidence. Corrections
 use `codex exec resume` with the original thread; they never select `--last`.
+With `allowedPaths: []`, initial execution uses the native read-only sandbox,
+the structured report may complete with `changedFiles: []`, and correction
+explicitly reapplies the same read-only sandbox override.
 
 A Codex worker receives a generated or selected task-scoped configuration
 rather than the user's complete global `config.toml`. Native authentication is
 projected into private task state without unrelated global capabilities. A
 custom named route uses only its credential-free selected profile snapshot. A
 direct-provider configuration binds the provider, base URL, `responses` wire API, credential
-environment-variable name, model, and workspace-write sandbox. Its bytes and
+environment-variable name, model, and default workspace-write sandbox. A zero-write
+envelope overrides that mode for both initial execution and correction. Its bytes and
 the exact disposable capsule project trust are materialized before first use.
 Its bytes and permissions are verified again before correction resume; drift stops execution
 instead of selecting another route. Worker HOME and temporary directories are

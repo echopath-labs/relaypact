@@ -6,6 +6,13 @@ Skill and is not a prerequisite for Codex-to-Codex execution.
 This adapter translates the neutral delegation contract into a non-interactive
 Pi invocation and normalizes the outcome for Codex review.
 
+Zero write authority is translated before launch: when `allowedPaths` is empty,
+Pi receives only `read`, `grep`, `find`, and `ls`, with no `bash`, `edit`, or
+`write` tools.
+The same zero-write envelope must use `validation: []`: direct repository
+validation commands are refused before Pi starts because they can write caches
+or coverage. Run those checks in an external read-only or disposable environment.
+
 The invocation uses Pi's text print mode to collect only the final assistant
 response, which must still contain the required JSON result. Progress events
 are not the delivery evidence. The existing stdout/stderr capture bounds,

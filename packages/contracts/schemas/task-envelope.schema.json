@@ -53,7 +53,6 @@
       "properties": {
         "allowedPaths": {
           "type": "array",
-          "minItems": 1,
           "maxItems": 10000,
           "items": {"$ref": "#/$defs/authorityPath"},
           "uniqueItems": true

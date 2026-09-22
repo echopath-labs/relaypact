@@ -226,7 +226,7 @@ export function validateTaskEnvelope(input) {
 
   const scope = requireObject(envelope.scope, "scope");
   rejectUnknown(scope, new Set(["allowedPaths", "forbiddenPaths", "readablePaths", "discoverablePaths"]), "scope");
-  requireStringArray(scope.allowedPaths, "scope.allowedPaths", { min: 1 });
+  requireStringArray(scope.allowedPaths, "scope.allowedPaths");
   requireStringArray(scope.forbiddenPaths, "scope.forbiddenPaths");
   if (scope.readablePaths !== undefined) requireStringArray(scope.readablePaths, "scope.readablePaths");
   [...scope.allowedPaths, ...scope.forbiddenPaths, ...(scope.readablePaths ?? [])].forEach((item) => normalizeRelativePath(item, "scope pattern"));

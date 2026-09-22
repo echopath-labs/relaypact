@@ -34,6 +34,7 @@ Inherited `PATH` is therefore not consulted before protected task or session dat
 reaches Cursor, while Cursor retains the bounded Host PATH for delegated tool
 execution. The signed fingerprint binds the bundle, launcher, validated
 interpreter, runtime, selected runtime flags, and direct-launch profile.
+An empty `allowedPaths` array forces Cursor plan mode and never grants `--force`.
 Correction verifies that complete launch identity and preserves the original
 read-only or write authority before the handle can be reused. Identity mismatch
 is retained as a bounded machine-readable failure code through Host review.

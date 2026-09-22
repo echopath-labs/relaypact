@@ -124,7 +124,8 @@ worker 前展示 host/executor 身份、精确可读与可写路径、验证、�
 
 如果目标仓库 dirty，除非每个既有路径都被明确确认，否则 Agent 应拒绝继续。只读
 路径属于 `readablePaths`，不属于 `allowedPaths`，也不能匹配
-`forbiddenPaths`。
+`forbiddenPaths`。完全没有输出权限的任务使用 `allowedPaths: []`，不要虚构一个
+可写占位路径。
 
 ## 第 4 分钟：审查 candidate
 

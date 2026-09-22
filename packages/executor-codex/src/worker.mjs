@@ -331,11 +331,12 @@ export async function prepareTaskCodexHome(capsule, profile, options = {}) {
 }
 
 function promptFor(envelope, correction) {
+  const readOnly = envelope.scope.allowedPaths.length === 0;
   const authority = [
     `Task ID: ${envelope.taskId}`,
     `Objective: ${envelope.objective}`,
     `Expected outcome: ${envelope.expectedOutcome}`,
-    `Allowed output paths: ${envelope.scope.allowedPaths.join(", ")}`,
+    `Allowed output paths: ${envelope.scope.allowedPaths.join(", ") || "none"}`,
     `Forbidden paths: ${envelope.scope.forbiddenPaths.join(", ") || "none"}`,
     `Instructions: ${envelope.instructions.join(" | ")}`,
     `Constraints: ${envelope.constraints.join(" | ") || "none"}`,
@@ -344,7 +345,10 @@ function promptFor(envelope, correction) {
     "First inspect the declared capsule context, use available tools to perform the engineering task, and run useful checks. The structured JSON is the final report, not a substitute for doing the task.",
     "The executor-visible task envelope uses a stable virtual repository root for deterministic, privacy-safe identity. Your actual current working directory is the capsule; resolve task paths relative to it.",
     "When .relaypact/context-manifest.json is present, use it only to understand selected context and provenance; never edit task controls under .relaypact.",
-    "Do not report completed unless the expected outcome is actually present in the capsule. If required context or tool execution is unavailable, report blocked with non-empty blocking.code and blocking.message.",
+    readOnly
+      ? "This task has zero write authority. Do not modify the capsule. Report completed when the expected outcome is fully provided in the structured result, with changedFiles set to the empty array."
+      : "Do not report completed unless the expected outcome is actually present in the capsule.",
+    "If required context or tool execution is unavailable, report blocked with non-empty blocking.code and blocking.message.",
     "When concrete missing task context is the blocker, use blocking.code context_gap and identify only the missing repository-relative dependency or information in blocking.message; do not request self-expansion.",
     "Return only the structured result required by the supplied output schema. Execution completion remains pending host review.",
     "Use exactly these top-level result keys: schemaVersion, taskId, status, summary, changedFiles, validations, residualRisks, blocking.",
@@ -356,7 +360,7 @@ function promptFor(envelope, correction) {
       taskId: envelope.taskId,
       status: "completed",
       summary: "brief summary",
-      changedFiles: ["relative/path"],
+      changedFiles: readOnly ? [] : ["relative/path"],
       validations: [{ id: "validation-id", status: "passed", summary: "brief summary" }],
       residualRisks: [],
       blocking: null
@@ -375,15 +379,19 @@ function profileArgs(profile) {
 }
 
 export function buildCodexExecInvocation({ envelope, profile, capsule, resultPath, correction }) {
+  const readOnly = envelope.scope.allowedPaths.length === 0;
+  const sandbox = readOnly ? "read-only" : "workspace-write";
   const common = [
     "--json",
     "--output-schema", capsule.resultSchemaPath,
     "--output-last-message", resultPath,
     ...profileArgs(profile)
   ];
+  const resumeCommon = common.filter((item, index) => item !== "--profile" && common[index - 1] !== "--profile");
+  if (readOnly) resumeCommon.push("--config", 'sandbox_mode="read-only"');
   const args = correction
-    ? ["exec", "resume", ...common.filter((item, index) => item !== "--profile" && common[index - 1] !== "--profile"), correction.threadId, "-"]
-    : ["exec", ...common, "--sandbox", "workspace-write", "--cd", capsule.capsuleRoot, "-"];
+    ? ["exec", "resume", ...resumeCommon, correction.threadId, "-"]
+    : ["exec", ...common, "--sandbox", sandbox, "--cd", capsule.capsuleRoot, "-"];
   return { command: profile.codexCommand, args, input: promptFor(envelope, correction) };
 }
 

@@ -134,6 +134,7 @@ test("public JSON schemas are parseable and expose strict context contracts", as
   assert.equal(taskSchema.additionalProperties, false);
   assert.equal(taskSchema.properties.contextPlanning.additionalProperties, false);
   assert.equal(taskSchema.properties.contextPlanning.properties.strategy.const, "dependency-closure");
+  assert.equal(taskSchema.properties.scope.properties.allowedPaths.minItems, undefined);
   assert.equal(taskSchema.$defs.readiness.properties.argv.items.$ref, "#/$defs/text");
   assert.equal(taskSchema.$defs.readiness.properties.argv.prefixItems.length, 1);
   assert.equal(manifestSchema.$schema, "https://json-schema.org/draft/2020-12/schema");
@@ -211,6 +212,12 @@ function agreement(envelope, expected, label) {
   assert.equal(schemaValid, expected, `${label}: schema ${JSON.stringify(schemaAccepts.errors)}`);
   assert.equal(runtimeValid, expected, `${label}: runtime`);
 }
+
+test("schema and runtime allow explicit zero write authority", () => {
+  agreement(makeEnvelope("/repository", {
+    scope: { allowedPaths: [], readablePaths: ["README.md"] }
+  }), true, "empty allowedPaths");
+});
 
 test("schema/runtime differential paths preserve POSIX and Windows spelling boundaries", () => {
   const paths = [

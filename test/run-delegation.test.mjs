@@ -126,6 +126,37 @@ test("acknowledged dirty paths retain no executor write authority", async () => 
   assert.equal(result.validations[0].reason, "scope_breach");
 });
 
+test("zero write authority disables Pi write-capable tools", async () => {
+  const root = await createGitRepository();
+  const envelope = makeEnvelope(root, {
+    taskId: "pi-zero-write-authority",
+    scope: { allowedPaths: [], readablePaths: ["README.md"] },
+    validation: []
+  });
+  const result = await execute(envelope, "zero-write-tools");
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.changedPaths, []);
+  assert.equal(result.executor.summary, "Zero write authority preserved.");
+});
+
+test("zero write direct execution rejects repository validation before launch", async () => {
+  const root = await createGitRepository();
+  const envelope = makeEnvelope(root, {
+    taskId: "pi-zero-write-validation",
+    scope: { allowedPaths: [], readablePaths: ["README.md"] }
+  });
+  let launched = false;
+  await assert.rejects(runDelegation(envelope, {
+    executorCommand: process.execPath,
+    executorArgs: [fakePi],
+    runProcess: async () => {
+      launched = true;
+      throw new Error("must not launch");
+    }
+  }), { code: "read_only_validation_unsupported" });
+  assert.equal(launched, false);
+});
+
 test("staged rename requires acknowledgement of both source and destination", async () => {
   const root = await createGitRepository();
   await writeFile(path.join(root, "outside.txt"), "outside\n");

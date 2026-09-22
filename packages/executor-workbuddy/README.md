@@ -19,8 +19,10 @@ help is never retained or returned, and no normalization, default, fallback or
 substitution is applied. Authentication remains unverified until live invocation.
 Other CLI versions require fresh compatibility verification.
 
-Only Read is enabled in read-only mode; file tasks enable Read/Write with native
-per-invocation path grants. No bare tool-name permission grants are added; native
+Only Read is enabled in read-only mode; an empty `allowedPaths` array derives that
+mode even when the caller omits its separate read-only option. File tasks with
+write authority enable Read/Write with native per-invocation path grants. No bare
+tool-name permission grants are added; native
 user/project grants remain additive, so these task grants are not an isolation boundary. Commands, MCP, background tasks and same-session continuation are not
 admitted. No global permission bypass is used. Native startup/plugins may still
 have side effects; these controls are not an OS sandbox or a credential boundary.

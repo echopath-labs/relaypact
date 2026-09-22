@@ -39,7 +39,8 @@ output authority, and readiness is not acceptance validation.
 
 A read-only file belongs in `scope.readablePaths`, not `scope.allowedPaths`,
 and must not match `scope.forbiddenPaths`. Resolve contradictory readable and
-forbidden authority before worker launch.
+forbidden authority before worker launch. For a task with no output authority,
+use an empty `scope.allowedPaths` array instead of inventing a writable path.
 
 Execution profiles are adapter configuration, required only by routes that use
 them. Follow [agent-setup.md](agent-setup.md); never include provider credentials,

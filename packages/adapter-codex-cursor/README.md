@@ -4,6 +4,11 @@ Experimental adapter for explicit Codex-hosted delegation to a local Cursor CLI
 executor. The adapter composes Cursor transport with RelayPact's independent Git,
 filesystem, scope, validation, and pending-acceptance checks.
 
+For direct execution selected with `--read-only` or derived from
+`allowedPaths: []`, use an empty `validation` list. Repository validation
+commands are refused before launch because they can write caches or coverage;
+run them in an external read-only or disposable environment instead.
+
 The one-shot `runDelegation` path remains pending-only. When a private
 `stateRoot` and coordinating `hostInstanceId` are supplied together, the
 adapter uses RelayPact's harness-neutral signed direct-worktree lifecycle.

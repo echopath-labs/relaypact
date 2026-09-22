@@ -228,9 +228,89 @@ test("Cursor Auto model observation remains a harness-managed selector alias", a
 
 test("Cursor read-only route uses plan mode and does not grant force", async () => {
   const root = await createGitRepository();
-  const result = await execute(root, "read-only", { readOnly: true });
+  const envelope = makeEnvelope(root, {
+    taskId: "cursor-read-only",
+    scope: { allowedPaths: [], readablePaths: ["README.md"] },
+    validation: []
+  });
+  let launchArgs;
+  const result = await runDelegation(envelope, {
+    readiness: {
+      state: "ready",
+      command: "cursor-agent",
+      version: "2026.08.31-test",
+      authenticated: true,
+      structuredOutput: true,
+      capabilities: { boundedWorkspace: true, sandbox: true, force: true, resume: true }
+    },
+    async runProcess(_command, args) {
+      launchArgs = args;
+      return {
+        exitCode: 0, signal: null, timedOut: false, cancelled: false,
+        stdoutTruncated: false, stderrTruncated: false,
+        stdout: `${JSON.stringify({
+          type: "result", subtype: "success", is_error: false,
+          result: JSON.stringify({ status: "completed", summary: "read-only review complete" })
+        })}\n`,
+        stderr: ""
+      };
+    }
+  });
   assert.equal(result.status, "completed");
   assert.deepEqual(result.changedPaths, []);
+  assert.deepEqual(launchArgs.slice(launchArgs.indexOf("--mode"), launchArgs.indexOf("--mode") + 2), ["--mode", "plan"]);
+  assert(!launchArgs.includes("--force"));
+});
+
+test("explicit Cursor read-only mode rejects repository validation before launch", async () => {
+  const root = await createGitRepository();
+  let launched = false;
+  await assert.rejects(runDelegation(makeEnvelope(root), {
+    executorCommand: fakeCursor,
+    readOnly: true,
+    runProcess: async () => {
+      launched = true;
+      throw new Error("must not launch");
+    }
+  }), { code: "read_only_validation_unsupported" });
+  assert.equal(launched, false);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("persistent Cursor rejects read-only validation before creating lifecycle state", async (t) => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-read-only-preflight-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  await assert.rejects(runDelegation(makeEnvelope(root, {
+    scope: { allowedPaths: [], readablePaths: ["README.md"] }
+  }), {
+    executorCommand: fakeCursor,
+    stateRoot,
+    hostInstanceId: "cursor-host-1"
+  }), { code: "read_only_validation_unsupported" });
+  assert.deepEqual(await readdir(stateRoot), []);
+});
+
+test("persistent Cursor read-only evidence preserves an acknowledged dirty baseline", async (t) => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-read-only-baseline-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  await writeFile(path.join(root, "README.md"), "acknowledged local work\n");
+  const result = await runDelegation(makeEnvelope(root, {
+    taskId: "cursor-read-only",
+    repository: { dirtyTree: { allow: true, acknowledgedPaths: ["README.md"] } },
+    scope: { allowedPaths: [], readablePaths: ["README.md"] },
+    validation: []
+  }), {
+    executorCommand: fakeCursor,
+    stateRoot,
+    hostInstanceId: "cursor-host-1"
+  });
+  assert.equal(result.review.executionResult.status, "completed");
+  assert.deepEqual(result.review.executionResult.changedPaths, []);
+  assert.deepEqual(result.review.executionResult.scope.breaches, []);
 });
 
 test("Cursor out-of-scope edits are independently rejected", async () => {
@@ -772,9 +852,12 @@ test("persistent Cursor correction preserves the original read-only authority", 
   const root = await createGitRepository();
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-read-only-state-"));
   try {
-    const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-read-only" }), {
+    const first = await runDelegation(makeEnvelope(root, {
+      taskId: "cursor-read-only",
+      scope: { allowedPaths: [], readablePaths: ["README.md"] },
+      validation: []
+    }), {
       executorCommand: fakeCursor,
-      readOnly: true,
       stateRoot,
       hostInstanceId: "cursor-host-1"
     });
@@ -843,7 +926,7 @@ test("persistent Cursor evidence never restores a validation secret embedded in 
   await Promise.all([mkdir(stateRoot), mkdir(archiveRoot)]);
   try {
     const result = await runDelegation(makeEnvelope(root, {
-      taskId: "cursor-read-only",
+      taskId: "cursor-formatted-result",
       scope: { allowedPaths: ["README.md", "*-artifact.txt"] },
       validation: [{
         id: "write-sensitive-path",
@@ -855,7 +938,6 @@ test("persistent Cursor evidence never restores a validation secret embedded in 
       }]
     }), {
       executorCommand: fakeCursor,
-      readOnly: true,
       stateRoot,
       hostInstanceId: "cursor-host-1",
       validationEnv: { RELAYPACT_VALIDATION_SECRET: secret }
@@ -891,7 +973,7 @@ test("neutral direct lifecycle errors map to the Cursor session contract at the 
   const archiveRoot = path.join(privateRoot, "archive");
   await Promise.all([mkdir(stateRoot), mkdir(archiveRoot)]);
   try {
-    const envelope = makeEnvelope(root, { taskId: "cursor-read-only" });
+    const envelope = makeEnvelope(root, { taskId: "cursor-read-only", validation: [] });
     const executionResult = await runDelegation(envelope, { executorCommand: fakeCursor, readOnly: true });
     let prepared = await prepareDirectDelegation({
       envelope,
@@ -1002,7 +1084,7 @@ test("an active direct execution lease refuses concurrent abandonment", async ()
   await Promise.all([mkdir(stateRoot), mkdir(archiveRoot)]);
   let releaseExecution;
   try {
-    const envelope = makeEnvelope(root, { taskId: "cursor-read-only" });
+    const envelope = makeEnvelope(root, { taskId: "cursor-read-only", validation: [] });
     const executionResult = await runDelegation(envelope, { executorCommand: fakeCursor, readOnly: true });
     const prepared = await prepareDirectDelegation({
       envelope,
@@ -2223,7 +2305,7 @@ for (const [name, stderr, recognized, overrides] of [
   test(`Cursor failure evidence safely classifies ${name}`, async (t) => {
     const root = await createGitRepository();
     t.after(() => rm(root, { recursive: true, force: true }));
-    const result = await runDelegation(makeEnvelope(root), {
+    const result = await runDelegation(makeEnvelope(root, { validation: [] }), {
       readOnly: true,
       readiness: { state: "ready", command: "cursor-agent", version: "2026.08.31-test", authenticated: true, structuredOutput: true,
         capabilities: { boundedWorkspace: true, sandbox: true, force: true, resume: true } },

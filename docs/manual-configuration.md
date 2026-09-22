@@ -189,7 +189,9 @@ Important fields are:
 
 For a read-only file, include it in `scope.readablePaths`, omit it from
 `scope.allowedPaths`, and do not also match it with `scope.forbiddenPaths`.
-Contradictory readable/forbidden authority is rejected before worker launch.
+Use an empty `scope.allowedPaths` array for a task with no output authority;
+do not invent a placeholder writable path. Contradictory readable/forbidden
+authority is rejected before worker launch.
 
 Never put a credential, authentication path, personal proxy value, or raw
 private log in an envelope. Context planning details are in the packaged
@@ -249,6 +251,10 @@ and validation, then writes a pending review packet and candidate patch under
 the returned task root.
 
 It does not modify the source repository.
+
+An envelope with `allowedPaths: []` selects Codex's native read-only sandbox,
+allows report-only completion with `changedFiles: []`, and preserves that sandbox
+through same-session correction. Host postflight still rejects any observed mutation.
 
 ## Review the pending result
 
@@ -439,6 +445,12 @@ node ./bin/relaypact.mjs run-cursor \
 ```
 
 Add `--read-only` to use Cursor plan mode without RelayPact granting `--force`.
+An envelope with `allowedPaths: []` forces the same read-only mode even when the
+flag is omitted; RelayPact does not grant `--force` for zero write authority.
+For every direct-workspace read-only invocation, whether selected by the flag or
+derived from empty `allowedPaths`, set `validation: []`. RelayPact rejects
+repository validation commands before launch because they may create caches or
+coverage; run them in an external read-only or disposable environment.
 
 Use `--executor /absolute/path/to/cursor-agent` when discovery should be bound
 to one installation. RelayPact verifies version, required non-interactive and
@@ -483,8 +495,8 @@ node ./bin/relaypact.mjs decide-cursor \
 The state and archive roots must be pre-existing real directories outside the
 target repository. Correction refuses changed review evidence, new scope, new
 authority, executable path or fingerprint drift, or a missing original Cursor
-session. A run started with `--read-only` remains read-only during every
-correction. Use the same effective Cursor and validation environment for every
+session. A run started with `--read-only` or an empty `allowedPaths` remains
+read-only during every correction. Use the same effective Cursor and validation environment for every
 correction. API callers must resupply identical `validationEnv` grants; changed
 or omitted grants fail with `execution_context_mismatch` before readiness or
 resume. RelayPact retains only a task-keyed fingerprint, so it cannot recover
@@ -537,7 +549,10 @@ node ./bin/relaypact.mjs run-pi \
 
 Read [`packages/adapter-codex-pi/README.md`](../packages/adapter-codex-pi/README.md)
 before selecting it. Pi configuration must not become an implicit dependency or
-fallback for Codex-to-Codex.
+fallback for Codex-to-Codex. An envelope with `allowedPaths: []` makes Pi omit
+`bash`, `edit`, and `write` before launch and keeps only read-capable tools.
+That direct-workspace envelope must use `validation: []`; run any checks in an
+external read-only or disposable environment.
 
 ## Validation
 

@@ -51,6 +51,8 @@ Prepare the standard task envelope with explicit objective, readable context,
 writable paths, constraints, stop conditions, required evidence and independent
 Host validation. Prefer a disposable worktree. Read-only tasks require a clean
 tree and reject existing dirty paths before launching, even when acknowledged.
+An empty `allowedPaths` array forces the native invocation to expose only Read
+and deny repository-wide Write, without relying on a separate caller option.
 Select the edition explicitly:
 
 ```text
@@ -72,6 +74,11 @@ unsupported native pattern syntax is rejected. The executor cannot run shell
 checks through this route; put required checks in the envelope for the Host to
 run independently. MCP tools and background tasks are excluded. Do not add a
 permission-bypass flag to make a blocked task appear successful.
+
+For zero-write direct-workspace tasks (`allowedPaths: []`), use `validation: []`.
+RelayPact refuses repository validation commands before native launch because
+they may write caches or coverage. Run those checks in an external read-only or
+disposable environment and retain their evidence separately for Host review.
 
 Explicit `readablePaths` defines the added Read grants, including an empty list.
 When omitted, this route defaults Read grants to `allowedPaths`. Writable paths
