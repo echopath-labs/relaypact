@@ -171,8 +171,7 @@ async function collectPostflight(repository, before, pathBaseline, gitControlsBe
   };
 }
 
-export async function runLocalDelegation(input, options = {}) {
-  if (typeof options.execute !== "function") throw new TypeError("A local executor callback is required.");
+export function assertDirectReadOnlyValidation(input, options = {}) {
   const envelope = validateTaskEnvelope(input);
   if ((options.readOnly === true || envelope.scope.allowedPaths.length === 0) && envelope.validation.length > 0) {
     throw new DelegationError(
@@ -180,6 +179,12 @@ export async function runLocalDelegation(input, options = {}) {
       "Direct-workspace read-only tasks cannot run repository validation commands. Use an external read-only or disposable validation environment and leave validation empty."
     );
   }
+  return envelope;
+}
+
+export async function runLocalDelegation(input, options = {}) {
+  if (typeof options.execute !== "function") throw new TypeError("A local executor callback is required.");
+  const envelope = assertDirectReadOnlyValidation(input, options);
   const maxBytes = filesystemEvidenceMaxBytes(envelope);
   const validationEnv = Object.freeze(Object.fromEntries(Object.entries(options.validationEnv ?? {})));
   const validationSensitiveValues = Object.values(validationEnv)

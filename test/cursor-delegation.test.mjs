@@ -277,6 +277,42 @@ test("explicit Cursor read-only mode rejects repository validation before launch
   await rm(root, { recursive: true, force: true });
 });
 
+test("persistent Cursor rejects read-only validation before creating lifecycle state", async (t) => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-read-only-preflight-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  await assert.rejects(runDelegation(makeEnvelope(root, {
+    scope: { allowedPaths: [], readablePaths: ["README.md"] }
+  }), {
+    executorCommand: fakeCursor,
+    stateRoot,
+    hostInstanceId: "cursor-host-1"
+  }), { code: "read_only_validation_unsupported" });
+  assert.deepEqual(await readdir(stateRoot), []);
+});
+
+test("persistent Cursor read-only evidence preserves an acknowledged dirty baseline", async (t) => {
+  const root = await createGitRepository();
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "relaypact-cursor-read-only-baseline-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
+  await writeFile(path.join(root, "README.md"), "acknowledged local work\n");
+  const result = await runDelegation(makeEnvelope(root, {
+    taskId: "cursor-read-only",
+    repository: { dirtyTree: { allow: true, acknowledgedPaths: ["README.md"] } },
+    scope: { allowedPaths: [], readablePaths: ["README.md"] },
+    validation: []
+  }), {
+    executorCommand: fakeCursor,
+    stateRoot,
+    hostInstanceId: "cursor-host-1"
+  });
+  assert.equal(result.review.executionResult.status, "completed");
+  assert.deepEqual(result.review.executionResult.changedPaths, []);
+  assert.deepEqual(result.review.executionResult.scope.breaches, []);
+});
+
 test("Cursor out-of-scope edits are independently rejected", async () => {
   const root = await createGitRepository();
   const result = await execute(root, "breach");

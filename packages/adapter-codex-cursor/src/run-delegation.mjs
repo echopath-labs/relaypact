@@ -1,7 +1,7 @@
 import { filesystemEvidenceMaxBytes } from "../../contracts/src/envelope.mjs";
 import { assertRepositoryLinks } from "../../core/src/filesystem-evidence.mjs";
 import { minimalEnvironment } from "../../core/src/environment.mjs";
-import { runLocalDelegation } from "../../core/src/local-delegation.mjs";
+import { assertDirectReadOnlyValidation, runLocalDelegation } from "../../core/src/local-delegation.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import {
   assertDirectExecutionContext,
@@ -56,6 +56,7 @@ export async function runDelegation(input, options = {}) {
   if ((options.stateRoot || options.hostInstanceId) && !(options.stateRoot && options.hostInstanceId)) {
     throw new TypeError("Persistent Cursor execution requires both stateRoot and hostInstanceId.");
   }
+  input = assertDirectReadOnlyValidation(input, options);
   if (!options.stateRoot) return runCursorAttempt(input, options).then(({ result }) => result);
 
   const prepared = await prepareDirectDelegation({

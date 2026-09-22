@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "
 import path from "node:path";
 import { DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES, MAX_FILESYSTEM_EVIDENCE_BYTES, filesystemEvidenceMaxBytes, validateTaskEnvelope } from "../../contracts/src/envelope.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
-import { evaluatePathScope } from "../../contracts/src/path-policy.mjs";
+import { evaluatePathScope, normalizeRelativePath } from "../../contracts/src/path-policy.mjs";
 import {
   assertRepositoryLinks,
   assertFilesystemSnapshot,
@@ -28,7 +28,7 @@ const STATE_KEYS = new Set([
   "filesystemEvidenceMaxBytes",
   "schemaVersion", "taskId", "routeId", "executorHarness", "lifecycleState",
   "hostInstanceId", "taskRootDev", "taskRootIno", "repositoryRoot", "workingDirectory",
-  "branch", "head", "envelopeFingerprint", "initialFilesystemFingerprint",
+  "branch", "head", "envelopeFingerprint", "initialFilesystemFingerprint", "initialDirtyPaths",
   "initialGitControlFingerprint", "initialGitIndexFingerprint", "resultIdentity",
   "executionMode", "sessionDigest", "sessionHandle", "executorCommand", "executorFingerprint",
   "reviewFingerprint", "reviewFilesystemFingerprint",
@@ -67,6 +67,14 @@ function validCorrectionBasis(value) {
     Object.keys(value).length === keys.length && keys.every(key => typeof value[key] === "string" && /^[a-f0-9]{64}$/u.test(value[key]));
 }
 
+function validPathSet(value) {
+  return Array.isArray(value) && value.length === new Set(value).size &&
+    value.every(item => {
+      try { return normalizeRelativePath(item, "initial dirty path") === item; }
+      catch { return false; }
+    });
+}
+
 function validateState(state) {
   if (!state || typeof state !== "object" || Array.isArray(state)) {
     throw new DelegationError("task_state_unavailable", "Direct delegation lifecycle state is missing or malformed.");
@@ -84,6 +92,7 @@ function validateState(state) {
     (state.correctionReviewBasis !== undefined && state.correctionReviewBasis !== null && !validCorrectionBasis(state.correctionReviewBasis)) ||
     (state.executionContextFingerprint !== undefined && !/^hmac-sha256:[a-f0-9]{64}$/u.test(state.executionContextFingerprint)) ||
     (state.executionSettled !== undefined && typeof state.executionSettled !== "boolean") ||
+    (state.initialDirtyPaths !== undefined && !validPathSet(state.initialDirtyPaths)) ||
     (state.filesystemEvidenceMaxBytes !== undefined && (!Number.isSafeInteger(state.filesystemEvidenceMaxBytes) || state.filesystemEvidenceMaxBytes < 1 || state.filesystemEvidenceMaxBytes > MAX_FILESYSTEM_EVIDENCE_BYTES)) ||
     unknown.length > 0 || state.schemaVersion !== "1.0.0" || !STATES.has(state.lifecycleState) ||
     required.some((key) => !nonempty(state[key])) ||
@@ -317,6 +326,7 @@ export async function prepareDirectDelegation({
     envelopeFingerprint: sha256(canonicalize(envelope)),
     filesystemEvidenceMaxBytes: filesystemEvidenceMaxBytes(envelope),
     initialFilesystemFingerprint: baseline.filesystem.fingerprint,
+    initialDirtyPaths: [...baseline.git.dirtyPaths],
     initialGitControlFingerprint: baseline.gitControl.fingerprint,
     initialGitIndexFingerprint: baseline.gitIndex.fingerprint,
     resultIdentity: null,
@@ -362,6 +372,16 @@ function samePathSet(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function directChangedPaths(prepared, evidence) {
+  const initialDirtyPaths = new Set(
+    prepared.state.initialDirtyPaths ?? prepared.envelope.repository.dirtyTree.acknowledgedPaths
+  );
+  return [...new Set([
+    ...evidence.git.dirtyPaths.filter(relative => !initialDirtyPaths.has(relative)),
+    ...changedFilesystemPaths(prepared.initialFilesystem, evidence.filesystem)
+  ])].sort();
+}
+
 async function recordDirectDelegationResultLocked(prepared, executionResult, session, { read, persist }) {
   if (executionResult?.taskId !== prepared.envelope.taskId || executionResult?.hostAcceptance?.status !== "pending" ||
     (executionResult?.filesystemEvidenceMaxBytes ?? DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES) !== filesystemEvidenceMaxBytes(prepared.envelope)) {
@@ -380,10 +400,7 @@ async function recordDirectDelegationResultLocked(prepared, executionResult, ses
     throw new DelegationError("executor_session_mismatch", "Protected executor session, executable, and digest evidence are inconsistent.");
   }
   const basis = await currentEvidence(prepared.repository.gitRoot, filesystemEvidenceMaxBytes(prepared.envelope));
-  const cumulativePaths = [...new Set([
-    ...basis.git.dirtyPaths,
-    ...changedFilesystemPaths(prepared.initialFilesystem, basis.filesystem)
-  ])].sort();
+  const cumulativePaths = directChangedPaths(prepared, basis);
   const retainedPaths = [...new Set(executionResult.changedPaths ?? [])].sort();
   const cumulativeBreaches = evaluatePathScope(retainedPaths, prepared.envelope.scope);
   if (!samePathSet(cumulativePaths, retainedPaths)) {
@@ -670,10 +687,7 @@ export async function authorizeDirectCorrection(prepared, prompt) {
   );
   const evidence = await assertReviewBasis(prepared.state);
   requireDirectExecutorSession(prepared.state);
-  const changedPaths = [...new Set([
-    ...evidence.git.dirtyPaths,
-    ...changedFilesystemPaths(prepared.initialFilesystem, evidence.filesystem)
-  ])].sort();
+  const changedPaths = directChangedPaths(prepared, evidence);
   const breaches = evaluatePathScope(changedPaths, prepared.envelope.scope);
   if (breaches.length > 0) {
     throw new DelegationError("scope_breach", "Correction cannot resume while the current candidate exceeds its original scope.");
