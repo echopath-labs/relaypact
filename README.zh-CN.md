@@ -183,6 +183,7 @@ patch，拒绝也不会自动撤销工作区变更。一次性结果在工具层
 - [安装、版本验证、升级、卸载、排障与 CLI 参考](docs/manual-configuration.md)
 - [Codex-to-Codex adapter 参考](packages/adapter-codex-codex/README.md)
 - [实验性 Codex-to-Cursor adapter 参考](packages/adapter-codex-cursor/README.md)
+- [实验性 Codex-to-Pi adapter 参考](packages/adapter-codex-pi/README.md)
 - [示例](examples/README.md)
 - [发布清单](RELEASING.md)
 - [贡献指南](CONTRIBUTING.md)
@@ -203,11 +204,12 @@ patch，拒绝也不会自动撤销工作区变更。一次性结果在工具层
 ```bash
 npm ci --ignore-scripts
 npm run check:codex-codex
+npm run check:codex-pi
 npm run check:codex-cursor
 npm run check
 ```
 
-默认测试是离线确定性测试。Cursor readiness 可以在不发起模型请求的情况下检查；
+默认测试是离线确定性测试。Cursor 与 Pi readiness 可以在不发起模型请求的情况下检查；
 真实 Codex、Cursor 执行、Pi、router 和 provider smoke 必须显式启用，并可能
 消耗本地资源或账户额度。
 

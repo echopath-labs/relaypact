@@ -9,6 +9,12 @@ checks Cursor CLI version, required flags, and local authentication without
 invoking a model or retaining account output. The optional Cursor executor is
 dynamically loaded only for that selected diagnostic route; default `doctor`
 does not load it.
+`doctor --route codex-pi [--executor <pi-path>]` dynamically loads the
+experimental Pi executor, binds its executable identity, and verifies Pi
+0.84.0 or later plus the exact noninteractive flags used by the adapter. Its
+version/help probes run with disposable HOME, settings, session and working
+directories, make no model request, and return only sanitized readiness
+evidence. Default `doctor` does not load Pi.
 `run-codex`, `correct-codex`, and `decide-codex` load the public-preview
 Codex-to-Codex route. The terminal decision archives evidence but never applies
 the candidate patch to the source repository.

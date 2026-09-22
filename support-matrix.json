@@ -30,7 +30,7 @@
       "rootPluginActivation": false,
       "prerequisites": [
         "Node.js 20 or later",
-        "an explicit compatible Pi installation and execution profile"
+        "Pi 0.84.0 or later and an explicit execution profile"
       ],
       "deterministicCheck": "npm run check:codex-pi",
       "liveSmoke": "npm run smoke:pi"

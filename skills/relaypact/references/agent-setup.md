@@ -24,6 +24,11 @@ node <skill-directory>/scripts/relaypact.mjs doctor
 Do not load Pi, Cursor, a provider, a router, or credentials during default
 support discovery. Probe Cursor only after explicit route selection with
 `doctor --route codex-cursor`; that diagnostic must not invoke a model.
+Probe Pi only after explicit route selection with
+`doctor --route codex-pi [--executor <pi-path>]`. It binds the selected
+executable and checks its version and required flags inside disposable Pi
+state; it must not read global/project Pi settings, authentication, or invoke a
+model. Readiness does not prove provider availability.
 For WorkBuddy, explicitly select `doctor --route codex-workbuddy --edition mainland`
 or `doctor --route codex-workbuddy-ai --edition international`;
 it checks distribution identity and configuration presence,

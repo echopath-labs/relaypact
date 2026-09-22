@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { validateTaskEnvelope } from "../packages/contracts/src/envelope.mjs";
 import { parseStatusPaths } from "../packages/core/src/git.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
+import { discoverPiCli } from "../packages/executor-pi/src/executor.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
 const fakePi = fileURLToPath(new URL("./fixtures/fake-pi.mjs", import.meta.url));
@@ -41,6 +42,104 @@ test("CLI reads an envelope file and emits a structured result", async () => {
   const result = JSON.parse(stdout);
   assert.equal(result.status, "completed");
   assert.equal(result.hostAcceptance.status, "pending");
+});
+
+const readyPiHelp = [
+  "--print", "--mode text json", "--no-session", "--no-extensions", "--no-skills",
+  "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve",
+  "--tools", "--provider", "--model"
+].join(" ");
+const piIdentity = (fingerprint = "a".repeat(64)) => ({
+  command: "/fixture/pi",
+  resolvedCommand: "/fixture/pi-runtime",
+  executableFingerprint: `sha256:${fingerprint}`
+});
+const piProbeResult = (stdout, overrides = {}) => ({
+  exitCode: 0,
+  signal: null,
+  stdout,
+  stderr: "",
+  timedOut: false,
+  cancelled: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  ...overrides
+});
+
+function piDoctorFixture(overrides = {}) {
+  const calls = [];
+  const identities = [...(overrides.identities ?? [piIdentity(), piIdentity()])];
+  return {
+    calls,
+    resolveExecutable: async () => identities.shift() ?? null,
+    runProcess: async (command, args, options) => {
+      calls.push({ command, args, options });
+      if (args[0] === "--version") return overrides.version ?? piProbeResult("0.84.0\n");
+      return overrides.help ?? piProbeResult(`${readyPiHelp}\n`);
+    }
+  };
+}
+
+test("Pi doctor discovery is model-free and isolates settings from the project and ambient environment", async () => {
+  const fixture = piDoctorFixture();
+  const readiness = await discoverPiCli({
+    ...fixture,
+    environment: { PATH: "/fixture", HOME: "/Users/private", SECRET_TOKEN: "opaque" },
+    executorCommand: "/fixture/pi"
+  });
+  assert.equal(readiness.state, "ready");
+  assert.equal(readiness.version, "0.84.0");
+  assert.equal(readiness.executableStable, true);
+  assert.equal(readiness.settingsIsolated, true);
+  assert.equal(Object.values(readiness.capabilities).every(Boolean), true);
+  assert.deepEqual(fixture.calls.map((item) => item.args), [["--version"], ["--help"]]);
+  assert.equal(fixture.calls.every((item) => item.options.cwd.includes("relaypact-pi-doctor-")), true);
+  assert.equal(fixture.calls.every((item) => item.options.env.HOME.includes("relaypact-pi-doctor-")), true);
+  assert.equal(fixture.calls.every((item) => item.options.env.PI_CODING_AGENT_DIR.includes("relaypact-pi-doctor-")), true);
+  assert.equal(fixture.calls.every((item) => item.options.env.SECRET_TOKEN === undefined), true);
+});
+
+test("Pi doctor discovery blocks unsupported, missing, and mutated executables", async () => {
+  const unsupported = piDoctorFixture({ version: piProbeResult("0.83.9\n") });
+  assert.equal((await discoverPiCli({ ...unsupported, executorCommand: "/fixture/pi" })).reason, "unsupported_version");
+
+  const missingCapability = piDoctorFixture({ help: piProbeResult(readyPiHelp.replace("--tools", "")) });
+  assert.equal((await discoverPiCli({ ...missingCapability, executorCommand: "/fixture/pi" })).reason, "unsupported_capabilities");
+
+  const missing = piDoctorFixture({ identities: [] });
+  assert.equal((await discoverPiCli({ ...missing, executorCommand: "/fixture/pi" })).reason, "missing");
+
+  const mutated = piDoctorFixture({ identities: [piIdentity("a".repeat(64)), piIdentity("b".repeat(64))] });
+  const mutationResult = await discoverPiCli({ ...mutated, executorCommand: "/fixture/pi" });
+  assert.equal(mutationResult.reason, "mutated");
+  assert.equal(mutationResult.executableFingerprint, null);
+});
+
+test("Pi doctor discovery blocks timed-out, truncated, and settings-write probes without retaining diagnostics", async () => {
+  const timedOut = piDoctorFixture({ version: piProbeResult("", { timedOut: true }) });
+  assert.equal((await discoverPiCli({ ...timedOut, executorCommand: "/fixture/pi" })).reason, "timed_out");
+
+  const truncated = piDoctorFixture({ help: piProbeResult(readyPiHelp, { stdoutTruncated: true }) });
+  assert.equal((await discoverPiCli({ ...truncated, executorCommand: "/fixture/pi" })).reason, "truncated");
+
+  const privatePath = ["", "Users", "private", "secret", "settings.json.lock"].join("/");
+  const settingsWrite = piDoctorFixture({
+    help: piProbeResult(readyPiHelp, { stderr: `Warning: EACCES permission denied, mkdir '${privatePath}'` })
+  });
+  const settingsResult = await discoverPiCli({ ...settingsWrite, executorCommand: "/fixture/pi" });
+  assert.equal(settingsResult.reason, "settings_write_attempt");
+  assert.equal(settingsResult.settingsIsolated, false);
+  assert.equal(JSON.stringify(settingsResult).includes(privatePath), false);
+});
+
+test("CLI admits the experimental Pi doctor route with an explicit executable", async () => {
+  const { stdout } = await execFileAsync(process.execPath, [cli, "doctor", "--route", "codex-pi", "--executor", fakePi]);
+  const result = JSON.parse(stdout);
+  assert.equal(result.state, "ready");
+  assert.equal(result.route, "codex-pi");
+  assert.equal(result.executor.source, "explicit-pi-cli");
+  assert.equal(result.executor.version, "0.84.0");
+  assert.equal(result.limitations.some((item) => item.includes("experimental")), true);
 });
 
 test("CLI support metadata is sanitized and keeps Pi experimental", async () => {

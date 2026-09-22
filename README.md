@@ -212,6 +212,7 @@ only supported persistent modes can record a tool terminal decision.
 - [Install, version verification, upgrade, uninstall, troubleshooting, and CLI reference](docs/manual-configuration.md)
 - [Codex-to-Codex adapter reference](packages/adapter-codex-codex/README.md)
 - [Experimental Codex-to-Cursor adapter reference](packages/adapter-codex-cursor/README.md)
+- [Experimental Codex-to-Pi adapter reference](packages/adapter-codex-pi/README.md)
 - [Examples](examples/README.md)
 - [Release checklist](RELEASING.md)
 - [Contribution guide](CONTRIBUTING.md)
@@ -233,12 +234,13 @@ See the [changelog](CHANGELOG.md) for details and compatibility notes.
 ```bash
 npm ci --ignore-scripts
 npm run check:codex-codex
+npm run check:codex-pi
 npm run check:codex-cursor
 npm run check
 ```
 
-The default suite is deterministic and offline. Cursor readiness can be probed
-without a model request; real Codex, Cursor execution, Pi, router, and provider
+The default suite is deterministic and offline. Cursor and Pi readiness can be
+probed without a model request; real Codex, Cursor execution, Pi, router, and provider
 smokes are opt-in and may consume local resources or account quota.
 
 ## Large repository evidence

@@ -131,6 +131,16 @@ tools before launch and tells the executor that the task has zero write authorit
 Set `validation: []` and run checks in an external read-only or disposable
 environment; repository validation commands are refused before Pi starts.
 
+Run the selected-route readiness probe first. It uses only disposable Pi state,
+does not invoke a model, and blocks when the executable identity, minimum
+version, required flags or bounded probe completion cannot be verified:
+
+```text
+node <skill-directory>/scripts/relaypact.mjs doctor
+  --route codex-pi
+  [--executor <pi-path>]
+```
+
 ```text
 node <skill-directory>/scripts/relaypact.mjs run-pi
   --envelope <task-envelope.json>

@@ -252,7 +252,7 @@ test("versioned documentation requires complete install identity without publica
     await writeFile(target, valid);
   }
   for (const [file, from, to, expected] of [
-    ["CHANGELOG.md", "### Compatibility", "### Compatibility\n\nThis is an unreleased source candidate.", "CHANGELOG.md must not retain candidate-only status"],
+    ["CHANGELOG.md", "## [0.3.5] - 2026-09-22 - Release", "## [0.3.5] - 2026-09-22 - Release\n\nThis is an unreleased source candidate.", "CHANGELOG.md must not retain candidate-only status"],
     ["RELEASING.md", "The checked-in metadata describes 0.3.5 Release, dated 2026-09-22.", "The checked-in state is a 0.3.5 source candidate. The release date is intentionally unset.", "RELEASING.md must describe the dated versioned current state."]
   ]) {
     const target = path.join(root, file);
@@ -441,6 +441,24 @@ test("architecture validation rejects eager Cursor loading in default doctor", a
   await writeFile(doctorPath, doctor);
   const errors = await validateArchitecture(root);
   assert(errors.some((item) => item.includes("must not statically load the optional Cursor executor")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation rejects eager Pi loading in default doctor", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const doctor = (await readFile(doctorPath, "utf8"))
+    .replace('const { discoverPiCli, MINIMUM_PI_VERSION } = await import("../../executor-pi/src/executor.mjs");', "")
+    .replace(
+      'import { MINIMUM_CODEX_VERSION, parseCodexVersion } from "../../executor-codex/src/compatibility.mjs";',
+      'import { MINIMUM_CODEX_VERSION, parseCodexVersion } from "../../executor-codex/src/compatibility.mjs";\nimport { discoverPiCli, MINIMUM_PI_VERSION } from "../../executor-pi/src/executor.mjs";'
+    );
+  await writeFile(doctorPath, doctor);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("must not statically load the optional Pi executor")));
   await rm(root, { recursive: true });
 });
 

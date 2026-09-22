@@ -9,6 +9,21 @@ const result = (status, summary, residualRisks = []) => {
   process.stdout.write(`${JSON.stringify({ status, summary, residualRisks })}\n`);
 };
 
+if (process.argv.includes("--version")) {
+  process.stdout.write("0.84.0\n");
+  process.exit(0);
+}
+
+if (process.argv.includes("--help")) {
+  process.stdout.write([
+    "Usage: pi [options] [prompt]",
+    "--print --mode <mode> (text, json, rpc) --no-session --no-extensions --no-skills",
+    "--no-prompt-templates --no-themes --no-context-files --no-approve",
+    "--tools <tools> --provider <provider> --model <model>"
+  ].join("\n"));
+  process.exit(0);
+}
+
 switch (scenario) {
   case "final-output":
     write("allowed.txt", "delegated edit\n");

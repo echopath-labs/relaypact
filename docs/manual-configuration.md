@@ -134,6 +134,7 @@ From a source clone:
 ```bash
 node ./bin/relaypact.mjs support
 node ./bin/relaypact.mjs doctor
+node ./bin/relaypact.mjs doctor --route codex-pi
 node ./bin/relaypact.mjs doctor --route codex-cursor
 ```
 
@@ -158,6 +159,16 @@ Selected-route Cursor doctor checks only local CLI capability and authentication
 status. It does not invoke a model, retain account output, or prove live model
 availability. Live execution is evaluated only after the user explicitly
 selects and invokes the route.
+
+Selected-route Pi doctor requires Pi 0.84.0 or later, binds the selected
+executable identity, and verifies the exact noninteractive flags used by the
+adapter. It runs only `--version` and `--help` from disposable HOME, settings,
+session and working directories. Native bootstrap writes stay inside that
+temporary root and are deleted afterward; global/project Pi settings and
+authentication are not read or modified. Missing, unsupported, mutated,
+timed-out, truncated or settings-isolation-failing probes return `blocked` with
+fixed diagnostics. A `ready` result does not prove authentication, provider or
+model availability.
 
 ## Prepare private roots
 
@@ -543,6 +554,9 @@ process; the Host must coordinate concurrent writers and the execution boundary.
 Pi remains an explicit experimental route and is not loaded by `run-codex`:
 
 ```bash
+node ./bin/relaypact.mjs doctor --route codex-pi \
+  --executor /absolute/path/to/pi
+
 node ./bin/relaypact.mjs run-pi \
   --envelope /absolute/private/pi-task-envelope.json
 ```
@@ -561,6 +575,7 @@ Offline deterministic checks:
 ```bash
 npm run check
 npm run check:codex-codex
+npm run check:codex-pi
 npm run check:codex-cursor
 npm pack --dry-run
 ```

@@ -71,7 +71,7 @@ const ROUTE_EXPECTATIONS = new Map([
     rootPluginActivation: false,
     prerequisites: [
       "Node.js 20 or later",
-      "an explicit compatible Pi installation and execution profile"
+      "Pi 0.84.0 or later and an explicit execution profile"
     ],
     deterministicCheck: "npm run check:codex-pi",
     liveSmoke: "npm run smoke:pi"
@@ -314,6 +314,12 @@ export async function validateArchitecture(rootInput) {
   }
   if (!doctorSource.includes('await import("../../executor-cursor/src/executor.mjs")')) {
     errors.push("Cursor doctor must load the Cursor executor only inside the selected diagnostic route.");
+  }
+  if (/^import\s+.*executor-pi/mu.test(doctorSource)) {
+    errors.push("Default doctor must not statically load the optional Pi executor.");
+  }
+  if (!doctorSource.includes('await import("../../executor-pi/src/executor.mjs")')) {
+    errors.push("Pi doctor must load the Pi executor only inside the selected diagnostic route.");
   }
 
   for (const legacy of ["src", "contracts", "hosts", "executors", "adapters"]) {

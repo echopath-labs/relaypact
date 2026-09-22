@@ -249,3 +249,79 @@ export async function runCursorDoctor(options = {}) {
     ]
   };
 }
+
+function piReasonDetail(reason, minimumVersion) {
+  const details = {
+    missing: "The selected Pi executable is unavailable.",
+    timed_out: "The Pi readiness probe timed out.",
+    truncated: "The Pi readiness probe exceeded the diagnostic output bound.",
+    unsupported: "The selected Pi executable did not complete the no-model readiness probe.",
+    unsupported_version: `Pi ${minimumVersion} or later is required.`,
+    unsupported_capabilities: "The selected Pi executable is missing capabilities required by the adapter.",
+    settings_write_attempt: "Pi settings isolation could not be verified because startup reported a settings write failure.",
+    mutated: "The selected Pi executable changed during readiness verification."
+  };
+  return details[reason] ?? "Pi readiness could not be verified.";
+}
+
+export async function runPiDoctor(options = {}) {
+  const { discoverPiCli, MINIMUM_PI_VERSION } = await import("../../executor-pi/src/executor.mjs");
+  const nodeVersion = options.nodeVersion ?? process.versions.node;
+  const nodeMajor = Number.parseInt(nodeVersion.split(".")[0], 10);
+  const checks = [];
+  checks.push(Number.isInteger(nodeMajor) && nodeMajor >= MINIMUM_NODE_MAJOR
+    ? check("node", "pass", `Node.js ${nodeVersion} is supported.`)
+    : check("node", "fail", `Node.js ${MINIMUM_NODE_MAJOR} or later is required.`, "upgrade-node"));
+
+  checks.push(await packagedSkillCheck(options.readFile ?? readFile));
+  const gitResult = await probe(
+    options.runProcess ?? runProcess,
+    "git",
+    ["--version"],
+    safeEnvironment(options.environment ?? process.env)
+  );
+  checks.push(gitResult.status === "complete" && gitResult.exitCode === 0 && /^git version \d+/u.test(gitResult.stdout.trim())
+    ? check("git", "pass", "Git is available.")
+    : check("git", "fail", "Git is unavailable or could not be verified.", "install-git"));
+
+  const readiness = await discoverPiCli(options);
+  const executableAvailable = typeof readiness.command === "string";
+  checks.push(executableAvailable
+    ? check("pi-executable", "pass", "The selected Pi executable was resolved to a bounded local identity.")
+    : check("pi-executable", "fail", "The selected Pi executable is unavailable.", "install-pi"));
+  checks.push(readiness.versionCompatible
+    ? check("pi-version", "pass", `Pi ${readiness.version} is supported.`)
+    : check("pi-version", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), "install-or-upgrade-pi"));
+  const capabilitiesReady = Object.values(readiness.capabilities).every(Boolean);
+  checks.push(capabilitiesReady
+    ? check("pi-capabilities", "pass", "Pi exposes the required noninteractive, structured-result, tool-selection, timeout, no-session, and project-isolation capabilities.")
+    : check("pi-capabilities", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), "install-or-upgrade-pi"));
+  checks.push(readiness.settingsIsolated
+    ? check("pi-settings", "pass", "Pi readiness used disposable settings and did not report a global settings write failure.")
+    : check("pi-settings", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), "repair-pi-settings-isolation"));
+  checks.push(readiness.executableStable
+    ? check("pi-identity", "pass", "The selected Pi executable identity remained stable across readiness probes.")
+    : check("pi-identity", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), "reselect-pi-executable"));
+
+  const requiredIds = new Set(["node", "packaged-skill", "git", "pi-executable", "pi-version", "pi-capabilities", "pi-settings", "pi-identity"]);
+  const blocked = readiness.state !== "ready" || checks.some((item) => requiredIds.has(item.id) && item.status !== "pass");
+  return {
+    schemaVersion: "1.0.0",
+    command: "doctor",
+    state: blocked ? "blocked" : "ready",
+    route: "codex-pi",
+    executor: {
+      source: options.executorCommand ? "explicit-pi-cli" : "discovered-pi-cli",
+      command: "pi",
+      version: readiness.version,
+      executableFingerprint: readiness.executableFingerprint,
+      additionalInstallationRequired: !executableAvailable,
+      capabilities: readiness.capabilities
+    },
+    checks,
+    limitations: [
+      "Pi remains an explicit experimental direct-workspace route.",
+      "Doctor uses disposable Pi settings and does not read authentication, invoke a model, or prove provider availability."
+    ]
+  };
+}
