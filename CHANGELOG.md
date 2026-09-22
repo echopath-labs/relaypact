@@ -2,6 +2,19 @@
 
 All notable public changes to RelayPact are recorded here.
 
+## [0.3.5] - 2026-09-22 - Release
+
+### Fixed
+- Discover the complete bounded WorkBuddy CLI model list before checking an exact Host-selected model. Human-readable doctor output remains capped at 64 model IDs, while admission no longer rejects a valid model merely because it appears after that display limit. Exact matching and no-fallback execution remain unchanged.
+- Allow `scope.allowedPaths: []` to express zero write authority without a synthetic writable path. Codex uses its native read-only sandbox and accepts a report-only result with `changedFiles: []`; Cursor enters plan mode without `--force` and records read-only lifecycle state; Pi starts without `bash`, `edit`, or `write`; WorkBuddy derives read-only mode before clean-tree preflight and exposes only native Read while denying repository-wide Write. Postflight mutation checks remain mandatory.
+- Reject non-empty repository validation before every direct-workspace read-only launch because validation commands can write caches or coverage. Persistent Cursor performs this preflight before creating lifecycle state and preserves the exact acknowledged dirty baseline when comparing later candidate evidence.
+
+### Compatibility
+- Empty `allowedPaths` now selects native no-write behavior on Codex, Cursor, Pi, WorkBuddy, and WorkBuddy AI even when the caller omits a separate read-only option. Existing non-empty write scopes retain their current behavior.
+- Direct-workspace read-only callers must use `validation: []` and run checks in an external read-only or disposable environment.
+- WorkBuddy model discovery changes diagnostics only; it does not relax exact model binding, prove account entitlement or price, or permit fallback and substitution.
+- Codex remains the admitted Host. Codex-to-Codex remains public-preview; Pi, Cursor, WorkBuddy and WorkBuddy AI remain explicitly selected experimental routes. npm publication remains out of scope.
+
 ## [0.3.4] - 2026-09-21 - Release
 
 ### Fixed
@@ -280,3 +293,5 @@ All notable public changes to RelayPact are recorded here.
 [0.3.3]: https://github.com/echopath-labs/relaypact/compare/v0.3.2...v0.3.3
 
 [0.3.4]: https://github.com/echopath-labs/relaypact/compare/v0.3.3...v0.3.4
+
+[0.3.5]: https://github.com/echopath-labs/relaypact/compare/v0.3.4...v0.3.5
