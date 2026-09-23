@@ -236,9 +236,34 @@ function readJavaScriptString(source, start) {
   return { value: null, end: source.length };
 }
 
+function readJavaScriptRegex(source, start) {
+  let inCharacterClass = false;
+  for (let index = start + 1; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "\n" || character === "\r") return null;
+    if (character === "\\") {
+      index += 1;
+      continue;
+    }
+    if (character === "[") inCharacterClass = true;
+    else if (character === "]") inCharacterClass = false;
+    else if (character === "/" && !inCharacterClass) {
+      let end = index + 1;
+      while (end < source.length && /[A-Za-z]/u.test(source[end])) end += 1;
+      return end;
+    }
+  }
+  return null;
+}
+
+const REGEX_PREFIX_KEYWORDS = new Set([
+  "await", "case", "delete", "in", "instanceof", "new", "of", "return",
+  "throw", "typeof", "void", "yield"
+]);
+
 function staticImportedSpecifiers(source) {
   const results = [];
-  let braceDepth = 0;
+  let expressionExpected = true;
   for (let index = 0; index < source.length;) {
     const next = skipJavaScriptTrivia(source, index);
     if (next !== index) {
@@ -256,30 +281,61 @@ function staticImportedSpecifiers(source) {
           break;
         } else index += 1;
       }
+      expressionExpected = false;
       continue;
     }
+    if (character === "/" && expressionExpected) {
+      const end = readJavaScriptRegex(source, index);
+      if (end !== null) {
+        index = end;
+        expressionExpected = false;
+        continue;
+      }
+    }
     if (character === "{") {
-      braceDepth += 1;
       index += 1;
+      expressionExpected = true;
       continue;
     }
     if (character === "}") {
-      braceDepth = Math.max(0, braceDepth - 1);
       index += 1;
+      expressionExpected = false;
+      continue;
+    }
+    if (character === "(" || character === "[" || character === "," || character === ";" ||
+        character === ":" || character === "?" || character === "=" || character === "!" ||
+        character === "&" || character === "|" || character === "+" || character === "-" ||
+        character === "*" || character === "%" || character === "^" || character === "~" ||
+        character === "<" || character === ">" || character === "/") {
+      index += 1;
+      expressionExpected = true;
+      continue;
+    }
+    if (character === ")" || character === "]") {
+      index += 1;
+      expressionExpected = false;
       continue;
     }
     if (/[A-Za-z_$]/u.test(character)) {
       let end = index + 1;
       while (end < source.length && /[A-Za-z0-9_$]/u.test(source[end])) end += 1;
       const identifier = source.slice(index, end);
-      if (braceDepth === 0 && (identifier === "import" || identifier === "from")) {
+      if (identifier === "import" || identifier === "from") {
         const literalStart = skipJavaScriptTrivia(source, end);
         if (identifier !== "import" || source[literalStart] !== "(") {
           const literal = readJavaScriptString(source, literalStart);
           if (literal) results.push(literal.value);
         }
       }
+      expressionExpected = REGEX_PREFIX_KEYWORDS.has(identifier);
       index = end;
+      continue;
+    }
+    if (/[0-9]/u.test(character)) {
+      let end = index + 1;
+      while (end < source.length && /[0-9A-Fa-f_xXoObBeE.n]/u.test(source[end])) end += 1;
+      index = end;
+      expressionExpected = false;
       continue;
     }
     index += 1;

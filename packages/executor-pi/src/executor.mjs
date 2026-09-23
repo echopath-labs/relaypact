@@ -628,8 +628,13 @@ function piLaunchFingerprint(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 
+export function piPlatformSupported(platform = process.platform) {
+  return platform === "darwin" || platform === "linux";
+}
+
 export async function resolvePiExecutable(command, options = {}) {
   if (typeof command !== "string" || command.trim().length === 0 || command.includes("\0")) return null;
+  if (!piPlatformSupported()) return null;
   const environment = options.environment ?? process.env;
   const run = options.runProcess ?? runProcess;
   const createEnvironment = options.createEnvironment ?? createIsolatedEnvironment;
@@ -887,6 +892,7 @@ async function probePiSnapshot(run, materializeExecutable, identity, args, envir
 }
 
 export async function discoverPiCli(options = {}) {
+  if (!piPlatformSupported()) return unavailablePiReadiness("unsupported_platform");
   const run = options.runProcess ?? runProcess;
   const resolveExecutable = options.resolveExecutable ?? resolvePiExecutable;
   const environment = options.environment ?? process.env;

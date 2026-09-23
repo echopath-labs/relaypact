@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { validateTaskEnvelope } from "../packages/contracts/src/envelope.mjs";
 import { parseStatusPaths } from "../packages/core/src/git.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
-import { collectPiBundle, discoverPiCli, executableFingerprint, materializePiExecutable, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
+import { collectPiBundle, discoverPiCli, executableFingerprint, materializePiExecutable, piPlatformSupported, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
 const fakePi = fileURLToPath(new URL("./fixtures/fake-pi.mjs", import.meta.url));
@@ -317,6 +317,13 @@ test("Pi executable resolution rejects unsupported Windows command shims", async
   await writeFile(shim, "@echo off\r\nnode %~dp0\\pi.mjs %*\r\n");
   await chmod(shim, 0o700);
   assert.equal(await resolvePiExecutable(shim), null);
+});
+
+test("Pi platform gate blocks unsupported hosts", () => {
+  assert.equal(piPlatformSupported("win32"), false);
+  assert.equal(piPlatformSupported("freebsd"), false);
+  assert.equal(piPlatformSupported("darwin"), true);
+  assert.equal(piPlatformSupported("linux"), true);
 });
 
 test("Pi executable resolution rejects native launchers without a bounded dependency closure", async (context) => {

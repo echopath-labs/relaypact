@@ -258,6 +258,7 @@ function piReasonDetail(reason, minimumVersion) {
     unsupported: "The selected Pi executable did not complete the no-model readiness probe.",
     unsupported_version: `Pi ${minimumVersion} or later is required.`,
     unsupported_capabilities: "The selected Pi executable is missing capabilities required by the adapter.",
+    unsupported_platform: "The experimental Pi route currently supports only macOS and Linux.",
     settings_write_attempt: "Pi settings isolation could not be verified because startup reported a settings write failure.",
     snapshot_unavailable: "The Pi executable snapshot root is not executable. Set RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT to a private executable-capable directory.",
     isolation_unavailable: "Pi readiness temporary state could not be created.",
