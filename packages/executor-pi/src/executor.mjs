@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, chmod, copyFile, cp, lstat, mkdir, open, readFile, readlink, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, cp, lstat, mkdir, open, readFile, readlink, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createIsolatedEnvironment, minimalEnvironment } from "../../core/src/environment.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import {
@@ -22,6 +22,7 @@ const MAX_PI_BUNDLE_FILES = 30_000;
 const MAX_PI_BUNDLE_DEPTH = 32;
 const PI_PROBE_TIMEOUT_MS = 5_000;
 const PI_PROBE_CAPTURE_BYTES = 256 * 1024;
+const PI_SNAPSHOT_ROOT_ENV = "RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT";
 export const MINIMUM_PI_VERSION = "0.84.0";
 const REQUIRED_PI_FLAGS = Object.freeze([
   "--print", "--mode", "--no-session", "--no-extensions", "--no-skills",
@@ -103,6 +104,63 @@ async function cleanupPiResources(...resources) {
     resources.filter(Boolean).map((resource) => Promise.resolve().then(() => resource.cleanup()))
   );
   return results.some((result) => result.status === "rejected");
+}
+
+async function piSnapshotBaseDirectory(environment, explicitRoot) {
+  const configured = explicitRoot ?? environment[PI_SNAPSHOT_ROOT_ENV];
+  const candidates = [];
+  if (configured !== undefined) {
+    if (typeof configured !== "string" || !path.isAbsolute(configured) || configured.includes("\0")) {
+      throw new Error("Pi executable snapshot root must be an absolute directory.");
+    }
+    candidates.push(configured);
+  } else if (typeof environment.XDG_RUNTIME_DIR === "string" && path.isAbsolute(environment.XDG_RUNTIME_DIR)) {
+    candidates.push(path.join(environment.XDG_RUNTIME_DIR, "relaypact", "pi-executable-snapshots"));
+  } else {
+    const home = typeof environment.HOME === "string" && path.isAbsolute(environment.HOME)
+      ? environment.HOME
+      : os.homedir();
+    candidates.push(path.join(home, ".cache", "relaypact", "pi-executable-snapshots"));
+  }
+  if (configured === undefined) {
+    candidates.push(path.join(os.tmpdir(), "relaypact", "pi-executable-snapshots"));
+  }
+  for (const base of candidates) {
+    try {
+      await mkdir(base, { recursive: true, mode: 0o700 });
+      const info = await lstat(base);
+      if (!info.isDirectory() || info.isSymbolicLink()) continue;
+      await chmod(base, 0o700);
+      return await realpath(base);
+    } catch {
+      if (configured !== undefined) throw new Error("Pi executable snapshot root is unavailable.");
+    }
+  }
+  throw new Error("Pi executable snapshot root is unavailable.");
+}
+
+async function assertPiSnapshotRootExecutable(isolated, environment, run) {
+  if (process.platform === "win32") return;
+  const probe = path.join(isolated.root, ".relaypact-exec-probe");
+  await writeFile(probe, "#!/bin/sh\nexit 0\n", { mode: 0o500, flag: "wx" });
+  let result;
+  try {
+    result = await run(probe, [], {
+      cwd: isolated.root,
+      env: minimalEnvironment(isolated.env ?? environment),
+      timeoutMs: 1_000,
+      maxCaptureBytes: 1024
+    });
+  } catch {
+    result = null;
+  } finally {
+    await rm(probe, { force: true }).catch(() => {});
+  }
+  if (!result || result.exitCode !== 0 || result.signal || result.timedOut || result.cancelled) {
+    const error = new Error("Pi executable snapshot root is not executable.");
+    error.code = "pi_snapshot_root_unavailable";
+    throw error;
+  }
 }
 
 function commandCandidates(command, environment) {
@@ -451,8 +509,14 @@ export async function materializePiExecutable(identity, options = {}) {
     throw new Error("Pi executable identity is incomplete.");
   }
   const createEnvironment = options.createEnvironment ?? createIsolatedEnvironment;
-  const isolated = await createEnvironment(options.environment ?? process.env, { prefix: "relaypact-pi-exec-" });
+  const environment = options.environment ?? process.env;
+  const snapshotBase = await piSnapshotBaseDirectory(environment, options.snapshotBaseDirectory);
+  const isolated = await createEnvironment(environment, {
+    prefix: "relaypact-pi-exec-",
+    baseDirectory: snapshotBase
+  });
   try {
+    await assertPiSnapshotRootExecutable(isolated, environment, options.runProcess ?? runProcess);
     if (identity.kind === "native") {
       const executable = path.join(isolated.root, "pi");
       await copyFile(identity.target, executable, fsConstants.COPYFILE_EXCL | (fsConstants.COPYFILE_FICLONE ?? 0));
@@ -480,6 +544,7 @@ export async function materializePiExecutable(identity, options = {}) {
           return relative === "" || relative.split(path.sep)[0] !== "node_modules";
         }
       });
+      await chmod(destination, 0o700);
       const copiedBundle = await collectPiBundle(destination, "", 0, null, { excludeNodeModules: true });
       if (piBundleFingerprint(copiedBundle.entries) !== piBundleFingerprint(node.entries)) {
         throw new Error("Pi package changed during snapshot.");
@@ -511,17 +576,22 @@ export async function materializePiExecutable(identity, options = {}) {
       },
       cleanup: isolated.cleanup
     };
-  } catch {
+  } catch (cause) {
     let cleanupFailed = false;
     try {
       await isolated.cleanup();
     } catch {
       cleanupFailed = true;
     }
+    const rootUnavailable = cause?.code === "pi_snapshot_root_unavailable";
     const error = new Error(cleanupFailed
       ? "Pi launch snapshot cleanup failed."
-      : "Pi launch identity could not be snapshotted.");
-    error.code = cleanupFailed ? "pi_snapshot_cleanup_failed" : "pi_snapshot_failed";
+      : rootUnavailable
+        ? "Pi executable snapshot root is not executable."
+        : "Pi launch identity could not be snapshotted.");
+    error.code = cleanupFailed
+      ? "pi_snapshot_cleanup_failed"
+      : rootUnavailable ? "pi_snapshot_root_unavailable" : "pi_snapshot_failed";
     throw error;
   }
 }
@@ -566,7 +636,7 @@ async function probePi(run, identity, args, environment, cwd) {
 }
 
 async function probePiSnapshot(run, materializeExecutable, identity, args, environment, cwd) {
-  const outcome = { probe: null, snapshotFailed: false, cleanupFailed: false };
+  const outcome = { probe: null, snapshotFailed: false, snapshotUnavailable: false, cleanupFailed: false };
   let materialized;
   try {
     materialized = await materializeExecutable(identity);
@@ -574,6 +644,7 @@ async function probePiSnapshot(run, materializeExecutable, identity, args, envir
   } catch (error) {
     outcome.snapshotFailed = true;
     if (error?.code === "pi_snapshot_cleanup_failed") outcome.cleanupFailed = true;
+    if (error?.code === "pi_snapshot_root_unavailable") outcome.snapshotUnavailable = true;
   } finally {
     outcome.cleanupFailed = await cleanupPiResources(materialized) || outcome.cleanupFailed;
   }
@@ -583,8 +654,11 @@ async function probePiSnapshot(run, materializeExecutable, identity, args, envir
 export async function discoverPiCli(options = {}) {
   const run = options.runProcess ?? runProcess;
   const resolveExecutable = options.resolveExecutable ?? resolvePiExecutable;
-  const materializeExecutable = options.materializeExecutable ?? materializePiExecutable;
   const environment = options.environment ?? process.env;
+  const materializeExecutable = options.materializeExecutable ?? ((identity) => materializePiExecutable(identity, {
+    environment,
+    snapshotBaseDirectory: options.snapshotBaseDirectory
+  }));
   const selectedCommand = options.executorCommand ?? "pi";
   let identity;
   try {
@@ -626,6 +700,7 @@ export async function discoverPiCli(options = {}) {
 
     const versionOutcome = await runProbe(["--version"]);
     if (versionOutcome.cleanupFailed) reason = "cleanup_failed";
+    else if (versionOutcome.snapshotUnavailable) reason = "snapshot_unavailable";
     else if (versionOutcome.snapshotFailed) reason = "mutated";
     else {
       const versionProbe = versionOutcome.probe;
@@ -643,6 +718,7 @@ export async function discoverPiCli(options = {}) {
     if (!reason) {
       const helpOutcome = await runProbe(["--help"]);
       if (helpOutcome.cleanupFailed) reason = "cleanup_failed";
+      else if (helpOutcome.snapshotUnavailable) reason = "snapshot_unavailable";
       else if (helpOutcome.snapshotFailed) reason = "mutated";
       else {
         const helpProbe = helpOutcome.probe;
@@ -680,7 +756,7 @@ export async function discoverPiCli(options = {}) {
       if (error?.code === "pi_resolution_cleanup_failed") reason = "cleanup_failed";
     }
     const executableStable = samePiExecutableIdentity(identity, verifiedIdentity);
-    if (!executableStable) reason = "mutated";
+    if (!executableStable && reason !== "cleanup_failed") reason = "mutated";
     if (reason) {
       readiness = unavailablePiReadiness(reason, {
         command: identity.command,
@@ -1067,7 +1143,12 @@ export async function runExecutor(envelope, options) {
       runProcess
     });
     if (!executableIdentity) throw new DelegationError("pi_executor_unavailable", "The selected Pi executable could not be resolved to a supported absolute launch identity.");
-    executableSnapshot = await (options.materializeExecutable ?? materializePiExecutable)(executableIdentity);
+    executableSnapshot = options.materializeExecutable
+      ? await options.materializeExecutable(executableIdentity)
+      : await materializePiExecutable(executableIdentity, {
+        environment: environmentSource,
+        snapshotBaseDirectory: options.snapshotBaseDirectory
+      });
     isolated = await createIsolatedEnvironment(environmentSource, {
       prefix: "relaypact-pi-",
       grants: { ...explicitGrants, GIT_OPTIONAL_LOCKS: "0" }
@@ -1109,6 +1190,7 @@ export async function runExecutor(envelope, options) {
       timedOut: false,
       output: ""
     };
+    if (error?.code === "pi_snapshot_root_unavailable") executionFailure.failureCode = "pi_snapshot_unavailable";
   } finally {
     cleanupFailed = await cleanupPiResources(isolated, executableSnapshot) || cleanupFailed;
   }

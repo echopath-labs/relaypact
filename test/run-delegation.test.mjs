@@ -174,6 +174,25 @@ test("Pi doctor blocks when either disposable state cleanup fails", async () => 
   assert.equal(fixture.calls.length, 1);
 });
 
+test("Pi doctor preserves cleanup failure from final identity reverification", async () => {
+  const fixture = piDoctorFixture();
+  let resolutions = 0;
+  fixture.resolveExecutable = async () => {
+    resolutions += 1;
+    if (resolutions === 2) {
+      const error = new Error("private cleanup detail");
+      error.code = "pi_resolution_cleanup_failed";
+      throw error;
+    }
+    return piIdentity();
+  };
+  const readiness = await discoverPiCli({ ...fixture, executorCommand: "/fixture/pi" });
+  assert.equal(readiness.state, "blocked");
+  assert.equal(readiness.reason, "cleanup_failed");
+  assert.equal(readiness.executableStable, false);
+  assert.doesNotMatch(JSON.stringify(readiness), /private cleanup detail/u);
+});
+
 test("Pi doctor uses a fresh verified executable snapshot for each probe", async () => {
   const fixture = piDoctorFixture();
   const snapshots = [];
@@ -259,10 +278,14 @@ test("Pi launch identity covers imported package files and execution uses an imm
 
 test("Pi snapshot includes dependencies hoisted beside the selected package", async (context) => {
   const workspace = await createDirectory();
-  context.after(() => rm(workspace, { recursive: true, force: true }));
   const modules = path.join(workspace, "node_modules");
   const packageRoot = path.join(modules, "fixture-pi");
   const dependencyRoot = path.join(modules, "hoisted-value");
+  context.after(async () => {
+    await chmod(packageRoot, 0o700).catch(() => {});
+    await chmod(dependencyRoot, 0o700).catch(() => {});
+    await rm(workspace, { recursive: true, force: true });
+  });
   await mkdir(packageRoot, { recursive: true });
   await mkdir(dependencyRoot, { recursive: true });
   const entry = path.join(packageRoot, "pi.mjs");
@@ -287,6 +310,8 @@ test("Pi snapshot includes dependencies hoisted beside the selected package", as
     exports: "./index.mjs"
   }));
   await writeFile(dependency, 'export const version = "0.84.0";\n');
+  await chmod(packageRoot, 0o555);
+  await chmod(dependencyRoot, 0o555);
 
   const before = await resolvePiExecutable(entry);
   assert.equal(before?.packageGraph.nodes.length, 2);
@@ -425,6 +450,33 @@ test("Pi snapshot construction propagates cleanup failure without private diagno
       })
     }),
     (error) => error.code === "pi_snapshot_cleanup_failed" && !error.message.includes("private cleanup detail")
+  );
+});
+
+test("Pi snapshots use a configurable executable-capable private root and fail closed when it cannot execute", async (context) => {
+  const root = await createDirectory();
+  const snapshotBase = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  context.after(() => rm(snapshotBase, { recursive: true, force: true }));
+  const entry = path.join(root, "pi.mjs");
+  await writeFile(path.join(root, "package.json"), JSON.stringify({
+    name: "fixture-pi-snapshot-root",
+    private: true,
+    type: "module",
+    bin: { pi: "pi.mjs" }
+  }));
+  await writeFile(entry, "#!/usr/bin/env node\n");
+  await chmod(entry, 0o700);
+  const identity = await resolvePiExecutable(entry);
+  const snapshot = await materializePiExecutable(identity, { snapshotBaseDirectory: snapshotBase });
+  assert.equal(snapshot.identity.launchCommand.startsWith(`${await realpath(snapshotBase)}${path.sep}`), true);
+  await snapshot.cleanup();
+  await assert.rejects(
+    materializePiExecutable(identity, {
+      snapshotBaseDirectory: snapshotBase,
+      runProcess: async () => piProbeResult("", { exitCode: 126 })
+    }),
+    (error) => error.code === "pi_snapshot_root_unavailable"
   );
 });
 

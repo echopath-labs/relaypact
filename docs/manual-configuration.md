@@ -563,8 +563,18 @@ node ./bin/relaypact.mjs doctor --route codex-pi \
   --executor /absolute/path/to/pi
 
 node ./bin/relaypact.mjs run-pi \
-  --envelope /absolute/private/pi-task-envelope.json
+  --envelope /absolute/private/pi-task-envelope.json \
+  --executor /absolute/path/to/pi
 ```
+
+Pi executable snapshots use an executable-capable private runtime directory rather
+than the system temporary directory. RelayPact prefers
+`$XDG_RUNTIME_DIR/relaypact/pi-executable-snapshots` and otherwise uses
+`$HOME/.cache/relaypact/pi-executable-snapshots`; if neither private location is
+writable it uses a private subdirectory of the system temporary directory only after
+an executable-file probe. On hosts that require another executable filesystem, set
+`RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT` to an absolute, private directory. RelayPact
+probes the selected filesystem before copying or launching Pi.
 
 Read [`packages/adapter-codex-pi/README.md`](../packages/adapter-codex-pi/README.md)
 before selecting it. Pi configuration must not become an implicit dependency or
