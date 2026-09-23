@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, chmod, copyFile, mkdir, readFile, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { access, appendFile, chmod, copyFile, mkdir, readFile, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -308,6 +308,16 @@ test("Pi executable fingerprinting rejects a FIFO without waiting for a writer",
   const fifo = path.join(root, "pi-fifo");
   await execFileAsync("mkfifo", [fifo]);
   assert.equal(await executableFingerprint(fifo), null);
+});
+
+test("Pi executable fingerprinting rejects growth after the bounded initial stat", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "growing-pi");
+  await writeFile(executable, "initial bytes");
+  assert.equal(await executableFingerprint(executable, {
+    afterInitialStat: async () => appendFile(executable, " appended after stat")
+  }), null);
 });
 
 test("Pi executable resolution rejects unsupported Windows command shims", async (context) => {

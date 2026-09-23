@@ -205,22 +205,6 @@ function commandCandidates(command, environment) {
     .flatMap((directory) => extensions.map((extension) => path.join(directory, `${command}${extension}`)));
 }
 
-export async function executableFingerprint(file) {
-  const handle = await open(
-    file,
-    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0)
-  );
-  try {
-    const info = await handle.stat();
-    if (!info.isFile() || info.size > MAX_PI_EXECUTABLE_BYTES) return null;
-    const hash = createHash("sha256");
-    for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk);
-    return `sha256:${hash.digest("hex")}`;
-  } finally {
-    await handle.close().catch(() => {});
-  }
-}
-
 const LOADER_RELATIVE_RUNTIME_REFERENCES = [
   "$ORIGIN", "${ORIGIN}", "@loader_path/", "@executable_path/", "@rpath/"
 ].map((value) => Buffer.from(value));
@@ -230,25 +214,64 @@ export function hasLoaderRelativeRuntimeReference(bytes) {
   return LOADER_RELATIVE_RUNTIME_REFERENCES.some((reference) => buffer.includes(reference));
 }
 
+function sameOpenedFileMetadata(before, after) {
+  return before.dev === after.dev && before.ino === after.ino && before.mode === after.mode &&
+    before.size === after.size && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
+}
+
+async function observeExecutableFile(handle, options = {}) {
+  const before = await handle.stat({ bigint: true });
+  if (!before.isFile() || before.size > BigInt(MAX_PI_EXECUTABLE_BYTES)) return null;
+  await options.afterInitialStat?.();
+  const hash = createHash("sha256");
+  const retainedBytes = Math.max(...LOADER_RELATIVE_RUNTIME_REFERENCES.map((item) => item.length)) - 1;
+  let carry = Buffer.alloc(0);
+  let loaderRelative = false;
+  let bytesRead = 0n;
+  const buffer = Buffer.alloc(64 * 1024);
+  while (bytesRead < before.size) {
+    const remaining = before.size - bytesRead;
+    const requested = Math.min(buffer.length, Number(remaining));
+    const result = await handle.read(buffer, 0, requested, Number(bytesRead));
+    if (result.bytesRead === 0) break;
+    bytesRead += BigInt(result.bytesRead);
+    if (bytesRead > before.size || bytesRead > BigInt(MAX_PI_EXECUTABLE_BYTES)) return null;
+    const chunk = buffer.subarray(0, result.bytesRead);
+    hash.update(chunk);
+    if (options.inspectLoaderReferences === true) {
+      const observed = Buffer.concat([carry, chunk]);
+      if (hasLoaderRelativeRuntimeReference(observed)) loaderRelative = true;
+      carry = observed.subarray(Math.max(0, observed.length - retainedBytes));
+    }
+  }
+  const after = await handle.stat({ bigint: true });
+  if (bytesRead !== before.size || !sameOpenedFileMetadata(before, after)) return null;
+  return { fingerprint: `sha256:${hash.digest("hex")}`, loaderRelative };
+}
+
+export async function executableFingerprint(file, options = {}) {
+  const openFile = options.openFile ?? open;
+  const handle = await openFile(
+    file,
+    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0)
+  );
+  try {
+    const observation = await observeExecutableFile(handle, {
+      afterInitialStat: options.afterInitialStat
+    });
+    return observation?.fingerprint ?? null;
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
 async function runtimeExecutableObservation(file) {
   const handle = await open(
     file,
     fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0)
   );
   try {
-    const info = await handle.stat();
-    if (!info.isFile() || info.size > MAX_PI_EXECUTABLE_BYTES) return null;
-    const hash = createHash("sha256");
-    const retainedBytes = Math.max(...LOADER_RELATIVE_RUNTIME_REFERENCES.map((item) => item.length)) - 1;
-    let carry = Buffer.alloc(0);
-    let loaderRelative = false;
-    for await (const chunk of handle.createReadStream({ autoClose: false })) {
-      hash.update(chunk);
-      const observed = Buffer.concat([carry, chunk]);
-      if (hasLoaderRelativeRuntimeReference(observed)) loaderRelative = true;
-      carry = observed.subarray(Math.max(0, observed.length - retainedBytes));
-    }
-    return { fingerprint: `sha256:${hash.digest("hex")}`, loaderRelative };
+    return await observeExecutableFile(handle, { inspectLoaderReferences: true });
   } finally {
     await handle.close().catch(() => {});
   }
