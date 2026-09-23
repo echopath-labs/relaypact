@@ -565,7 +565,8 @@ test("architecture validation rejects transitive dynamic imports from doctor hel
 test("architecture validation rejects eager optional doctor calls", async () => {
   for (const invocation of [
     "await runPiDoctor();",
-    "async function eagerRoute() { return runCursorDoctor(); }\nawait eagerRoute();"
+    "async function eagerRoute() { return runCursorDoctor(); }\nawait eagerRoute();",
+    "`${runPiDoctor()}`;"
   ]) {
     const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
     await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });

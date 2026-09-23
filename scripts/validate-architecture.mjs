@@ -256,6 +256,18 @@ function readJavaScriptRegex(source, start) {
   return null;
 }
 
+function readJavaScriptTemplateChunk(source, start) {
+  for (let index = start; index < source.length; index += 1) {
+    if (source[index] === "\\") {
+      index += 1;
+      continue;
+    }
+    if (source[index] === "`") return { end: index + 1, expression: false };
+    if (source[index] === "$" && source[index + 1] === "{") return { end: index + 2, expression: true };
+  }
+  return { end: source.length, expression: false };
+}
+
 const REGEX_PREFIX_KEYWORDS = new Set([
   "await", "case", "delete", "in", "instanceof", "new", "of", "return",
   "throw", "typeof", "void", "yield"
@@ -264,6 +276,8 @@ const REGEX_PREFIX_KEYWORDS = new Set([
 function staticImportedSpecifiers(source, onIdentifier = () => {}) {
   const results = [];
   let expressionExpected = true;
+  let braceDepth = 0;
+  const templateBases = [];
   for (let index = 0; index < source.length;) {
     const next = skipJavaScriptTrivia(source, index);
     if (next !== index) {
@@ -271,7 +285,17 @@ function staticImportedSpecifiers(source, onIdentifier = () => {}) {
       continue;
     }
     const character = source[index];
-    if (character === '"' || character === "'" || character === "`") {
+    if (character === "`") {
+      const chunk = readJavaScriptTemplateChunk(source, index + 1);
+      index = chunk.end;
+      if (chunk.expression) {
+        templateBases.push(braceDepth);
+        braceDepth += 1;
+        expressionExpected = true;
+      } else expressionExpected = false;
+      continue;
+    }
+    if (character === '"' || character === "'") {
       const quote = character;
       index += 1;
       while (index < source.length) {
@@ -293,11 +317,26 @@ function staticImportedSpecifiers(source, onIdentifier = () => {}) {
       }
     }
     if (character === "{") {
+      braceDepth += 1;
       index += 1;
       expressionExpected = true;
       continue;
     }
     if (character === "}") {
+      const templateBase = templateBases.at(-1);
+      if (templateBase !== undefined && braceDepth === templateBase + 1) {
+        braceDepth -= 1;
+        templateBases.pop();
+        const chunk = readJavaScriptTemplateChunk(source, index + 1);
+        index = chunk.end;
+        if (chunk.expression) {
+          templateBases.push(braceDepth);
+          braceDepth += 1;
+          expressionExpected = true;
+        } else expressionExpected = false;
+        continue;
+      }
+      braceDepth = Math.max(0, braceDepth - 1);
       index += 1;
       expressionExpected = false;
       continue;
