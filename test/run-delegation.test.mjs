@@ -393,6 +393,13 @@ test("Pi identity rejects an opaque Node launcher and resolves runtime probes in
   await chmod(entry, 0o700);
   assert.equal(await resolvePiExecutable(entry, { environment: { PATH: bin } }), null);
 
+  const fallbackBin = path.join(root, "fallback-bin");
+  await mkdir(fallbackBin);
+  await symlink(selectedNode, path.join(fallbackBin, "node"));
+  assert.equal(await resolvePiExecutable(entry, {
+    environment: { PATH: `${bin}${path.delimiter}${fallbackBin}` }
+  }), null);
+
   await rm(nodeLauncher);
   await symlink(selectedNode, nodeLauncher);
   const probes = [];
@@ -456,8 +463,12 @@ test("Pi snapshot construction propagates cleanup failure without private diagno
 test("Pi snapshots use a configurable executable-capable private root and fail closed when it cannot execute", async (context) => {
   const root = await createDirectory();
   const snapshotBase = await createDirectory();
+  const xdgRoot = await createDirectory();
+  const homeRoot = await createDirectory();
   context.after(() => rm(root, { recursive: true, force: true }));
   context.after(() => rm(snapshotBase, { recursive: true, force: true }));
+  context.after(() => rm(xdgRoot, { recursive: true, force: true }));
+  context.after(() => rm(homeRoot, { recursive: true, force: true }));
   const entry = path.join(root, "pi.mjs");
   await writeFile(path.join(root, "package.json"), JSON.stringify({
     name: "fixture-pi-snapshot-root",
@@ -478,6 +489,24 @@ test("Pi snapshots use a configurable executable-capable private root and fail c
     }),
     (error) => error.code === "pi_snapshot_root_unavailable"
   );
+  await assert.rejects(
+    materializePiExecutable(identity, { snapshotBaseDirectory: "relative-root" }),
+    (error) => error.code === "pi_snapshot_root_unavailable"
+  );
+
+  let executableProbeCount = 0;
+  const fallbackSnapshot = await materializePiExecutable(identity, {
+    environment: { XDG_RUNTIME_DIR: xdgRoot, HOME: homeRoot },
+    runProcess: async () => {
+      executableProbeCount += 1;
+      return piProbeResult("", { exitCode: executableProbeCount === 1 ? 126 : 0 });
+    }
+  });
+  assert.equal(executableProbeCount, 2);
+  assert.equal(fallbackSnapshot.identity.launchCommand.startsWith(
+    `${await realpath(path.join(homeRoot, ".cache", "relaypact", "pi-executable-snapshots"))}${path.sep}`
+  ), true);
+  await fallbackSnapshot.cleanup();
 });
 
 test("Pi doctor discovery blocks timed-out, truncated, and settings-write probes without retaining diagnostics", async () => {
@@ -495,6 +524,15 @@ test("Pi doctor discovery blocks timed-out, truncated, and settings-write probes
   assert.equal(settingsResult.reason, "settings_write_attempt");
   assert.equal(settingsResult.settingsIsolated, false);
   assert.equal(JSON.stringify(settingsResult).includes(privatePath), false);
+
+  const isolationFailure = await discoverPiCli({
+    ...piDoctorFixture(),
+    executorCommand: "/fixture/pi",
+    createEnvironment: async () => { throw new Error(`private failure at ${privatePath}`); }
+  });
+  assert.equal(isolationFailure.state, "blocked");
+  assert.equal(isolationFailure.reason, "isolation_unavailable");
+  assert.equal(JSON.stringify(isolationFailure).includes(privatePath), false);
 });
 
 test("CLI admits the experimental Pi doctor route with an explicit executable", async () => {

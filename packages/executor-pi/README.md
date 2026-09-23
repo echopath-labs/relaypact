@@ -28,10 +28,11 @@ doctor probe and each task execute from a separate verified private snapshot of 
 Task cleanup failures remain structured execution failures so Host filesystem and Git postflight
 evidence is still collected.
 
-Executable snapshots avoid the system temporary directory because hardened Linux
-hosts may mount it with `noexec`. RelayPact prefers the private XDG runtime directory,
-then `$HOME/.cache/relaypact/pi-executable-snapshots`, and uses a private system-temp
-subdirectory only when those locations are unavailable and the executable probe passes.
+Executable snapshots prefer private roots because hardened Linux hosts may mount the
+system temporary directory with `noexec`. RelayPact tries the private XDG runtime
+directory, then `$HOME/.cache/relaypact/pi-executable-snapshots`, and finally a private
+system-temp subdirectory. It accepts the first candidate whose directory and
+executable-file probes pass.
 An absolute private override is available through
 `RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT`. The selected root must pass an executable-file
 probe before Pi package or runtime bytes are copied.

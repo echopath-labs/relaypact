@@ -106,37 +106,39 @@ async function cleanupPiResources(...resources) {
   return results.some((result) => result.status === "rejected");
 }
 
-async function piSnapshotBaseDirectory(environment, explicitRoot) {
+function piSnapshotRootUnavailable(message = "Pi executable snapshot root is unavailable.") {
+  const error = new Error(message);
+  error.code = "pi_snapshot_root_unavailable";
+  return error;
+}
+
+function piSnapshotBaseDirectories(environment, explicitRoot) {
   const configured = explicitRoot ?? environment[PI_SNAPSHOT_ROOT_ENV];
   const candidates = [];
   if (configured !== undefined) {
     if (typeof configured !== "string" || !path.isAbsolute(configured) || configured.includes("\0")) {
-      throw new Error("Pi executable snapshot root must be an absolute directory.");
+      throw piSnapshotRootUnavailable("Pi executable snapshot root must be an absolute directory.");
     }
     candidates.push(configured);
-  } else if (typeof environment.XDG_RUNTIME_DIR === "string" && path.isAbsolute(environment.XDG_RUNTIME_DIR)) {
-    candidates.push(path.join(environment.XDG_RUNTIME_DIR, "relaypact", "pi-executable-snapshots"));
   } else {
+    if (typeof environment.XDG_RUNTIME_DIR === "string" && path.isAbsolute(environment.XDG_RUNTIME_DIR)) {
+      candidates.push(path.join(environment.XDG_RUNTIME_DIR, "relaypact", "pi-executable-snapshots"));
+    }
     const home = typeof environment.HOME === "string" && path.isAbsolute(environment.HOME)
       ? environment.HOME
       : os.homedir();
     candidates.push(path.join(home, ".cache", "relaypact", "pi-executable-snapshots"));
-  }
-  if (configured === undefined) {
     candidates.push(path.join(os.tmpdir(), "relaypact", "pi-executable-snapshots"));
   }
-  for (const base of candidates) {
-    try {
-      await mkdir(base, { recursive: true, mode: 0o700 });
-      const info = await lstat(base);
-      if (!info.isDirectory() || info.isSymbolicLink()) continue;
-      await chmod(base, 0o700);
-      return await realpath(base);
-    } catch {
-      if (configured !== undefined) throw new Error("Pi executable snapshot root is unavailable.");
-    }
-  }
-  throw new Error("Pi executable snapshot root is unavailable.");
+  return [...new Set(candidates)];
+}
+
+async function preparePiSnapshotBaseDirectory(base) {
+  await mkdir(base, { recursive: true, mode: 0o700 });
+  const info = await lstat(base);
+  if (!info.isDirectory() || info.isSymbolicLink()) throw piSnapshotRootUnavailable();
+  await chmod(base, 0o700);
+  return realpath(base);
 }
 
 async function assertPiSnapshotRootExecutable(isolated, environment, run) {
@@ -148,7 +150,7 @@ async function assertPiSnapshotRootExecutable(isolated, environment, run) {
     result = await run(probe, [], {
       cwd: isolated.root,
       env: minimalEnvironment(isolated.env ?? environment),
-      timeoutMs: 1_000,
+      timeoutMs: PI_PROBE_TIMEOUT_MS,
       maxCaptureBytes: 1024
     });
   } catch {
@@ -398,27 +400,31 @@ async function resolveNodeRuntime(shebang, environment, run, cwd) {
   for (const candidate of commandCandidates(command, environment)) {
     try {
       await access(candidate, fsConstants.X_OK);
+    } catch {
+      continue;
+    }
+    try {
       const resolvedCommand = await realpath(candidate);
-      if (!/^node(?:\.exe)?$/iu.test(path.basename(resolvedCommand))) continue;
-      if ((await firstLine(resolvedCommand)).startsWith("#!")) continue;
+      if (!/^node(?:\.exe)?$/iu.test(path.basename(resolvedCommand))) return null;
+      if ((await firstLine(resolvedCommand)).startsWith("#!")) return null;
       const launcherFingerprint = await executableFingerprint(resolvedCommand);
-      if (!launcherFingerprint) continue;
+      if (!launcherFingerprint) return null;
       const probe = await run(resolvedCommand, ["-p", "process.execPath"], {
         cwd,
         env: environment,
         timeoutMs: PI_PROBE_TIMEOUT_MS,
         maxCaptureBytes: 16 * 1024
       });
-      if (probe.exitCode !== 0 || probe.signal || probe.timedOut || probe.stdoutTruncated || probe.stderrTruncated) continue;
+      if (probe.exitCode !== 0 || probe.signal || probe.timedOut || probe.stdoutTruncated || probe.stderrTruncated) return null;
       const selected = String(probe.stdout ?? "").trim();
-      if (!path.isAbsolute(selected) || selected.includes("\n") || selected.includes("\r")) continue;
+      if (!path.isAbsolute(selected) || selected.includes("\n") || selected.includes("\r")) return null;
       const target = await realpath(selected);
       await access(target, fsConstants.X_OK);
       const targetFingerprint = await executableFingerprint(target);
-      if (!targetFingerprint) continue;
+      if (!targetFingerprint) return null;
       // A wrapper or toolchain shim can add opaque environment or argv semantics.
       // Execute only a directly resolved Node runtime that can be snapshotted exactly.
-      if (target !== resolvedCommand || targetFingerprint !== launcherFingerprint) continue;
+      if (target !== resolvedCommand || targetFingerprint !== launcherFingerprint) return null;
       return {
         command: path.resolve(candidate),
         resolvedCommand,
@@ -427,7 +433,9 @@ async function resolveNodeRuntime(shebang, environment, run, cwd) {
         targetFingerprint
       };
     } catch {
-      // Try the next absolute PATH candidate without retaining private diagnostics.
+      // The first executable PATH candidate is the shebang-selected runtime.
+      // Reject it if its semantics cannot be reproduced; never fall through to a different Node.
+      return null;
     }
   }
   return null;
@@ -510,13 +518,31 @@ export async function materializePiExecutable(identity, options = {}) {
   }
   const createEnvironment = options.createEnvironment ?? createIsolatedEnvironment;
   const environment = options.environment ?? process.env;
-  const snapshotBase = await piSnapshotBaseDirectory(environment, options.snapshotBaseDirectory);
-  const isolated = await createEnvironment(environment, {
-    prefix: "relaypact-pi-exec-",
-    baseDirectory: snapshotBase
-  });
+  let isolated;
   try {
-    await assertPiSnapshotRootExecutable(isolated, environment, options.runProcess ?? runProcess);
+    const snapshotBases = piSnapshotBaseDirectories(environment, options.snapshotBaseDirectory);
+    for (const candidate of snapshotBases) {
+      let candidateEnvironment;
+      try {
+        const snapshotBase = await preparePiSnapshotBaseDirectory(candidate);
+        candidateEnvironment = await createEnvironment(environment, {
+          prefix: "relaypact-pi-exec-",
+          baseDirectory: snapshotBase
+        });
+        await assertPiSnapshotRootExecutable(candidateEnvironment, environment, options.runProcess ?? runProcess);
+        isolated = candidateEnvironment;
+        break;
+      } catch {
+        const cleanupFailed = await cleanupPiResources(candidateEnvironment);
+        if (cleanupFailed) {
+          const error = new Error("Pi launch snapshot cleanup failed.");
+          error.code = "pi_snapshot_cleanup_failed";
+          throw error;
+        }
+        if (options.snapshotBaseDirectory !== undefined || environment[PI_SNAPSHOT_ROOT_ENV] !== undefined) break;
+      }
+    }
+    if (!isolated) throw piSnapshotRootUnavailable();
     if (identity.kind === "native") {
       const executable = path.join(isolated.root, "pi");
       await copyFile(identity.target, executable, fsConstants.COPYFILE_EXCL | (fsConstants.COPYFILE_FICLONE ?? 0));
@@ -577,21 +603,21 @@ export async function materializePiExecutable(identity, options = {}) {
       cleanup: isolated.cleanup
     };
   } catch (cause) {
-    let cleanupFailed = false;
-    try {
-      await isolated.cleanup();
-    } catch {
-      cleanupFailed = true;
-    }
+    const cleanupFailed = await cleanupPiResources(isolated);
     const rootUnavailable = cause?.code === "pi_snapshot_root_unavailable";
+    const priorCleanupFailed = cause?.code === "pi_snapshot_cleanup_failed";
     const error = new Error(cleanupFailed
       ? "Pi launch snapshot cleanup failed."
+      : priorCleanupFailed
+        ? "Pi launch snapshot cleanup failed."
       : rootUnavailable
         ? "Pi executable snapshot root is not executable."
         : "Pi launch identity could not be snapshotted.");
     error.code = cleanupFailed
       ? "pi_snapshot_cleanup_failed"
-      : rootUnavailable ? "pi_snapshot_root_unavailable" : "pi_snapshot_failed";
+      : priorCleanupFailed
+        ? "pi_snapshot_cleanup_failed"
+        : rootUnavailable ? "pi_snapshot_root_unavailable" : "pi_snapshot_failed";
     throw error;
   }
 }
@@ -655,6 +681,7 @@ export async function discoverPiCli(options = {}) {
   const run = options.runProcess ?? runProcess;
   const resolveExecutable = options.resolveExecutable ?? resolvePiExecutable;
   const environment = options.environment ?? process.env;
+  const createEnvironment = options.createEnvironment ?? createIsolatedEnvironment;
   const materializeExecutable = options.materializeExecutable ?? ((identity) => materializePiExecutable(identity, {
     environment,
     snapshotBaseDirectory: options.snapshotBaseDirectory
@@ -682,10 +709,14 @@ export async function discoverPiCli(options = {}) {
   let readiness;
   let cleanupFailed = false;
   try {
-    isolated = await createIsolatedEnvironment(environment, {
+    isolated = await createEnvironment(environment, {
       prefix: "relaypact-pi-doctor-",
       grants: { GIT_OPTIONAL_LOCKS: "0" }
     });
+  } catch {
+    return unavailablePiReadiness("isolation_unavailable", { command: identity.command });
+  }
+  try {
     const configuration = path.join(isolated.root, "agent");
     await mkdir(configuration, { mode: 0o700 });
     const probeEnvironment = {

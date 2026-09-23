@@ -171,7 +171,7 @@ absolute. It runs only `--version` and `--help` from disposable HOME, settings,
 session and working directories. Native bootstrap writes stay inside that
 temporary root and are deleted afterward; global/project Pi settings and
 authentication are not read or modified. Missing, unsupported, mutated,
-timed-out, truncated or settings-isolation-failing probes return `blocked` with
+timed-out, truncated, temporary-state-creation-failing or settings-isolation-failing probes return `blocked` with
 fixed diagnostics. A `ready` result does not prove authentication, provider or
 model availability.
 
@@ -569,10 +569,10 @@ node ./bin/relaypact.mjs run-pi \
 
 Pi executable snapshots use an executable-capable private runtime directory rather
 than the system temporary directory. RelayPact prefers
-`$XDG_RUNTIME_DIR/relaypact/pi-executable-snapshots` and otherwise uses
-`$HOME/.cache/relaypact/pi-executable-snapshots`; if neither private location is
-writable it uses a private subdirectory of the system temporary directory only after
-an executable-file probe. On hosts that require another executable filesystem, set
+`$XDG_RUNTIME_DIR/relaypact/pi-executable-snapshots`, then
+`$HOME/.cache/relaypact/pi-executable-snapshots`; if neither private location passes
+directory and executable-file probes, it tries a private subdirectory of the system
+temporary directory. On hosts that require another executable filesystem, set
 `RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT` to an absolute, private directory. RelayPact
 probes the selected filesystem before copying or launching Pi.
 
