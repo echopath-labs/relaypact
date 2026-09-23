@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, appendFile, chmod, copyFile, mkdir, readFile, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { access, appendFile, chmod, copyFile, mkdir, readFile, realpath, rm, stat, symlink, truncate, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { validateTaskEnvelope } from "../packages/contracts/src/envelope.mjs";
 import { parseStatusPaths } from "../packages/core/src/git.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
-import { collectPiBundle, discoverPiCli, executableFingerprint, hasLoaderRelativeRuntimeReference, materializePiExecutable, piPlatformSupported, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
+import { collectPiBundle, discoverPiCli, executableFingerprint, hasLoaderRelativeRuntimeReference, materializePiExecutable, piPlatformSupported, readPiPackageManifest, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
 const fakePi = fileURLToPath(new URL("./fixtures/fake-pi.mjs", import.meta.url));
@@ -45,9 +45,20 @@ test("CLI reads an envelope file and emits a structured result", async () => {
 });
 
 const readyPiHelp = [
-  "--print", "--mode text json", "--no-session", "--no-extensions", "--no-skills",
-  "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve",
-  "--tools", "--provider", "--model", "--thinking"
+  "Options:",
+  "  --print                       Non-interactive mode",
+  "  --mode <mode>                 Output mode: text or json",
+  "  --no-session                  Disable session persistence",
+  "  --no-extensions               Disable extensions",
+  "  --no-skills                   Disable skills",
+  "  --no-prompt-templates         Disable prompt templates",
+  "  --no-themes                   Disable themes",
+  "  --no-context-files            Disable context files",
+  "  --no-approve                  Disable approval",
+  "  --tools <tools>               Select tools",
+  "  --provider <name>             Select provider",
+  "  --model <pattern>             Select model",
+  "  --thinking <level>            Select thinking level"
 ].join("\n");
 const piIdentity = (fingerprint = "a".repeat(64)) => ({
   command: "/fixture/pi",
@@ -149,11 +160,19 @@ test("Pi doctor discovery blocks unsupported, missing, and mutated executables",
   const missingCapability = piDoctorFixture({ help: piProbeResult(readyPiHelp.replace("--thinking", "")) });
   assert.equal((await discoverPiCli({ ...missingCapability, executorCommand: "/fixture/pi" })).reason, "unsupported_capabilities");
 
-  const missingMode = piDoctorFixture({ help: piProbeResult(readyPiHelp.replace("--mode text json", "text json")) });
+  const missingMode = piDoctorFixture({ help: piProbeResult(readyPiHelp.replace("--mode <mode>", "mode <mode>")) });
   assert.equal((await discoverPiCli({ ...missingMode, executorCommand: "/fixture/pi" })).reason, "unsupported_capabilities");
 
-  const unrelatedText = piDoctorFixture({ help: piProbeResult(`${readyPiHelp.replace("--mode text json", "--mode json")}\n--system-prompt <text>`) });
+  const unrelatedText = piDoctorFixture({ help: piProbeResult(`${readyPiHelp.replace("Output mode: text or json", "Output mode: json")}\n  --system-prompt <text>`) });
   assert.equal((await discoverPiCli({ ...unrelatedText, executorCommand: "/fixture/pi" })).reason, "unsupported_capabilities");
+
+  const proseOnly = piDoctorFixture({
+    help: piProbeResult(readyPiHelp.replace(
+      "  --thinking <level>            Select thinking level",
+      "  This release removed --thinking; use model configuration instead."
+    ))
+  });
+  assert.equal((await discoverPiCli({ ...proseOnly, executorCommand: "/fixture/pi" })).reason, "unsupported_capabilities");
 
   const missing = piDoctorFixture({ identities: [] });
   assert.equal((await discoverPiCli({ ...missing, executorCommand: "/fixture/pi" })).reason, "missing");
@@ -318,6 +337,34 @@ test("Pi executable fingerprinting rejects growth after the bounded initial stat
   assert.equal(await executableFingerprint(executable, {
     afterInitialStat: async () => appendFile(executable, " appended after stat")
   }), null);
+});
+
+test("Pi package manifest reading rejects short reads and same-size metadata drift", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const manifest = path.join(root, "package.json");
+  const initial = JSON.stringify({ name: "alpha" });
+  const replacement = JSON.stringify({ name: "bravo" });
+  assert.equal(initial.length, replacement.length);
+
+  await writeFile(manifest, initial);
+  await assert.rejects(
+    readPiPackageManifest(root, { afterInitialStat: async () => truncate(manifest, 1) }),
+    /changed while it was read/u
+  );
+
+  await writeFile(manifest, initial);
+  const before = await stat(manifest);
+  await assert.rejects(
+    readPiPackageManifest(root, {
+      afterInitialStat: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        await writeFile(manifest, replacement);
+        await utimes(manifest, before.atime, before.mtime);
+      }
+    }),
+    /changed while it was read/u
+  );
 });
 
 test("Pi executable resolution rejects unsupported Windows command shims", async (context) => {
@@ -635,6 +682,9 @@ test("Pi identity rejects internal absolute symlinks consistently during resolut
   await rm(alias);
   await symlink("value.mjs", alias);
   assert.ok(await resolvePiExecutable(entry));
+  await rm(alias);
+  await symlink(path.join("..", path.basename(root), "value.mjs"), alias);
+  assert.equal(await resolvePiExecutable(entry), null);
 
   const manifestPath = path.join(root, "package.json");
   const manifestTarget = path.join(root, "manifest.json");
@@ -756,6 +806,18 @@ test("Pi snapshots use a configurable executable-capable private root and fail c
   assert.equal(attemptedRoots[1].startsWith(`${await realpath(homeRoot)}${path.sep}`), true);
   await assert.rejects(access(attemptedRoots[0]), (error) => error.code === "ENOENT");
   await capacityFallback.cleanup();
+
+  await assert.rejects(
+    materializePiExecutable(identity, {
+      snapshotBaseDirectory: snapshotBase,
+      materializeCandidate: async () => {
+        const error = new Error("injected capacity failure");
+        error.code = "EDQUOT";
+        throw error;
+      }
+    }),
+    (error) => error.code === "pi_snapshot_root_unavailable"
+  );
 });
 
 test("Pi snapshots reject a private base beneath an untrusted writable ancestor", async (context) => {

@@ -103,13 +103,27 @@ function parsePiVersion(output) {
   return bare.length === 1 && bare[0] === tokens[0] && parseSemanticVersion(bare[0]) ? bare[0] : null;
 }
 
-function helpHasOption(output, flag) {
+function helpLineHasOption(output, flag) {
   const escaped = flag.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   return new RegExp(`(?:^|[^A-Za-z0-9_-])${escaped}(?=$|[^A-Za-z0-9_-])`, "u").test(output);
 }
 
 function helpOptionLine(output, flag) {
-  return output.split(/\r?\n/u).find((line) => helpHasOption(line, flag)) ?? "";
+  let optionsSection = false;
+  for (const line of output.split(/\r?\n/u)) {
+    if (!optionsSection) {
+      if (/^Options:\s*$/u.test(line.trim())) optionsSection = true;
+      continue;
+    }
+    if (line.trim() === "") continue;
+    if (!/^\s/u.test(line)) break;
+    if (/^\s+--?/u.test(line) && helpLineHasOption(line, flag)) return line;
+  }
+  return "";
+}
+
+function helpHasOption(output, flag) {
+  return helpOptionLine(output, flag) !== "";
 }
 
 async function cleanupPiResources(...resources) {
@@ -321,6 +335,10 @@ export async function collectPiBundle(root, relative = "", depth = 0, state = nu
     if (info.isSymbolicLink()) {
       const target = await readlink(absolute);
       if (path.isAbsolute(target)) throw new Error("Pi package contains an unsupported absolute symbolic link.");
+      const lexicalTarget = path.normalize(path.join(path.dirname(nextRelative), target));
+      if (lexicalTarget === ".." || lexicalTarget.startsWith(`..${path.sep}`) || path.isAbsolute(lexicalTarget)) {
+        throw new Error("Pi package contains an escaping symbolic link.");
+      }
       const resolved = await realpath(absolute);
       const prefix = `${state.canonicalRoot}${path.sep}`;
       if (resolved !== state.canonicalRoot && !resolved.startsWith(prefix)) throw new Error("Pi package contains an escaping symbolic link.");
@@ -441,7 +459,7 @@ function piBundleFingerprint(entries) {
   return `sha256:${createHash("sha256").update(JSON.stringify(entries)).digest("hex")}`;
 }
 
-async function readPiPackageManifest(root) {
+export async function readPiPackageManifest(root, options = {}) {
   const manifestPath = path.join(root, "package.json");
   let handle;
   try {
@@ -449,8 +467,9 @@ async function readPiPackageManifest(root) {
       manifestPath,
       fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0)
     );
-    const before = await handle.stat();
-    if (!before.isFile() || before.size > MAX_PI_CONFIG_BYTES) throw new Error("Pi package manifest is unsafe.");
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile() || before.size > BigInt(MAX_PI_CONFIG_BYTES)) throw new Error("Pi package manifest is unsafe.");
+    await options.afterInitialStat?.();
     const buffer = Buffer.alloc(MAX_PI_CONFIG_BYTES + 1);
     let total = 0;
     while (total < buffer.length) {
@@ -459,8 +478,7 @@ async function readPiPackageManifest(root) {
       total += bytesRead;
     }
     if (total > MAX_PI_CONFIG_BYTES) throw new Error("Pi package manifest is unsafe.");
-    const after = await handle.stat();
-    if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+    if (BigInt(total) !== before.size || !sameOpenedFileMetadata(before, await handle.stat({ bigint: true }))) {
       throw new Error("Pi package manifest changed while it was read.");
     }
     const manifest = JSON.parse(buffer.subarray(0, total).toString("utf8"));
@@ -891,7 +909,7 @@ export async function materializePiExecutable(identity, options = {}) {
     }
     throw lastFailure;
   } catch (cause) {
-    const rootUnavailable = cause?.code === "pi_snapshot_root_unavailable";
+    const rootUnavailable = cause?.code === "pi_snapshot_root_unavailable" || snapshotCapacityFailure(cause);
     const priorCleanupFailed = cause?.code === "pi_snapshot_cleanup_failed";
     const error = new Error(priorCleanupFailed
         ? "Pi launch snapshot cleanup failed."

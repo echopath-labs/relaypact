@@ -17,9 +17,21 @@ if (process.argv.includes("--version")) {
 if (process.argv.includes("--help")) {
   process.stdout.write([
     "Usage: pi [options] [prompt]",
-    "--print --mode <mode> (text, json, rpc) --no-session --no-extensions --no-skills",
-    "--no-prompt-templates --no-themes --no-context-files --no-approve",
-    "--tools <tools> --provider <provider> --model <model> --thinking <level>"
+    "",
+    "Options:",
+    "  --print                       Non-interactive mode",
+    "  --mode <mode>                 Output mode: text, json, or rpc",
+    "  --no-session                  Disable session persistence",
+    "  --no-extensions               Disable extensions",
+    "  --no-skills                   Disable skills",
+    "  --no-prompt-templates         Disable prompt templates",
+    "  --no-themes                   Disable themes",
+    "  --no-context-files            Disable context files",
+    "  --no-approve                  Disable approval",
+    "  --tools <tools>               Select tools",
+    "  --provider <provider>         Select provider",
+    "  --model <model>               Select model",
+    "  --thinking <level>            Select thinking level"
   ].join("\n"));
   process.exit(0);
 }

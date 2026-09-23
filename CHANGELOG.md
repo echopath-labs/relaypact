@@ -24,6 +24,7 @@ All notable public changes to RelayPact are recorded here.
 - Remove ambient Pi snapshot-root selection, reject loader-relative Node runtimes, and retry managed snapshot roots after capacity failures.
 - Require optional executor dynamic imports to remain uniquely inside their selected doctor route functions.
 - Bound executable hashing to the initial file size and reject metadata drift observed through the same open handle.
+- Require stable package-manifest reads, relocation-safe package symlinks, option-definition help evidence, and accurate snapshot-capacity diagnostics.
 
 ### Compatibility
 - Pi remains experimental and inactive at the root Plugin. Pi doctor does not read authentication, select a provider or model, prove live availability, or permit route fallback. A missing, unsupported, mutated, timed-out, truncated, temporary-state-creation-failing, or settings-isolation-failing probe blocks readiness with sanitized evidence.
