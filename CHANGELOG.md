@@ -21,6 +21,7 @@ All notable public changes to RelayPact are recorded here.
 - Reject native Pi launchers with unresolved sibling dependencies, validate the exact shebang-selected Node runtime at version 20 or later, and traverse the default doctor's transitive static-import graph.
 - Decode JavaScript string escapes while traversing static imports and preserve isolated-environment cleanup failures as stable blocked outcomes.
 - Tokenize regular-expression literals during static-import traversal and block the Pi route on hosts outside macOS and Linux.
+- Remove ambient Pi snapshot-root selection, reject loader-relative Node runtimes, and retry managed snapshot roots after capacity failures.
 
 ### Compatibility
 - Pi remains experimental and inactive at the root Plugin. Pi doctor does not read authentication, select a provider or model, prove live availability, or permit route fallback. A missing, unsupported, mutated, timed-out, truncated, temporary-state-creation-failing, or settings-isolation-failing probe blocks readiness with sanitized evidence.

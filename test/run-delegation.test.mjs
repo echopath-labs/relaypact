@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, copyFile, mkdir, readFile, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, readFile, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { validateTaskEnvelope } from "../packages/contracts/src/envelope.mjs";
 import { parseStatusPaths } from "../packages/core/src/git.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
-import { collectPiBundle, discoverPiCli, executableFingerprint, materializePiExecutable, piPlatformSupported, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
+import { collectPiBundle, discoverPiCli, executableFingerprint, hasLoaderRelativeRuntimeReference, materializePiExecutable, piPlatformSupported, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
 const fakePi = fileURLToPath(new URL("./fixtures/fake-pi.mjs", import.meta.url));
@@ -324,6 +324,15 @@ test("Pi platform gate blocks unsupported hosts", () => {
   assert.equal(piPlatformSupported("freebsd"), false);
   assert.equal(piPlatformSupported("darwin"), true);
   assert.equal(piPlatformSupported("linux"), true);
+});
+
+test("Pi runtime identity rejects loader-relative dependency references", () => {
+  assert.equal(hasLoaderRelativeRuntimeReference(Buffer.from("prefix $ORIGIN/lib suffix")), true);
+  assert.equal(hasLoaderRelativeRuntimeReference(Buffer.from("prefix ${ORIGIN}/lib suffix")), true);
+  assert.equal(hasLoaderRelativeRuntimeReference(Buffer.from("prefix @loader_path/libnode.dylib suffix")), true);
+  assert.equal(hasLoaderRelativeRuntimeReference(Buffer.from("prefix @executable_path/libnode.dylib suffix")), true);
+  assert.equal(hasLoaderRelativeRuntimeReference(Buffer.from("prefix @rpath/libnode.dylib suffix")), true);
+  assert.equal(hasLoaderRelativeRuntimeReference(Buffer.from("system loader paths only")), false);
 });
 
 test("Pi executable resolution rejects native launchers without a bounded dependency closure", async (context) => {
@@ -700,6 +709,43 @@ test("Pi snapshots use a configurable executable-capable private root and fail c
     `${await realpath(homeRoot)}${path.sep}`
   ), true);
   await fallbackSnapshot.cleanup();
+
+  const ambientOverrideIgnored = await materializePiExecutable(identity, {
+    environment: {
+      HOME: homeRoot,
+      RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT: "relative-ambient-root"
+    }
+  });
+  assert.equal(ambientOverrideIgnored.identity.launchCommand.startsWith(
+    `${await realpath(homeRoot)}${path.sep}`
+  ), true);
+  await ambientOverrideIgnored.cleanup();
+
+  const attemptedRoots = [];
+  const capacityFallback = await materializePiExecutable(identity, {
+    environment: { XDG_RUNTIME_DIR: xdgRoot, HOME: homeRoot },
+    materializeCandidate: async (selectedIdentity, isolated) => {
+      attemptedRoots.push(isolated.root);
+      if (attemptedRoots.length === 1) {
+        const error = new Error("injected capacity failure");
+        error.code = "ENOSPC";
+        throw error;
+      }
+      return {
+        identity: {
+          ...selectedIdentity,
+          launchCommand: path.join(isolated.root, "node"),
+          launchPrefix: []
+        },
+        cleanup: isolated.cleanup
+      };
+    }
+  });
+  assert.equal(attemptedRoots.length, 2);
+  assert.equal(attemptedRoots[0].startsWith(`${await realpath(xdgRoot)}${path.sep}`), true);
+  assert.equal(attemptedRoots[1].startsWith(`${await realpath(homeRoot)}${path.sep}`), true);
+  await assert.rejects(access(attemptedRoots[0]), (error) => error.code === "ENOENT");
+  await capacityFallback.cleanup();
 });
 
 test("Pi snapshots reject a private base beneath an untrusted writable ancestor", async (context) => {

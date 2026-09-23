@@ -260,7 +260,7 @@ function piReasonDetail(reason, minimumVersion) {
     unsupported_capabilities: "The selected Pi executable is missing capabilities required by the adapter.",
     unsupported_platform: "The experimental Pi route currently supports only macOS and Linux.",
     settings_write_attempt: "Pi settings isolation could not be verified because startup reported a settings write failure.",
-    snapshot_unavailable: "The Pi executable snapshot root is not executable. Set RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT to a private executable-capable directory.",
+    snapshot_unavailable: "No trusted Pi executable snapshot root was usable. Configure an absolute private root explicitly through the Host route when required.",
     isolation_unavailable: "Pi readiness temporary state could not be created.",
     mutated: "The selected Pi executable changed during readiness verification.",
     cleanup_failed: "Pi readiness temporary state could not be removed."

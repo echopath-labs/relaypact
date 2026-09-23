@@ -22,7 +22,6 @@ const MAX_PI_BUNDLE_FILES = 30_000;
 const MAX_PI_BUNDLE_DEPTH = 32;
 const PI_PROBE_TIMEOUT_MS = 5_000;
 const PI_PROBE_CAPTURE_BYTES = 256 * 1024;
-const PI_SNAPSHOT_ROOT_ENV = "RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT";
 const MINIMUM_NODE_VERSION = "20.0.0";
 export const MINIMUM_PI_VERSION = "0.84.0";
 const REQUIRED_PI_FLAGS = Object.freeze([
@@ -127,13 +126,12 @@ function piSnapshotRootUnavailable(message = "Pi executable snapshot root is una
 }
 
 function piSnapshotBaseDirectories(environment, explicitRoot) {
-  const configured = explicitRoot ?? environment[PI_SNAPSHOT_ROOT_ENV];
   const candidates = [];
-  if (configured !== undefined) {
-    if (typeof configured !== "string" || !path.isAbsolute(configured) || configured.includes("\0")) {
+  if (explicitRoot !== undefined) {
+    if (typeof explicitRoot !== "string" || !path.isAbsolute(explicitRoot) || explicitRoot.includes("\0")) {
       throw piSnapshotRootUnavailable("Pi executable snapshot root must be an absolute directory.");
     }
-    candidates.push(configured);
+    candidates.push(explicitRoot);
   } else {
     if (typeof environment.XDG_RUNTIME_DIR === "string" && path.isAbsolute(environment.XDG_RUNTIME_DIR)) {
       candidates.push(environment.XDG_RUNTIME_DIR);
@@ -218,6 +216,39 @@ export async function executableFingerprint(file) {
     const hash = createHash("sha256");
     for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk);
     return `sha256:${hash.digest("hex")}`;
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+const LOADER_RELATIVE_RUNTIME_REFERENCES = [
+  "$ORIGIN", "${ORIGIN}", "@loader_path/", "@executable_path/", "@rpath/"
+].map((value) => Buffer.from(value));
+
+export function hasLoaderRelativeRuntimeReference(bytes) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  return LOADER_RELATIVE_RUNTIME_REFERENCES.some((reference) => buffer.includes(reference));
+}
+
+async function runtimeExecutableObservation(file) {
+  const handle = await open(
+    file,
+    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0)
+  );
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > MAX_PI_EXECUTABLE_BYTES) return null;
+    const hash = createHash("sha256");
+    const retainedBytes = Math.max(...LOADER_RELATIVE_RUNTIME_REFERENCES.map((item) => item.length)) - 1;
+    let carry = Buffer.alloc(0);
+    let loaderRelative = false;
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      hash.update(chunk);
+      const observed = Buffer.concat([carry, chunk]);
+      if (hasLoaderRelativeRuntimeReference(observed)) loaderRelative = true;
+      carry = observed.subarray(Math.max(0, observed.length - retainedBytes));
+    }
+    return { fingerprint: `sha256:${hash.digest("hex")}`, loaderRelative };
   } finally {
     await handle.close().catch(() => {});
   }
@@ -602,8 +633,9 @@ async function resolveNodeRuntime(shebang, environment, run, cwd) {
           compareVersions(observation.version, MINIMUM_NODE_VERSION) < 0) return null;
       const target = await realpath(observation.execPath);
       await access(target, fsConstants.X_OK);
-      const targetFingerprint = await executableFingerprint(target);
-      if (!targetFingerprint) return null;
+      const targetObservation = await runtimeExecutableObservation(target);
+      if (!targetObservation || targetObservation.loaderRelative) return null;
+      const targetFingerprint = targetObservation.fingerprint;
       // A wrapper or toolchain shim can add opaque environment or argv semantics.
       // Execute only a directly resolved Node runtime that can be snapshotted exactly.
       if (target !== resolvedCommand || targetFingerprint !== launcherFingerprint) return null;
@@ -723,17 +755,82 @@ function samePiExecutableIdentity(left, right) {
     left.executableFingerprint === right.executableFingerprint);
 }
 
+async function materializePiExecutableInEnvironment(identity, isolated) {
+  const store = path.join(isolated.root, "packages");
+  await mkdir(store, { mode: 0o700 });
+  const destinations = new Map();
+  for (const node of identity.packageGraph.nodes) {
+    const destination = path.join(store, String(node.id));
+    destinations.set(node.id, destination);
+    await copyRecordedPiBundle(node.root, destination, node.entries);
+    const sourceBundle = await collectPiBundle(node.root, "", 0, null, {
+      excludeNodeModules: true,
+      maxFiles: node.entries.length
+    });
+    const copiedBundle = await collectPiBundle(destination, "", 0, null, {
+      excludeNodeModules: true,
+      maxFiles: node.entries.length
+    });
+    const expectedFingerprint = piBundleFingerprint(node.entries);
+    if (piBundleFingerprint(sourceBundle.entries) !== expectedFingerprint ||
+        piBundleFingerprint(copiedBundle.entries) !== expectedFingerprint) {
+      throw new Error("Pi package changed during snapshot.");
+    }
+  }
+  for (const node of identity.packageGraph.nodes) {
+    const destination = destinations.get(node.id);
+    for (const dependency of node.dependencies) {
+      const parts = packageNameParts(dependency.name);
+      const target = destinations.get(dependency.target);
+      if (!parts || !target) throw new Error("Pi dependency closure is incomplete.");
+      const link = path.join(destination, "node_modules", ...parts);
+      await mkdir(path.dirname(link), { recursive: true, mode: 0o700 });
+      await symlink(path.relative(path.dirname(link), target), link, process.platform === "win32" ? "junction" : "dir");
+    }
+  }
+  if (piPackageGraphFingerprint(identity.packageGraph) !== identity.packageFingerprint) {
+    throw new Error("Pi dependency closure identity changed during snapshot.");
+  }
+  const runtime = path.join(isolated.root, "node");
+  await copyBoundedPiFile(identity.runtimeCommand, runtime, {
+    maxBytes: MAX_PI_EXECUTABLE_BYTES,
+    fingerprint: identity.runtimeFingerprint,
+    executable: true
+  });
+  return {
+    identity: {
+      ...identity,
+      launchCommand: runtime,
+      launchPrefix: [path.join(destinations.get(identity.packageGraph.rootId), identity.packageEntry)]
+    },
+    cleanup: isolated.cleanup
+  };
+}
+
+function snapshotCapacityFailure(error) {
+  return error?.code === "ENOSPC" || error?.code === "EDQUOT";
+}
+
 export async function materializePiExecutable(identity, options = {}) {
   if (!identity || !path.isAbsolute(identity.command) || !/^sha256:[a-f0-9]{64}$/u.test(identity.executableFingerprint)) {
     throw new Error("Pi executable identity is incomplete.");
   }
   const createEnvironment = options.createEnvironment ?? createIsolatedEnvironment;
   const environment = options.environment ?? process.env;
-  let isolated;
   try {
+    if (identity.kind !== "node-package" || !plainObject(identity.packageGraph) ||
+        !path.isAbsolute(identity.runtimeCommand) || !path.isAbsolute(identity.runtimeLaunchCommand) ||
+        typeof identity.runtimeVersion !== "string" || !parseSemanticVersion(identity.runtimeVersion) ||
+        compareVersions(identity.runtimeVersion, MINIMUM_NODE_VERSION) < 0 ||
+        identity.runtimeResolvedCommand !== identity.runtimeCommand ||
+        identity.runtimeLauncherFingerprint !== identity.runtimeFingerprint) {
+      throw new Error("Pi package identity is incomplete.");
+    }
     const snapshotBases = piSnapshotBaseDirectories(environment, options.snapshotBaseDirectory);
+    let lastFailure = piSnapshotRootUnavailable();
     for (const candidate of snapshotBases) {
       let candidateEnvironment;
+      let materializationStarted = false;
       try {
         const snapshotBase = await preparePiSnapshotBaseDirectory(candidate);
         candidateEnvironment = await createEnvironment(environment, {
@@ -741,8 +838,9 @@ export async function materializePiExecutable(identity, options = {}) {
           baseDirectory: snapshotBase
         });
         await assertPiSnapshotRootExecutable(candidateEnvironment, environment, options.runProcess ?? runProcess);
-        isolated = candidateEnvironment;
-        break;
+        materializationStarted = true;
+        const materializeCandidate = options.materializeCandidate ?? materializePiExecutableInEnvironment;
+        return await materializeCandidate(identity, candidateEnvironment);
       } catch (cause) {
         if (cause?.code === "environment_cleanup_failed") {
           const error = new Error("Pi launch snapshot cleanup failed.");
@@ -755,81 +853,29 @@ export async function materializePiExecutable(identity, options = {}) {
           error.code = "pi_snapshot_cleanup_failed";
           throw error;
         }
-        if (options.snapshotBaseDirectory !== undefined || environment[PI_SNAPSHOT_ROOT_ENV] !== undefined) break;
+        if (!materializationStarted) {
+          lastFailure = piSnapshotRootUnavailable();
+          if (options.snapshotBaseDirectory !== undefined) throw lastFailure;
+          continue;
+        }
+        if (snapshotCapacityFailure(cause)) {
+          lastFailure = cause;
+          if (options.snapshotBaseDirectory !== undefined) throw cause;
+          continue;
+        }
+        throw cause;
       }
     }
-    if (!isolated) throw piSnapshotRootUnavailable();
-    if (identity.kind !== "node-package" || !plainObject(identity.packageGraph) ||
-        !path.isAbsolute(identity.runtimeCommand) || !path.isAbsolute(identity.runtimeLaunchCommand) ||
-        typeof identity.runtimeVersion !== "string" || !parseSemanticVersion(identity.runtimeVersion) ||
-        compareVersions(identity.runtimeVersion, MINIMUM_NODE_VERSION) < 0 ||
-        identity.runtimeResolvedCommand !== identity.runtimeCommand ||
-        identity.runtimeLauncherFingerprint !== identity.runtimeFingerprint) {
-      throw new Error("Pi package identity is incomplete.");
-    }
-    const store = path.join(isolated.root, "packages");
-    await mkdir(store, { mode: 0o700 });
-    const destinations = new Map();
-    for (const node of identity.packageGraph.nodes) {
-      const destination = path.join(store, String(node.id));
-      destinations.set(node.id, destination);
-      await copyRecordedPiBundle(node.root, destination, node.entries);
-      const sourceBundle = await collectPiBundle(node.root, "", 0, null, {
-        excludeNodeModules: true,
-        maxFiles: node.entries.length
-      });
-      const copiedBundle = await collectPiBundle(destination, "", 0, null, {
-        excludeNodeModules: true,
-        maxFiles: node.entries.length
-      });
-      const expectedFingerprint = piBundleFingerprint(node.entries);
-      if (piBundleFingerprint(sourceBundle.entries) !== expectedFingerprint ||
-          piBundleFingerprint(copiedBundle.entries) !== expectedFingerprint) {
-        throw new Error("Pi package changed during snapshot.");
-      }
-    }
-    for (const node of identity.packageGraph.nodes) {
-      const destination = destinations.get(node.id);
-      for (const dependency of node.dependencies) {
-        const parts = packageNameParts(dependency.name);
-        const target = destinations.get(dependency.target);
-        if (!parts || !target) throw new Error("Pi dependency closure is incomplete.");
-        const link = path.join(destination, "node_modules", ...parts);
-        await mkdir(path.dirname(link), { recursive: true, mode: 0o700 });
-        await symlink(path.relative(path.dirname(link), target), link, process.platform === "win32" ? "junction" : "dir");
-      }
-    }
-    if (piPackageGraphFingerprint(identity.packageGraph) !== identity.packageFingerprint) {
-      throw new Error("Pi dependency closure identity changed during snapshot.");
-    }
-    const runtime = path.join(isolated.root, "node");
-    await copyBoundedPiFile(identity.runtimeCommand, runtime, {
-      maxBytes: MAX_PI_EXECUTABLE_BYTES,
-      fingerprint: identity.runtimeFingerprint,
-      executable: true
-    });
-    return {
-      identity: {
-        ...identity,
-        launchCommand: runtime,
-        launchPrefix: [path.join(destinations.get(identity.packageGraph.rootId), identity.packageEntry)]
-      },
-      cleanup: isolated.cleanup
-    };
+    throw lastFailure;
   } catch (cause) {
-    const cleanupFailed = await cleanupPiResources(isolated);
     const rootUnavailable = cause?.code === "pi_snapshot_root_unavailable";
     const priorCleanupFailed = cause?.code === "pi_snapshot_cleanup_failed";
-    const error = new Error(cleanupFailed
-      ? "Pi launch snapshot cleanup failed."
-      : priorCleanupFailed
+    const error = new Error(priorCleanupFailed
         ? "Pi launch snapshot cleanup failed."
       : rootUnavailable
         ? "Pi executable snapshot root is not executable."
         : "Pi launch identity could not be snapshotted.");
-    error.code = cleanupFailed
-      ? "pi_snapshot_cleanup_failed"
-      : priorCleanupFailed
+    error.code = priorCleanupFailed
         ? "pi_snapshot_cleanup_failed"
         : rootUnavailable ? "pi_snapshot_root_unavailable" : "pi_snapshot_failed";
     throw error;
