@@ -40,24 +40,36 @@ export async function createIsolatedEnvironment(source = process.env, options = 
   if (!path.isAbsolute(baseDirectory)) {
     throw new DelegationError("invalid_environment_root", "Isolated environment roots must use an absolute base directory.");
   }
+  const makeTemporaryDirectory = options.fileSystem?.mkdtemp ?? mkdtemp;
+  const makeDirectory = options.fileSystem?.mkdir ?? mkdir;
+  const removeDirectory = options.fileSystem?.rm ?? rm;
   let root;
   try {
-    root = await mkdtemp(path.join(baseDirectory, options.prefix ?? "relaypact-env-"));
+    root = await makeTemporaryDirectory(path.join(baseDirectory, options.prefix ?? "relaypact-env-"));
     const home = path.join(root, "home");
     const temporary = path.join(root, "tmp");
-    await mkdir(home, { recursive: true, mode: 0o700 });
-    await mkdir(temporary, { recursive: true, mode: 0o700 });
+    await makeDirectory(home, { recursive: true, mode: 0o700 });
+    await makeDirectory(temporary, { recursive: true, mode: 0o700 });
     return {
       root,
       home,
       temporary,
       env: minimalEnvironment(source, { grants: options.grants, home, temporary }),
       async cleanup() {
-        await rm(root, { recursive: true, force: true });
+        await removeDirectory(root, { recursive: true, force: true });
       }
     };
   } catch (error) {
-    if (root) await rm(root, { recursive: true, force: true }).catch(() => {});
+    if (root) {
+      try {
+        await removeDirectory(root, { recursive: true, force: true });
+      } catch {
+        throw new DelegationError(
+          "environment_cleanup_failed",
+          "An incomplete isolated environment could not be removed."
+        );
+      }
+    }
     throw error;
   }
 }

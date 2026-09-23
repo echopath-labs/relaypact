@@ -637,9 +637,11 @@ export async function resolvePiExecutable(command, options = {}) {
   try {
     try {
       discovery = await createEnvironment(environment, { prefix: "relaypact-pi-resolve-" });
-    } catch {
+    } catch (cause) {
       const error = new Error("Pi executable discovery state is unavailable.");
-      error.code = "pi_resolution_isolation_unavailable";
+      error.code = cause?.code === "environment_cleanup_failed"
+        ? "pi_resolution_cleanup_failed"
+        : "pi_resolution_isolation_unavailable";
       throw error;
     }
     for (const candidate of commandCandidates(command, environment)) {
@@ -736,7 +738,12 @@ export async function materializePiExecutable(identity, options = {}) {
         await assertPiSnapshotRootExecutable(candidateEnvironment, environment, options.runProcess ?? runProcess);
         isolated = candidateEnvironment;
         break;
-      } catch {
+      } catch (cause) {
+        if (cause?.code === "environment_cleanup_failed") {
+          const error = new Error("Pi launch snapshot cleanup failed.");
+          error.code = "pi_snapshot_cleanup_failed";
+          throw error;
+        }
         const cleanupFailed = await cleanupPiResources(candidateEnvironment);
         if (cleanupFailed) {
           const error = new Error("Pi launch snapshot cleanup failed.");
@@ -920,8 +927,10 @@ export async function discoverPiCli(options = {}) {
       prefix: "relaypact-pi-doctor-",
       grants: { GIT_OPTIONAL_LOCKS: "0" }
     });
-  } catch {
-    return unavailablePiReadiness("isolation_unavailable", { command: identity.command });
+  } catch (error) {
+    return unavailablePiReadiness(error?.code === "environment_cleanup_failed" ? "cleanup_failed" : "isolation_unavailable", {
+      command: identity.command
+    });
   }
   const configuration = path.join(isolated.root, "agent");
   try {

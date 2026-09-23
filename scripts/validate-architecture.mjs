@@ -182,7 +182,55 @@ function readJavaScriptString(source, start) {
   for (let index = start + 1; index < source.length; index += 1) {
     const character = source[index];
     if (character === quote) return { value, end: index + 1 };
-    if (character === "\\" || character === "\n" || character === "\r") return { value: null, end: index + 1 };
+    if (character === "\n" || character === "\r") return { value: null, end: index + 1 };
+    if (character === "\\") {
+      const escaped = source[index + 1];
+      if (escaped === undefined) return { value: null, end: source.length };
+      const simple = new Map([
+        ["b", "\b"], ["f", "\f"], ["n", "\n"], ["r", "\r"],
+        ["t", "\t"], ["v", "\v"], ["0", "\0"], ["\\", "\\"],
+        ['"', '"'], ["'", "'"]
+      ]);
+      if (simple.has(escaped)) {
+        if (escaped === "0" && /[0-9]/u.test(source[index + 2] ?? "")) {
+          return { value: null, end: index + 2 };
+        }
+        value += simple.get(escaped);
+        index += 1;
+        continue;
+      }
+      if (escaped === "\n" || escaped === "\r") {
+        if (escaped === "\r" && source[index + 2] === "\n") index += 1;
+        index += 1;
+        continue;
+      }
+      if (escaped === "x") {
+        const digits = source.slice(index + 2, index + 4);
+        if (!/^[0-9A-Fa-f]{2}$/u.test(digits)) return { value: null, end: index + 2 };
+        value += String.fromCharCode(Number.parseInt(digits, 16));
+        index += 3;
+        continue;
+      }
+      if (escaped === "u") {
+        if (source[index + 2] === "{") {
+          const close = source.indexOf("}", index + 3);
+          const digits = close === -1 ? "" : source.slice(index + 3, close);
+          const codePoint = /^[0-9A-Fa-f]{1,6}$/u.test(digits) ? Number.parseInt(digits, 16) : NaN;
+          if (!Number.isInteger(codePoint) || codePoint > 0x10FFFF) return { value: null, end: index + 2 };
+          value += String.fromCodePoint(codePoint);
+          index = close;
+          continue;
+        }
+        const digits = source.slice(index + 2, index + 6);
+        if (!/^[0-9A-Fa-f]{4}$/u.test(digits)) return { value: null, end: index + 2 };
+        value += String.fromCharCode(Number.parseInt(digits, 16));
+        index += 5;
+        continue;
+      }
+      value += escaped;
+      index += 1;
+      continue;
+    }
     value += character;
   }
   return { value: null, end: source.length };

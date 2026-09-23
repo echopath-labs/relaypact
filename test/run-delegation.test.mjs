@@ -290,6 +290,15 @@ test("Pi executable resolution classifies disposable-state setup failure", async
   assert.equal(readiness.state, "blocked");
   assert.equal(readiness.reason, "isolation_unavailable");
   assert.doesNotMatch(JSON.stringify(readiness), /private temporary path/u);
+
+  const cleanupError = new Error("private cleanup path");
+  cleanupError.code = "environment_cleanup_failed";
+  await assert.rejects(
+    resolvePiExecutable(fakePi, {
+      createEnvironment: async () => { throw cleanupError; }
+    }),
+    (failure) => failure.code === "pi_resolution_cleanup_failed" && !failure.message.includes("private cleanup path")
+  );
 });
 
 test("Pi executable fingerprinting rejects a FIFO without waiting for a writer", async (context) => {
@@ -740,6 +749,17 @@ test("Pi doctor discovery blocks timed-out, truncated, and settings-write probes
   assert.equal(isolationFailure.state, "blocked");
   assert.equal(isolationFailure.reason, "isolation_unavailable");
   assert.equal(JSON.stringify(isolationFailure).includes(privatePath), false);
+
+  const cleanupError = new Error(`private cleanup failure at ${privatePath}`);
+  cleanupError.code = "environment_cleanup_failed";
+  const constructionCleanupFailure = await discoverPiCli({
+    ...piDoctorFixture(),
+    executorCommand: "/fixture/pi",
+    createEnvironment: async () => { throw cleanupError; }
+  });
+  assert.equal(constructionCleanupFailure.state, "blocked");
+  assert.equal(constructionCleanupFailure.reason, "cleanup_failed");
+  assert.equal(JSON.stringify(constructionCleanupFailure).includes(privatePath), false);
 
   const setupRoot = await createDirectory();
   const setupBlocker = path.join(setupRoot, "not-a-directory");
