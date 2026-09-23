@@ -368,6 +368,10 @@ async function staticImportClosure(entry, allowedRoot) {
   return closure;
 }
 
+function dynamicImportCount(source) {
+  return [...source.matchAll(/\bimport(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$))*\(/gu)].length;
+}
+
 export async function validateArchitecture(rootInput) {
   const root = await realpath(rootInput);
   const errors = [];
@@ -526,14 +530,27 @@ export async function validateArchitecture(rootInput) {
   if (doctorStaticImportPaths.has(path.join(root, "packages", "executor-cursor", "src", "executor.mjs"))) {
     errors.push("Default doctor must not statically load the optional Cursor executor.");
   }
-  if (!doctorSource.includes('await import("../../executor-cursor/src/executor.mjs")')) {
+  const cursorDoctorPrefix = 'export async function runCursorDoctor(options = {}) {\n  const { discoverCursorCli } = await import("../../executor-cursor/src/executor.mjs");';
+  if (!doctorSource.includes(cursorDoctorPrefix)) {
     errors.push("Cursor doctor must load the Cursor executor only inside the selected diagnostic route.");
   }
   if (doctorStaticImportPaths.has(path.join(root, "packages", "executor-pi", "src", "executor.mjs"))) {
     errors.push("Default doctor must not statically load the optional Pi executor.");
   }
-  if (!doctorSource.includes('await import("../../executor-pi/src/executor.mjs")')) {
+  const piDoctorPrefix = 'export async function runPiDoctor(options = {}) {\n  const { discoverPiCli, MINIMUM_PI_VERSION } = await import("../../executor-pi/src/executor.mjs");';
+  if (!doctorSource.includes(piDoctorPrefix)) {
     errors.push("Pi doctor must load the Pi executor only inside the selected diagnostic route.");
+  }
+  if (dynamicImportCount(doctorSource) !== 2) {
+    errors.push("Default doctor may dynamically import optional executors only inside the Cursor and Pi route functions.");
+  }
+  for (const importedPath of doctorStaticImportPaths) {
+    if (importedPath === doctorPath) continue;
+    const importedSource = await readFile(importedPath, "utf8").catch(() => "");
+    if (dynamicImportCount(importedSource) > 0) {
+      errors.push("Default doctor static dependencies must not dynamically import optional executors.");
+      break;
+    }
   }
 
   for (const legacy of ["src", "contracts", "hosts", "executors", "adapters"]) {

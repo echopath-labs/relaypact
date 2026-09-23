@@ -534,6 +534,34 @@ test("architecture validation ignores regex braces before transitive imports", a
   await rm(root, { recursive: true });
 });
 
+test("architecture validation rejects a top-level Pi dynamic import", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const importLine = 'const { discoverPiCli, MINIMUM_PI_VERSION } = await import("../../executor-pi/src/executor.mjs");';
+  const doctor = (await readFile(doctorPath, "utf8")).replace(`  ${importLine}`, "");
+  await writeFile(doctorPath, `${importLine}\n${doctor}`);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("Pi doctor must load the Pi executor only inside")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation rejects transitive dynamic imports from doctor helpers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const helperPath = path.join(root, "packages", "cli", "src", "dynamic-pi-helper.mjs");
+  await writeFile(helperPath, 'export const eagerPi = await import("../../executor-pi/src/executor.mjs");\n');
+  await writeFile(doctorPath, `${await readFile(doctorPath, "utf8")}\nimport "./dynamic-pi-helper.mjs";\n`);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("static dependencies must not dynamically import")));
+  await rm(root, { recursive: true });
+});
+
 test("architecture validation rejects prerequisite and live-smoke drift", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
   await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
