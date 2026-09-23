@@ -184,13 +184,11 @@ async function preparePiSnapshotBaseDirectory(base) {
   return canonical;
 }
 
-async function assertPiSnapshotRootExecutable(isolated, environment, run) {
+async function assertPiSnapshotRootExecutable(materialized, isolated, environment, run) {
   if (process.platform === "win32") return;
-  const probe = path.join(isolated.root, ".relaypact-exec-probe");
-  await writeFile(probe, "#!/bin/sh\nexit 0\n", { mode: 0o500, flag: "wx" });
   let result;
   try {
-    result = await run(probe, [], {
+    result = await run(materialized.identity.launchCommand, ["-e", "process.exit(0)"], {
       cwd: isolated.root,
       env: minimalEnvironment(isolated.env ?? environment),
       timeoutMs: PI_PROBE_TIMEOUT_MS,
@@ -198,8 +196,6 @@ async function assertPiSnapshotRootExecutable(isolated, environment, run) {
     });
   } catch {
     result = null;
-  } finally {
-    await rm(probe, { force: true }).catch(() => {});
   }
   if (!result || result.exitCode !== 0 || result.signal || result.timedOut || result.cancelled) {
     const error = new Error("Pi executable snapshot root is not executable.");
@@ -871,6 +867,7 @@ export async function materializePiExecutable(identity, options = {}) {
     let lastFailure = piSnapshotRootUnavailable();
     for (const candidate of snapshotBases) {
       let candidateEnvironment;
+      let materialized;
       let materializationStarted = false;
       try {
         const snapshotBase = await preparePiSnapshotBaseDirectory(candidate);
@@ -878,17 +875,23 @@ export async function materializePiExecutable(identity, options = {}) {
           prefix: "relaypact-pi-exec-",
           baseDirectory: snapshotBase
         });
-        await assertPiSnapshotRootExecutable(candidateEnvironment, environment, options.runProcess ?? runProcess);
         materializationStarted = true;
         const materializeCandidate = options.materializeCandidate ?? materializePiExecutableInEnvironment;
-        return await materializeCandidate(identity, candidateEnvironment);
+        materialized = await materializeCandidate(identity, candidateEnvironment);
+        await assertPiSnapshotRootExecutable(
+          materialized,
+          candidateEnvironment,
+          environment,
+          options.runProcess ?? runProcess
+        );
+        return materialized;
       } catch (cause) {
         if (cause?.code === "environment_cleanup_failed") {
           const error = new Error("Pi launch snapshot cleanup failed.");
           error.code = "pi_snapshot_cleanup_failed";
           throw error;
         }
-        const cleanupFailed = await cleanupPiResources(candidateEnvironment);
+        const cleanupFailed = await cleanupPiResources(materialized ?? candidateEnvironment);
         if (cleanupFailed) {
           const error = new Error("Pi launch snapshot cleanup failed.");
           error.code = "pi_snapshot_cleanup_failed";
@@ -897,6 +900,11 @@ export async function materializePiExecutable(identity, options = {}) {
         if (!materializationStarted) {
           lastFailure = piSnapshotRootUnavailable();
           if (options.snapshotBaseDirectory !== undefined) throw lastFailure;
+          continue;
+        }
+        if (cause?.code === "pi_snapshot_root_unavailable") {
+          lastFailure = cause;
+          if (options.snapshotBaseDirectory !== undefined) throw cause;
           continue;
         }
         if (snapshotCapacityFailure(cause)) {
@@ -986,7 +994,8 @@ export async function discoverPiCli(options = {}) {
   const createEnvironment = options.createEnvironment ?? createIsolatedEnvironment;
   const materializeExecutable = options.materializeExecutable ?? ((identity) => materializePiExecutable(identity, {
     environment,
-    snapshotBaseDirectory: options.snapshotBaseDirectory
+    snapshotBaseDirectory: options.snapshotBaseDirectory,
+    runProcess: run
   }));
   const selectedCommand = options.executorCommand ?? "pi";
   let identity;
@@ -1012,7 +1021,6 @@ export async function discoverPiCli(options = {}) {
   let settingsIsolated = false;
   let capabilities = {};
   let reason = null;
-  const snapshotProbes = run === runProcess || options.materializeExecutable;
   let readiness;
   let cleanupFailed = false;
   try {
@@ -1041,9 +1049,14 @@ export async function discoverPiCli(options = {}) {
       PI_CODING_AGENT_SESSION_DIR: isolated.temporary
     };
 
-    const runProbe = async (args) => snapshotProbes
-      ? probePiSnapshot(run, materializeExecutable, identity, args, probeEnvironment, isolated.root)
-      : { probe: await probePi(run, identity, args, probeEnvironment, isolated.root), snapshotFailed: false, cleanupFailed: false };
+    const runProbe = async (args) => probePiSnapshot(
+      run,
+      materializeExecutable,
+      identity,
+      args,
+      probeEnvironment,
+      isolated.root
+    );
 
     const versionOutcome = await runProbe(["--version"]);
     if (versionOutcome.cleanupFailed) reason = "cleanup_failed";

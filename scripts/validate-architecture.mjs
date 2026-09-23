@@ -273,7 +273,7 @@ const REGEX_PREFIX_KEYWORDS = new Set([
   "throw", "typeof", "void", "yield"
 ]);
 
-function staticImportedSpecifiers(source, onIdentifier = () => {}) {
+function staticImportedSpecifiers(source, onIdentifier = () => {}, onUnsupported = () => {}) {
   const results = [];
   let expressionExpected = true;
   let braceDepth = 0;
@@ -285,6 +285,12 @@ function staticImportedSpecifiers(source, onIdentifier = () => {}) {
       continue;
     }
     const character = source[index];
+    if (character === "\\") {
+      onUnsupported("escaped identifier");
+      index += 1;
+      expressionExpected = false;
+      continue;
+    }
     if (character === "`") {
       const chunk = readJavaScriptTemplateChunk(source, index + 1);
       index = chunk.end;
@@ -385,10 +391,13 @@ function staticImportedSpecifiers(source, onIdentifier = () => {}) {
 
 function javascriptIdentifierCount(source, target) {
   let count = 0;
+  let unsupported = false;
   staticImportedSpecifiers(source, (identifier) => {
     if (identifier === target) count += 1;
+  }, () => {
+    unsupported = true;
   });
-  return count;
+  return unsupported ? null : count;
 }
 
 async function staticImportClosure(entry, allowedRoot) {

@@ -27,6 +27,7 @@ All notable public changes to RelayPact are recorded here.
 - Require stable package-manifest reads, relocation-safe package symlinks, option-definition help evidence, and accurate snapshot-capacity diagnostics.
 - Preserve Pi isolation and cleanup diagnostics through doctor and execution, and reject eager optional-doctor invocation.
 - Inspect executable template-literal substitutions when enforcing optional-doctor lazy loading.
+- Preserve root-cause remediation across dependent Pi doctor checks, require snapshots under injected process runners, validate the copied Node runtime directly without a shell probe, and fail closed on escaped identifiers in optional-doctor architecture guards.
 
 ### Compatibility
 - Pi remains experimental and inactive at the root Plugin. Pi doctor does not read authentication, select a provider or model, prove live availability, or permit route fallback. A missing, unsupported, mutated, timed-out, truncated, temporary-state-creation-failing, or settings-isolation-failing probe blocks readiness with sanitized evidence.

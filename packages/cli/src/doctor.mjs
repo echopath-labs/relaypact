@@ -268,6 +268,19 @@ function piReasonDetail(reason, minimumVersion) {
   return details[reason] ?? "Pi readiness could not be verified.";
 }
 
+function piReasonRemediation(reason, fallback) {
+  const remediations = {
+    missing: "install-pi",
+    unsupported_platform: "use-supported-pi-platform",
+    snapshot_unavailable: "configure-pi-snapshot-root",
+    isolation_unavailable: "repair-pi-readiness-isolation",
+    cleanup_failed: "review-pi-readiness-cleanup",
+    settings_write_attempt: "repair-pi-settings-isolation",
+    mutated: "reselect-pi-executable"
+  };
+  return remediations[reason] ?? fallback;
+}
+
 export async function runPiDoctor(options = {}) {
   const { discoverPiCli, MINIMUM_PI_VERSION } = await import("../../executor-pi/src/executor.mjs");
   const nodeVersion = options.nodeVersion ?? process.versions.node;
@@ -291,13 +304,7 @@ export async function runPiDoctor(options = {}) {
   const readiness = await discoverPiCli(options);
   const executableAvailable = typeof readiness.command === "string";
   const executableMissing = readiness.reason === "missing";
-  const executableRemediation = executableMissing
-    ? "install-pi"
-    : readiness.reason === "isolation_unavailable"
-      ? "repair-pi-readiness-isolation"
-      : readiness.reason === "cleanup_failed"
-        ? "review-pi-readiness-cleanup"
-        : "reselect-pi-executable";
+  const executableRemediation = piReasonRemediation(readiness.reason, "reselect-pi-executable");
   checks.push(executableAvailable
     ? check("pi-executable", "pass", "The selected Pi executable was resolved to a bounded local identity.")
     : check("pi-executable", "fail", executableMissing
@@ -305,17 +312,21 @@ export async function runPiDoctor(options = {}) {
       : piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), executableRemediation));
   checks.push(readiness.versionCompatible
     ? check("pi-version", "pass", `Pi ${readiness.version} is supported.`)
-    : check("pi-version", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), "install-or-upgrade-pi"));
+    : check("pi-version", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION),
+      piReasonRemediation(readiness.reason, "install-or-upgrade-pi")));
   const capabilitiesReady = Object.values(readiness.capabilities).every(Boolean);
   checks.push(capabilitiesReady
     ? check("pi-capabilities", "pass", "Pi exposes the required noninteractive, structured-result, tool-selection, timeout, no-session, and project-isolation capabilities.")
-    : check("pi-capabilities", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), "install-or-upgrade-pi"));
+    : check("pi-capabilities", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION),
+      piReasonRemediation(readiness.reason, "install-or-upgrade-pi")));
   checks.push(readiness.settingsIsolated
     ? check("pi-settings", "pass", "Pi readiness used disposable settings and did not report a global settings write failure.")
-    : check("pi-settings", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), "repair-pi-settings-isolation"));
+    : check("pi-settings", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION),
+      piReasonRemediation(readiness.reason, "repair-pi-settings-isolation")));
   checks.push(readiness.executableStable
     ? check("pi-identity", "pass", "The selected Pi executable identity remained stable across readiness probes.")
-    : check("pi-identity", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), "reselect-pi-executable"));
+    : check("pi-identity", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION),
+      piReasonRemediation(readiness.reason, "reselect-pi-executable")));
 
   const requiredIds = new Set(["node", "packaged-skill", "git", "pi-executable", "pi-version", "pi-capabilities", "pi-settings", "pi-identity"]);
   const blocked = readiness.state !== "ready" || checks.some((item) => requiredIds.has(item.id) && item.status !== "pass");
