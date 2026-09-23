@@ -1488,13 +1488,14 @@ export async function runExecutor(envelope, options) {
   let credentialEvidenceTrusted = false;
   const finish = (result) => attachExecutorSecurity(result, { sensitiveValues, credentialEvidenceTrusted });
   try {
-    const readiness = await discoverPiCli({
+    const readiness = await (options.discoverPiCli ?? discoverPiCli)({
       executorCommand: selectedCommand,
       environment: environmentSource,
       commandBaseDirectory: options.commandBaseDirectory ?? process.cwd(),
       snapshotBaseDirectory: options.snapshotBaseDirectory
     });
     if (readiness.state !== "ready") {
+      if (readiness.reason === "cleanup_failed") cleanupFailed = true;
       throw new DelegationError("pi_readiness_blocked", `Pi readiness is blocked: ${readiness.reason ?? "unavailable"}.`);
     }
     const executableIdentity = await resolvePiExecutable(selectedCommand, {

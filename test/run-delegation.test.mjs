@@ -9,6 +9,7 @@ import { validateTaskEnvelope } from "../packages/contracts/src/envelope.mjs";
 import { parseStatusPaths } from "../packages/core/src/git.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
 import { collectPiBundle, discoverPiCli, executableFingerprint, hasLoaderRelativeRuntimeReference, materializePiExecutable, piPlatformSupported, readPiPackageManifest, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
+import { runPiDoctor } from "../packages/cli/src/doctor.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
 const fakePi = fileURLToPath(new URL("./fixtures/fake-pi.mjs", import.meta.url));
@@ -318,6 +319,21 @@ test("Pi executable resolution classifies disposable-state setup failure", async
     }),
     (failure) => failure.code === "pi_resolution_cleanup_failed" && !failure.message.includes("private cleanup path")
   );
+});
+
+test("Pi doctor preserves isolation remediation without claiming installation is required", async () => {
+  const error = new Error("private temporary path");
+  error.code = "pi_resolution_isolation_unavailable";
+  const result = await runPiDoctor({
+    executorCommand: "/fixture/pi",
+    resolveExecutable: async () => { throw error; },
+    runProcess: async () => piProbeResult("git version 2.0.0\n")
+  });
+  const executableCheck = result.checks.find((item) => item.id === "pi-executable");
+  assert.equal(result.state, "blocked");
+  assert.equal(result.executor.additionalInstallationRequired, false);
+  assert.equal(executableCheck.remediation, "repair-pi-readiness-isolation");
+  assert.match(executableCheck.detail, /temporary state could not be created/u);
 });
 
 test("Pi executable fingerprinting rejects a FIFO without waiting for a writer", async (context) => {
@@ -1166,6 +1182,18 @@ test("missing executor executable is normalized as blocked readiness", async () 
   assert.equal(result.executor.reportedStatus, "blocked");
   assert.equal(result.executor.failureCode, "pi_readiness_blocked");
   assert.match(result.executor.summary, /could not start/i);
+});
+
+test("Pi readiness cleanup failure remains a structured execution cleanup failure", async () => {
+  const root = await createGitRepository();
+  const result = await runDelegation(withFixturePiRoute(makeEnvelope(root)), {
+    executorCommand: fakePi,
+    discoverPiCli: async () => ({ state: "blocked", reason: "cleanup_failed" })
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.executor.reportedStatus, "failed");
+  assert.equal(result.executor.failureCode, "pi_cleanup_failed");
+  assert.ok(result.residualRisks.includes("Executor temporary state cleanup requires Host review."));
 });
 
 test("out-of-scope edit is independently rejected", async () => {

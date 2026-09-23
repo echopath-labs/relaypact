@@ -261,7 +261,7 @@ const REGEX_PREFIX_KEYWORDS = new Set([
   "throw", "typeof", "void", "yield"
 ]);
 
-function staticImportedSpecifiers(source) {
+function staticImportedSpecifiers(source, onIdentifier = () => {}) {
   const results = [];
   let expressionExpected = true;
   for (let index = 0; index < source.length;) {
@@ -320,6 +320,7 @@ function staticImportedSpecifiers(source) {
       let end = index + 1;
       while (end < source.length && /[A-Za-z0-9_$]/u.test(source[end])) end += 1;
       const identifier = source.slice(index, end);
+      onIdentifier(identifier);
       if (identifier === "import" || identifier === "from") {
         const literalStart = skipJavaScriptTrivia(source, end);
         if (identifier !== "import" || source[literalStart] !== "(") {
@@ -341,6 +342,14 @@ function staticImportedSpecifiers(source) {
     index += 1;
   }
   return results;
+}
+
+function javascriptIdentifierCount(source, target) {
+  let count = 0;
+  staticImportedSpecifiers(source, (identifier) => {
+    if (identifier === target) count += 1;
+  });
+  return count;
 }
 
 async function staticImportClosure(entry, allowedRoot) {
@@ -543,6 +552,10 @@ export async function validateArchitecture(rootInput) {
   }
   if (dynamicImportCount(doctorSource) !== 2) {
     errors.push("Default doctor may dynamically import optional executors only inside the Cursor and Pi route functions.");
+  }
+  if (javascriptIdentifierCount(doctorSource, "runCursorDoctor") !== 1 ||
+      javascriptIdentifierCount(doctorSource, "runPiDoctor") !== 1) {
+    errors.push("Default doctor must not eagerly invoke optional route functions.");
   }
   for (const importedPath of doctorStaticImportPaths) {
     if (importedPath === doctorPath) continue;

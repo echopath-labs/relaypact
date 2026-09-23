@@ -290,9 +290,19 @@ export async function runPiDoctor(options = {}) {
 
   const readiness = await discoverPiCli(options);
   const executableAvailable = typeof readiness.command === "string";
+  const executableMissing = readiness.reason === "missing";
+  const executableRemediation = executableMissing
+    ? "install-pi"
+    : readiness.reason === "isolation_unavailable"
+      ? "repair-pi-readiness-isolation"
+      : readiness.reason === "cleanup_failed"
+        ? "review-pi-readiness-cleanup"
+        : "reselect-pi-executable";
   checks.push(executableAvailable
     ? check("pi-executable", "pass", "The selected Pi executable was resolved to a bounded local identity.")
-    : check("pi-executable", "fail", "The selected Pi executable is unavailable.", "install-pi"));
+    : check("pi-executable", "fail", executableMissing
+      ? "The selected Pi executable is unavailable."
+      : piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), executableRemediation));
   checks.push(readiness.versionCompatible
     ? check("pi-version", "pass", `Pi ${readiness.version} is supported.`)
     : check("pi-version", "fail", piReasonDetail(readiness.reason, MINIMUM_PI_VERSION), "install-or-upgrade-pi"));
@@ -319,7 +329,7 @@ export async function runPiDoctor(options = {}) {
       command: "pi",
       version: readiness.version,
       executableFingerprint: readiness.executableFingerprint,
-      additionalInstallationRequired: !executableAvailable,
+      additionalInstallationRequired: executableMissing,
       capabilities: readiness.capabilities
     },
     checks,

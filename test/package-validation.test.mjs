@@ -562,6 +562,23 @@ test("architecture validation rejects transitive dynamic imports from doctor hel
   await rm(root, { recursive: true });
 });
 
+test("architecture validation rejects eager optional doctor calls", async () => {
+  for (const invocation of [
+    "await runPiDoctor();",
+    "async function eagerRoute() { return runCursorDoctor(); }\nawait eagerRoute();"
+  ]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+    await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+    await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+    await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+    const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+    await writeFile(doctorPath, `${await readFile(doctorPath, "utf8")}\n${invocation}\n`);
+    const errors = await validateArchitecture(root);
+    assert(errors.some((item) => item.includes("must not eagerly invoke optional route functions")));
+    await rm(root, { recursive: true });
+  }
+});
+
 test("architecture validation rejects prerequisite and live-smoke drift", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
   await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
