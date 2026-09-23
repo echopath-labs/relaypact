@@ -310,6 +310,15 @@ test("Pi executable resolution rejects unsupported Windows command shims", async
   assert.equal(await resolvePiExecutable(shim), null);
 });
 
+test("Pi executable resolution rejects native launchers without a bounded dependency closure", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "pi-native");
+  await writeFile(executable, "native executable bytes\n");
+  await chmod(executable, 0o700);
+  assert.equal(await resolvePiExecutable(executable), null);
+});
+
 test("Pi delegation never resolves a relative executor inside the target repository", async () => {
   const root = await createGitRepository();
   const relativeExecutor = path.join(root, "target-pi.mjs");
@@ -551,15 +560,20 @@ test("Pi identity rejects an opaque Node launcher and resolves runtime probes in
 
   await rm(nodeLauncher);
   await symlink(selectedNode, nodeLauncher);
+  assert.equal(await resolvePiExecutable(entry, {
+    environment: { PATH: bin },
+    runProcess: async () => piProbeResult(JSON.stringify({ execPath: selectedNode, version: "18.20.0" }))
+  }), null);
   const probes = [];
   const identity = await resolvePiExecutable(entry, {
     environment: { PATH: bin, HOME: "/ambient/home", SECRET_TOKEN: "opaque" },
     runProcess: async (command, args, options) => {
       probes.push({ command, args, options });
-      return piProbeResult(`${selectedNode}\n`);
+      return piProbeResult(JSON.stringify({ execPath: selectedNode, version: process.versions.node }));
     }
   });
   assert.ok(identity);
+  assert.equal(identity.runtimeVersion, process.versions.node);
   assert.equal(probes.length, 1);
   assert.match(probes[0].options.cwd, /relaypact-pi-resolve-/u);
   assert.match(probes[0].options.env.HOME, /relaypact-pi-resolve-/u);
@@ -597,18 +611,25 @@ test("Pi identity rejects internal absolute symlinks consistently during resolut
 
 test("Pi snapshot construction propagates cleanup failure without private diagnostics", async (context) => {
   const root = await createDirectory();
+  const snapshotRoot = await createDirectory();
   context.after(() => rm(root, { recursive: true, force: true }));
-  const identity = {
-    command: "/fixture/pi",
-    executableFingerprint: `sha256:${"a".repeat(64)}`,
-    kind: "native",
-    target: path.join(root, "missing-pi"),
-    targetFingerprint: `sha256:${"b".repeat(64)}`
-  };
+  context.after(() => rm(snapshotRoot, { recursive: true, force: true }));
+  const entry = path.join(root, "pi.mjs");
+  await writeFile(path.join(root, "package.json"), JSON.stringify({
+    name: "fixture-pi-cleanup",
+    private: true,
+    type: "module",
+    bin: { pi: "pi.mjs" }
+  }));
+  await writeFile(entry, "#!/usr/bin/env node\n");
+  await chmod(entry, 0o700);
+  const identity = await resolvePiExecutable(entry);
+  await rm(entry);
   await assert.rejects(
     materializePiExecutable(identity, {
       createEnvironment: async () => ({
-        root,
+        root: snapshotRoot,
+        env: process.env,
         cleanup: async () => { throw new Error("private cleanup detail"); }
       })
     }),
@@ -679,19 +700,18 @@ test("Pi snapshots reject a private base beneath an untrusted writable ancestor"
   await chmod(writableAncestor, 0o777);
   const executableRoot = await createDirectory();
   context.after(() => rm(executableRoot, { recursive: true, force: true }));
-  const executable = path.join(executableRoot, "pi-native");
-  await writeFile(executable, "native bytes\n");
+  const executable = path.join(executableRoot, "pi.mjs");
+  await writeFile(path.join(executableRoot, "package.json"), JSON.stringify({
+    name: "fixture-pi-untrusted-root",
+    private: true,
+    type: "module",
+    bin: { pi: "pi.mjs" }
+  }));
+  await writeFile(executable, "#!/usr/bin/env node\n");
   await chmod(executable, 0o700);
-  const fingerprint = await executableFingerprint(executable);
+  const identity = await resolvePiExecutable(executable);
   await assert.rejects(
-    materializePiExecutable({
-      command: executable,
-      resolvedCommand: executable,
-      executableFingerprint: fingerprint,
-      kind: "native",
-      target: executable,
-      targetFingerprint: fingerprint
-    }, { snapshotBaseDirectory: snapshotBase }),
+    materializePiExecutable(identity, { snapshotBaseDirectory: snapshotBase }),
     (error) => error.code === "pi_snapshot_root_unavailable"
   );
 });

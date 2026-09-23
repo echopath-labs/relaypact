@@ -18,6 +18,7 @@ All notable public changes to RelayPact are recorded here.
 - Stop Pi command discovery at the first executable regular-file PATH candidate and distinguish disposable resolver-state failures from a missing installation.
 - Parse comment-separated static imports during architecture validation and bound Pi directory enumeration before sorting package entries.
 - Create Pi snapshots directly beneath validated trusted ancestors, copy only the recorded bounded package graph with nonblocking source handles, and reject unsupported Windows command shims explicitly.
+- Reject native Pi launchers with unresolved sibling dependencies, validate the exact shebang-selected Node runtime at version 20 or later, and traverse the default doctor's transitive static-import graph.
 
 ### Compatibility
 - Pi remains experimental and inactive at the root Plugin. Pi doctor does not read authentication, select a provider or model, prove live availability, or permit route fallback. A missing, unsupported, mutated, timed-out, truncated, temporary-state-creation-failing, or settings-isolation-failing probe blocks readiness with sanitized evidence.

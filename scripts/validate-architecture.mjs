@@ -71,7 +71,7 @@ const ROUTE_EXPECTATIONS = new Map([
     rootPluginActivation: false,
     prerequisites: [
       "Node.js 20 or later",
-      "Pi 0.84.0 or later and an explicit execution profile",
+      "Node-packaged Pi 0.84.0 or later and an explicit execution profile; native launchers are not supported",
       "macOS or Linux; Windows command shims are not supported"
     ],
     deterministicCheck: "npm run check:codex-pi",
@@ -239,6 +239,31 @@ function staticImportedSpecifiers(source) {
   return results;
 }
 
+async function staticImportClosure(entry, allowedRoot) {
+  const closure = new Set();
+  const pending = [entry];
+  const prefix = `${allowedRoot}${path.sep}`;
+  while (pending.length > 0) {
+    const current = pending.shift();
+    if (closure.has(current)) continue;
+    closure.add(current);
+    const source = await readFile(current, "utf8").catch(() => null);
+    if (source === null) continue;
+    for (const specifier of staticImportedSpecifiers(source)) {
+      if (typeof specifier !== "string" || !specifier.startsWith(".")) continue;
+      let target;
+      try {
+        target = fileURLToPath(new URL(specifier, pathToFileURL(current)));
+      } catch {
+        continue;
+      }
+      if (target !== allowedRoot && !target.startsWith(prefix)) continue;
+      if (!closure.has(target)) pending.push(target);
+    }
+  }
+  return closure;
+}
+
 export async function validateArchitecture(rootInput) {
   const root = await realpath(rootInput);
   const errors = [];
@@ -393,23 +418,14 @@ export async function validateArchitecture(rootInput) {
   if (doctorStaticImports.includes(null)) {
     errors.push("Default doctor must use plain, bounded static import specifiers.");
   }
-  const doctorStaticImportPaths = doctorStaticImports
-    .filter((specifier) => typeof specifier === "string" && specifier.startsWith("."))
-    .map((specifier) => {
-      try {
-        return fileURLToPath(new URL(specifier, pathToFileURL(doctorPath)));
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-  if (doctorStaticImportPaths.includes(path.join(root, "packages", "executor-cursor", "src", "executor.mjs"))) {
+  const doctorStaticImportPaths = await staticImportClosure(doctorPath, path.join(root, "packages"));
+  if (doctorStaticImportPaths.has(path.join(root, "packages", "executor-cursor", "src", "executor.mjs"))) {
     errors.push("Default doctor must not statically load the optional Cursor executor.");
   }
   if (!doctorSource.includes('await import("../../executor-cursor/src/executor.mjs")')) {
     errors.push("Cursor doctor must load the Cursor executor only inside the selected diagnostic route.");
   }
-  if (doctorStaticImportPaths.includes(path.join(root, "packages", "executor-pi", "src", "executor.mjs"))) {
+  if (doctorStaticImportPaths.has(path.join(root, "packages", "executor-pi", "src", "executor.mjs"))) {
     errors.push("Default doctor must not statically load the optional Pi executor.");
   }
   if (!doctorSource.includes('await import("../../executor-pi/src/executor.mjs")')) {

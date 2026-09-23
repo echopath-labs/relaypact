@@ -23,6 +23,7 @@ const MAX_PI_BUNDLE_DEPTH = 32;
 const PI_PROBE_TIMEOUT_MS = 5_000;
 const PI_PROBE_CAPTURE_BYTES = 256 * 1024;
 const PI_SNAPSHOT_ROOT_ENV = "RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT";
+const MINIMUM_NODE_VERSION = "20.0.0";
 export const MINIMUM_PI_VERSION = "0.84.0";
 const REQUIRED_PI_FLAGS = Object.freeze([
   "--print", "--mode", "--no-session", "--no-extensions", "--no-skills",
@@ -578,16 +579,28 @@ async function resolveNodeRuntime(shebang, environment, run, cwd) {
       if ((await firstLine(resolvedCommand)).startsWith("#!")) return null;
       const launcherFingerprint = await executableFingerprint(resolvedCommand);
       if (!launcherFingerprint) return null;
-      const probe = await run(resolvedCommand, ["-p", "process.execPath"], {
+      const probe = await run(resolvedCommand, [
+        "-p",
+        "JSON.stringify({execPath:process.execPath,version:process.versions.node})"
+      ], {
         cwd,
         env: environment,
         timeoutMs: PI_PROBE_TIMEOUT_MS,
         maxCaptureBytes: 16 * 1024
       });
       if (probe.exitCode !== 0 || probe.signal || probe.timedOut || probe.stdoutTruncated || probe.stderrTruncated) return null;
-      const selected = String(probe.stdout ?? "").trim();
-      if (!path.isAbsolute(selected) || selected.includes("\n") || selected.includes("\r")) return null;
-      const target = await realpath(selected);
+      let observation;
+      try {
+        observation = JSON.parse(String(probe.stdout ?? "").trim());
+      } catch {
+        return null;
+      }
+      if (!plainObject(observation) || typeof observation.execPath !== "string" ||
+          !path.isAbsolute(observation.execPath) || observation.execPath.includes("\n") ||
+          observation.execPath.includes("\r") || typeof observation.version !== "string" ||
+          !parseSemanticVersion(observation.version) ||
+          compareVersions(observation.version, MINIMUM_NODE_VERSION) < 0) return null;
+      const target = await realpath(observation.execPath);
       await access(target, fsConstants.X_OK);
       const targetFingerprint = await executableFingerprint(target);
       if (!targetFingerprint) return null;
@@ -599,7 +612,8 @@ async function resolveNodeRuntime(shebang, environment, run, cwd) {
         resolvedCommand,
         launcherFingerprint,
         target,
-        targetFingerprint
+        targetFingerprint,
+        version: observation.version
       };
     } catch {
       // The first executable PATH candidate is the shebang-selected runtime.
@@ -660,20 +674,21 @@ export async function resolvePiExecutable(command, options = {}) {
         const shebang = await firstLine(target);
         const nodeRuntime = await resolveNodeRuntime(shebang, discovery.env, run, discovery.root);
         const nodePackage = nodeRuntime ? await findPiPackage(target) : null;
-        if (shebang.startsWith("#!") && (!nodeRuntime || !nodePackage)) return null;
+        if (!shebang.startsWith("#!") || !nodeRuntime || !nodePackage) return null;
         const identity = {
           command: path.resolve(candidate),
           resolvedCommand,
           launcherFingerprint,
           target,
           targetFingerprint,
-          kind: nodePackage ? "node-package" : "native",
+          kind: "node-package",
           packageRoot: nodePackage?.root ?? null,
           packageEntry: nodePackage?.entry ?? null,
           packageGraph: nodePackage?.graph ?? null,
           packageFingerprint: nodePackage?.fingerprint ?? null,
           runtimeCommand: nodeRuntime?.target ?? null,
           runtimeFingerprint: nodeRuntime?.targetFingerprint ?? null,
+          runtimeVersion: nodeRuntime?.version ?? null,
           runtimeLaunchCommand: nodeRuntime?.command ?? null,
           runtimeResolvedCommand: nodeRuntime?.resolvedCommand ?? null,
           runtimeLauncherFingerprint: nodeRuntime?.launcherFingerprint ?? null
@@ -732,17 +747,10 @@ export async function materializePiExecutable(identity, options = {}) {
       }
     }
     if (!isolated) throw piSnapshotRootUnavailable();
-    if (identity.kind === "native") {
-      const executable = path.join(isolated.root, "pi");
-      await copyBoundedPiFile(identity.target, executable, {
-        maxBytes: MAX_PI_EXECUTABLE_BYTES,
-        fingerprint: identity.targetFingerprint,
-        executable: true
-      });
-      return { identity: { ...identity, launchCommand: executable, launchPrefix: [] }, cleanup: isolated.cleanup };
-    }
     if (identity.kind !== "node-package" || !plainObject(identity.packageGraph) ||
         !path.isAbsolute(identity.runtimeCommand) || !path.isAbsolute(identity.runtimeLaunchCommand) ||
+        typeof identity.runtimeVersion !== "string" || !parseSemanticVersion(identity.runtimeVersion) ||
+        compareVersions(identity.runtimeVersion, MINIMUM_NODE_VERSION) < 0 ||
         identity.runtimeResolvedCommand !== identity.runtimeCommand ||
         identity.runtimeLauncherFingerprint !== identity.runtimeFingerprint) {
       throw new Error("Pi package identity is incomplete.");

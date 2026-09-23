@@ -29,6 +29,9 @@ Task cleanup failures remain structured execution failures so Host filesystem an
 evidence is still collected.
 Delegated execution reruns the same version, capability, settings-isolation, and identity checks
 at the route boundary and refuses an executable that changes after readiness.
+Resolution admits only a Node-packaged Pi entry whose selected runtime is Node 20 or
+later. Native launchers and Windows command shims remain unsupported because their
+launcher-relative dependency semantics are not part of the immutable snapshot.
 
 Executable snapshots prefer private roots because hardened Linux hosts may mount the
 system temporary directory with `noexec`. RelayPact creates the snapshot atomically
