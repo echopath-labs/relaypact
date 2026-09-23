@@ -27,6 +27,8 @@ copy, verification, or temporary-state cleanup failures use a structured blocked
 doctor probe and each task execute from a separate verified private snapshot of that identity.
 Task cleanup failures remain structured execution failures so Host filesystem and Git postflight
 evidence is still collected.
+Delegated execution reruns the same version, capability, settings-isolation, and identity checks
+at the route boundary and refuses an executable that changes after readiness.
 
 Executable snapshots prefer private roots because hardened Linux hosts may mount the
 system temporary directory with `noexec`. RelayPact tries the private XDG runtime

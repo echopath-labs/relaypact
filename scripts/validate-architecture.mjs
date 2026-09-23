@@ -318,13 +318,16 @@ export async function validateArchitecture(rootInput) {
   const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
   const doctorSource = await readFile(doctorPath, "utf8").catch(() => "");
   const doctorStaticImports = staticImportedSpecifiers(doctorSource);
-  if (doctorStaticImports.includes("../../executor-cursor/src/executor.mjs")) {
+  const doctorStaticImportPaths = doctorStaticImports
+    .filter((specifier) => specifier.startsWith("."))
+    .map((specifier) => path.resolve(path.dirname(doctorPath), specifier));
+  if (doctorStaticImportPaths.includes(path.join(root, "packages", "executor-cursor", "src", "executor.mjs"))) {
     errors.push("Default doctor must not statically load the optional Cursor executor.");
   }
   if (!doctorSource.includes('await import("../../executor-cursor/src/executor.mjs")')) {
     errors.push("Cursor doctor must load the Cursor executor only inside the selected diagnostic route.");
   }
-  if (doctorStaticImports.includes("../../executor-pi/src/executor.mjs")) {
+  if (doctorStaticImportPaths.includes(path.join(root, "packages", "executor-pi", "src", "executor.mjs"))) {
     errors.push("Default doctor must not statically load the optional Pi executor.");
   }
   if (!doctorSource.includes('await import("../../executor-pi/src/executor.mjs")')) {

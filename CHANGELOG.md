@@ -13,6 +13,7 @@ All notable public changes to RelayPact are recorded here.
 - Resolve Node runtime identity from disposable state, reject opaque runtime launchers and absolute package symlinks, and propagate partial-snapshot cleanup failures without private diagnostics.
 - Preserve resolution cleanup failures during final identity verification, normalize copied package-root permissions for immutable installations, and use a configurable executable-capable private root instead of the system temporary directory for Pi snapshots.
 - Reject the first opaque shebang-selected Node runtime without PATH fallback, try every private snapshot root through an executable probe, classify invalid snapshot roots consistently, and return sanitized blocked readiness when doctor isolation cannot be created.
+- Enforce Pi readiness again at delegated execution, keep unrun settings probes unverified, sanitize post-creation doctor setup failures, bind package-manifest bounds to one no-follow file handle, and normalize lazy-route import paths during architecture validation.
 
 ### Compatibility
 - Pi remains experimental and inactive at the root Plugin. Pi doctor does not read authentication, select a provider or model, prove live availability, or permit route fallback. A missing, unsupported, mutated, timed-out, truncated, temporary-state-creation-failing, or settings-isolation-failing probe blocks readiness with sanitized evidence.

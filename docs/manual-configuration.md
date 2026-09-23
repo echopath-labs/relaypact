@@ -173,7 +173,9 @@ temporary root and are deleted afterward; global/project Pi settings and
 authentication are not read or modified. Missing, unsupported, mutated,
 timed-out, truncated, temporary-state-creation-failing or settings-isolation-failing probes return `blocked` with
 fixed diagnostics. A `ready` result does not prove authentication, provider or
-model availability.
+model availability. `run-pi` repeats readiness and exact identity verification before
+credential projection or task launch, so a stale earlier doctor result cannot authorize a
+changed or unsupported executable.
 
 ## Prepare private roots
 

@@ -243,11 +243,32 @@ function piBundleFingerprint(entries) {
 
 async function readPiPackageManifest(root) {
   const manifestPath = path.join(root, "package.json");
-  const info = await lstat(manifestPath);
-  if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) throw new Error("Pi package manifest is unsafe.");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  if (!plainObject(manifest)) throw new Error("Pi package manifest is invalid.");
-  return manifest;
+  let handle;
+  try {
+    handle = await open(
+      manifestPath,
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0)
+    );
+    const before = await handle.stat();
+    if (!before.isFile() || before.size > MAX_PI_CONFIG_BYTES) throw new Error("Pi package manifest is unsafe.");
+    const buffer = Buffer.alloc(MAX_PI_CONFIG_BYTES + 1);
+    let total = 0;
+    while (total < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+    }
+    if (total > MAX_PI_CONFIG_BYTES) throw new Error("Pi package manifest is unsafe.");
+    const after = await handle.stat();
+    if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
+      throw new Error("Pi package manifest changed while it was read.");
+    }
+    const manifest = JSON.parse(buffer.subarray(0, total).toString("utf8"));
+    if (!plainObject(manifest)) throw new Error("Pi package manifest is invalid.");
+    return manifest;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 }
 
 function packageNameParts(name) {
@@ -702,7 +723,7 @@ export async function discoverPiCli(options = {}) {
   let isolated;
   let version = null;
   let versionCompatible = false;
-  let settingsIsolated = true;
+  let settingsIsolated = false;
   let capabilities = {};
   let reason = null;
   const snapshotProbes = run === runProcess || options.materializeExecutable;
@@ -716,9 +737,16 @@ export async function discoverPiCli(options = {}) {
   } catch {
     return unavailablePiReadiness("isolation_unavailable", { command: identity.command });
   }
+  const configuration = path.join(isolated.root, "agent");
   try {
-    const configuration = path.join(isolated.root, "agent");
     await mkdir(configuration, { mode: 0o700 });
+  } catch {
+    const setupCleanupFailed = await cleanupPiResources(isolated);
+    return unavailablePiReadiness(setupCleanupFailed ? "cleanup_failed" : "isolation_unavailable", {
+      command: identity.command
+    });
+  }
+  try {
     const probeEnvironment = {
       ...isolated.env,
       PI_CODING_AGENT_DIR: configuration,
@@ -735,11 +763,12 @@ export async function discoverPiCli(options = {}) {
     else if (versionOutcome.snapshotFailed) reason = "mutated";
     else {
       const versionProbe = versionOutcome.probe;
-      settingsIsolated = !SETTINGS_WRITE_FAILURE.test(versionProbe.output);
-      if (!settingsIsolated) reason = "settings_write_attempt";
+      const settingsWriteDetected = SETTINGS_WRITE_FAILURE.test(versionProbe.output);
+      if (settingsWriteDetected) reason = "settings_write_attempt";
       else if (versionProbe.state !== "complete") reason = versionProbe.state;
       else if (versionProbe.exitCode !== 0 || versionProbe.signal) reason = "unsupported";
       else {
+        settingsIsolated = true;
         version = parsePiVersion(versionProbe.output);
         versionCompatible = version !== null && compareVersions(version, MINIMUM_PI_VERSION) >= 0;
         if (!versionCompatible) reason = "unsupported_version";
@@ -747,17 +776,19 @@ export async function discoverPiCli(options = {}) {
     }
 
     if (!reason) {
+      settingsIsolated = false;
       const helpOutcome = await runProbe(["--help"]);
       if (helpOutcome.cleanupFailed) reason = "cleanup_failed";
       else if (helpOutcome.snapshotUnavailable) reason = "snapshot_unavailable";
       else if (helpOutcome.snapshotFailed) reason = "mutated";
       else {
         const helpProbe = helpOutcome.probe;
-        settingsIsolated = !SETTINGS_WRITE_FAILURE.test(helpProbe.output);
-        if (!settingsIsolated) reason = "settings_write_attempt";
+        const settingsWriteDetected = SETTINGS_WRITE_FAILURE.test(helpProbe.output);
+        if (settingsWriteDetected) reason = "settings_write_attempt";
         else if (helpProbe.state !== "complete") reason = helpProbe.state;
         else if (helpProbe.exitCode !== 0 || helpProbe.signal) reason = "unsupported";
         else {
+          settingsIsolated = true;
           const supported = Object.fromEntries(REQUIRED_PI_FLAGS.map((flag) => [flag, helpHasOption(helpProbe.output, flag)]));
           const modeLine = helpOptionLine(helpProbe.output, "--mode");
           capabilities = {
@@ -1168,12 +1199,24 @@ export async function runExecutor(envelope, options) {
   let credentialEvidenceTrusted = false;
   const finish = (result) => attachExecutorSecurity(result, { sensitiveValues, credentialEvidenceTrusted });
   try {
+    const readiness = await discoverPiCli({
+      executorCommand: selectedCommand,
+      environment: environmentSource,
+      commandBaseDirectory: options.commandBaseDirectory ?? process.cwd(),
+      snapshotBaseDirectory: options.snapshotBaseDirectory
+    });
+    if (readiness.state !== "ready") {
+      throw new DelegationError("pi_readiness_blocked", `Pi readiness is blocked: ${readiness.reason ?? "unavailable"}.`);
+    }
     const executableIdentity = await resolvePiExecutable(selectedCommand, {
       environment: environmentSource,
       commandBaseDirectory: options.commandBaseDirectory ?? process.cwd(),
       runProcess
     });
     if (!executableIdentity) throw new DelegationError("pi_executor_unavailable", "The selected Pi executable could not be resolved to a supported absolute launch identity.");
+    if (readiness.command !== executableIdentity.command || readiness.executableFingerprint !== executableIdentity.executableFingerprint) {
+      throw new DelegationError("pi_executor_unavailable", "The selected Pi executable changed after readiness verification.");
+    }
     executableSnapshot = options.materializeExecutable
       ? await options.materializeExecutable(executableIdentity)
       : await materializePiExecutable(executableIdentity, {
@@ -1212,8 +1255,9 @@ export async function runExecutor(envelope, options) {
       cleanupFailed = true;
     }
     if (!processResult && !projection) credentialEvidenceTrusted = true;
+    const readinessBlocked = error?.code === "pi_readiness_blocked";
     executionFailure = {
-      reportedStatus: "failed",
+      reportedStatus: readinessBlocked ? "blocked" : "failed",
       summary: conciseOutput(`Executor could not start: ${error.message}`, 4000, sensitiveValues),
       residualRisks: [],
       exitCode: null,
@@ -1221,6 +1265,7 @@ export async function runExecutor(envelope, options) {
       timedOut: false,
       output: ""
     };
+    if (readinessBlocked) executionFailure.failureCode = "pi_readiness_blocked";
     if (error?.code === "pi_snapshot_root_unavailable") executionFailure.failureCode = "pi_snapshot_unavailable";
   } finally {
     cleanupFailed = await cleanupPiResources(isolated, executableSnapshot) || cleanupFailed;

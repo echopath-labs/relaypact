@@ -140,6 +140,7 @@ test("Pi doctor converts snapshot failures into sanitized blocked readiness", as
   assert.equal(readiness.state, "blocked");
   assert.equal(readiness.reason, "mutated");
   assert.equal(readiness.command, "/fixture/pi");
+  assert.equal(readiness.settingsIsolated, false);
   assert.equal(JSON.stringify(readiness).includes(privatePath), false);
   assert.equal(fixture.calls.length, 0);
 });
@@ -236,8 +237,34 @@ test("Pi delegation never resolves a relative executor inside the target reposit
   const result = await runDelegation(withFixturePiRoute(makeEnvelope(root)), {
     executorCommand: "./target-pi.mjs"
   });
-  assert.equal(result.status, "failed");
-  assert.match(result.executor.summary, /could not be resolved/u);
+  assert.equal(result.status, "blocked");
+  assert.match(result.executor.summary, /readiness is blocked: missing/u);
+  await assert.rejects(readFile(path.join(root, "allowed.txt"), "utf8"), { code: "ENOENT" });
+});
+
+test("Pi delegation enforces readiness before projecting credentials or launching", async (context) => {
+  const root = await createGitRepository();
+  const executorRoot = await createDirectory();
+  context.after(() => rm(executorRoot, { recursive: true, force: true }));
+  const unsupportedPi = path.join(executorRoot, "pi.mjs");
+  await writeFile(path.join(executorRoot, "package.json"), JSON.stringify({
+    name: "fixture-unsupported-pi",
+    private: true,
+    type: "module",
+    bin: { pi: "pi.mjs" }
+  }));
+  await writeFile(unsupportedPi, [
+    "#!/usr/bin/env node",
+    'import { writeFileSync } from "node:fs";',
+    'if (process.argv.includes("--version")) { process.stdout.write("0.1.0\\n"); process.exit(0); }',
+    `if (process.argv.includes("--help")) { process.stdout.write(${JSON.stringify(readyPiHelp)}); process.exit(0); }`,
+    'writeFileSync("allowed.txt", "unsupported executor ran\\n");'
+  ].join("\n"));
+  await chmod(unsupportedPi, 0o700);
+
+  const result = await runDelegation(withFixturePiRoute(makeEnvelope(root)), { executorCommand: unsupportedPi });
+  assert.equal(result.status, "blocked");
+  assert.match(result.executor.summary, /readiness is blocked: unsupported_version/u);
   await assert.rejects(readFile(path.join(root, "allowed.txt"), "utf8"), { code: "ENOENT" });
 });
 
@@ -437,6 +464,13 @@ test("Pi identity rejects internal absolute symlinks consistently during resolut
   await rm(alias);
   await symlink("value.mjs", alias);
   assert.ok(await resolvePiExecutable(entry));
+
+  const manifestPath = path.join(root, "package.json");
+  const manifestTarget = path.join(root, "manifest.json");
+  await writeFile(manifestTarget, await readFile(manifestPath));
+  await rm(manifestPath);
+  await symlink("manifest.json", manifestPath);
+  assert.equal(await resolvePiExecutable(entry), null);
 });
 
 test("Pi snapshot construction propagates cleanup failure without private diagnostics", async (context) => {
@@ -533,6 +567,27 @@ test("Pi doctor discovery blocks timed-out, truncated, and settings-write probes
   assert.equal(isolationFailure.state, "blocked");
   assert.equal(isolationFailure.reason, "isolation_unavailable");
   assert.equal(JSON.stringify(isolationFailure).includes(privatePath), false);
+
+  const setupRoot = await createDirectory();
+  const setupBlocker = path.join(setupRoot, "not-a-directory");
+  await writeFile(setupBlocker, "blocked");
+  let setupCleaned = false;
+  const setupFailure = await discoverPiCli({
+    ...piDoctorFixture(),
+    executorCommand: "/fixture/pi",
+    createEnvironment: async () => ({
+      root: setupBlocker,
+      temporary: path.join(setupRoot, "tmp"),
+      env: {},
+      cleanup: async () => {
+        setupCleaned = true;
+        await rm(setupRoot, { recursive: true, force: true });
+      }
+    })
+  });
+  assert.equal(setupFailure.state, "blocked");
+  assert.equal(setupFailure.reason, "isolation_unavailable");
+  assert.equal(setupCleaned, true);
 });
 
 test("CLI admits the experimental Pi doctor route with an explicit executable", async () => {
@@ -784,13 +839,14 @@ test("missing validation executable is recorded as not run", async () => {
   assert.equal(result.validations[0].reason, "spawn_error");
 });
 
-test("missing executor executable is normalized as failed", async () => {
+test("missing executor executable is normalized as blocked readiness", async () => {
   const root = await createGitRepository();
   const result = await runDelegation(withFixturePiRoute(makeEnvelope(root)), {
     executorCommand: "definitely-not-an-installed-executor"
   });
-  assert.equal(result.status, "failed");
-  assert.equal(result.executor.reportedStatus, "failed");
+  assert.equal(result.status, "blocked");
+  assert.equal(result.executor.reportedStatus, "blocked");
+  assert.equal(result.executor.failureCode, "pi_readiness_blocked");
   assert.match(result.executor.summary, /could not start/i);
 });
 
