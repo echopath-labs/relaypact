@@ -10,6 +10,7 @@ All notable public changes to RelayPact are recorded here.
 ### Fixed
 - Inspect complete static import specifiers, including multiline imports, when enforcing lazy loading for experimental executors in default doctor.
 - Preserve structured Pi execution failure and Host filesystem/Git postflight evidence when temporary-state cleanup fails.
+- Resolve Node runtime identity from disposable state, reject opaque runtime launchers and absolute package symlinks, and propagate partial-snapshot cleanup failures without private diagnostics.
 
 ### Compatibility
 - Pi remains experimental and inactive at the root Plugin. Pi doctor does not read authentication, select a provider or model, prove live availability, or permit route fallback. A missing, unsupported, mutated, timed-out, truncated, or settings-isolation-failing probe blocks readiness with sanitized evidence.

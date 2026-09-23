@@ -13,7 +13,9 @@ Before a task, `relaypact doctor --route codex-pi [--executor <absolute-pi-path>
 resolves and fingerprints the complete selected launch identity, including the
 Node package, its resolved runtime dependency closure, and runtime when
 applicable; the Node runtime is resolved through the entry shebang and selected
-toolchain. Doctor requires Pi 0.84.0 or later under semantic-version precedence and
+toolchain. Runtime discovery uses disposable HOME, temporary, and working directories;
+opaque Node wrappers or shims and absolute package symlinks are rejected because their
+launch or copy semantics cannot be reproduced exactly. Doctor requires Pi 0.84.0 or later under semantic-version precedence and
 verifies complete noninteractive option tokens below, including conditional
 `--thinking`, without sending a prompt. Relative path executors are rejected. The probe
 uses disposable HOME, settings, session and working directories; any native

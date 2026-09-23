@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, copyFile, mkdir, readFile, realpath, rm, truncate, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, realpath, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -141,6 +141,21 @@ test("Pi doctor converts snapshot failures into sanitized blocked readiness", as
   assert.equal(readiness.reason, "mutated");
   assert.equal(readiness.command, "/fixture/pi");
   assert.equal(JSON.stringify(readiness).includes(privatePath), false);
+  assert.equal(fixture.calls.length, 0);
+});
+
+test("Pi doctor distinguishes construction cleanup failure from ordinary snapshot drift", async () => {
+  const fixture = piDoctorFixture();
+  const error = new Error("private cleanup detail");
+  error.code = "pi_snapshot_cleanup_failed";
+  const readiness = await discoverPiCli({
+    ...fixture,
+    executorCommand: "/fixture/pi",
+    materializeExecutable: async () => { throw error; }
+  });
+  assert.equal(readiness.state, "blocked");
+  assert.equal(readiness.reason, "cleanup_failed");
+  assert.doesNotMatch(JSON.stringify(readiness), /private cleanup detail/u);
   assert.equal(fixture.calls.length, 0);
 });
 
@@ -288,19 +303,20 @@ test("Pi snapshot includes dependencies hoisted beside the selected package", as
   assert.equal(stdout, "0.84.0\n");
 });
 
-test("Pi identity snapshots the Node runtime selected by the entry shebang", async (context) => {
+test("Pi identity snapshots a directly resolved Node runtime selected by the entry shebang", async (context) => {
   const root = await createDirectory();
   context.after(() => rm(root, { recursive: true, force: true }));
   const bin = path.join(root, "bin");
+  const runtime = path.join(root, "runtime");
   const packageRoot = path.join(root, "pi-package");
   await mkdir(bin);
+  await mkdir(runtime);
   await mkdir(packageRoot);
-  const selectedNode = path.join(bin, "selected-node");
+  const selectedNode = path.join(runtime, "node");
   await copyFile(process.execPath, selectedNode);
   await chmod(selectedNode, 0o700);
   const nodeLauncher = path.join(bin, "node");
-  await writeFile(nodeLauncher, `#!/bin/sh\nexec "${selectedNode}" "$@"\n`);
-  await chmod(nodeLauncher, 0o700);
+  await symlink(selectedNode, nodeLauncher);
   const entry = path.join(packageRoot, "pi.mjs");
   await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
     name: "fixture-pi-runtime",
@@ -324,6 +340,92 @@ test("Pi identity snapshots the Node runtime selected by the entry shebang", asy
     "--version"
   ]);
   assert.equal(stdout, "0.84.0\n");
+});
+
+test("Pi identity rejects an opaque Node launcher and resolves runtime probes in disposable state", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const bin = path.join(root, "bin");
+  const runtime = path.join(root, "runtime");
+  const packageRoot = path.join(root, "pi-package");
+  await mkdir(bin);
+  await mkdir(runtime);
+  await mkdir(packageRoot);
+  const selectedNode = path.join(runtime, "node");
+  await copyFile(process.execPath, selectedNode);
+  await chmod(selectedNode, 0o700);
+  const nodeLauncher = path.join(bin, "node");
+  await writeFile(nodeLauncher, `#!/bin/sh\nexport WRAPPER_SIDE_EFFECT=1\nexec "${selectedNode}" "$@"\n`);
+  await chmod(nodeLauncher, 0o700);
+  const entry = path.join(packageRoot, "pi.mjs");
+  await writeFile(path.join(packageRoot, "package.json"), JSON.stringify({
+    name: "fixture-pi-wrapper",
+    private: true,
+    type: "module",
+    bin: { pi: "pi.mjs" }
+  }));
+  await writeFile(entry, "#!/usr/bin/env node\n");
+  await chmod(entry, 0o700);
+  assert.equal(await resolvePiExecutable(entry, { environment: { PATH: bin } }), null);
+
+  await rm(nodeLauncher);
+  await symlink(selectedNode, nodeLauncher);
+  const probes = [];
+  const identity = await resolvePiExecutable(entry, {
+    environment: { PATH: bin, HOME: "/ambient/home", SECRET_TOKEN: "opaque" },
+    runProcess: async (command, args, options) => {
+      probes.push({ command, args, options });
+      return piProbeResult(`${selectedNode}\n`);
+    }
+  });
+  assert.ok(identity);
+  assert.equal(probes.length, 1);
+  assert.match(probes[0].options.cwd, /relaypact-pi-resolve-/u);
+  assert.match(probes[0].options.env.HOME, /relaypact-pi-resolve-/u);
+  assert.equal(probes[0].options.env.SECRET_TOKEN, undefined);
+});
+
+test("Pi identity rejects internal absolute symlinks consistently during resolution", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const entry = path.join(root, "pi.mjs");
+  const value = path.join(root, "value.mjs");
+  const alias = path.join(root, "alias.mjs");
+  await writeFile(path.join(root, "package.json"), JSON.stringify({
+    name: "fixture-pi-symlink",
+    private: true,
+    type: "module",
+    bin: { pi: "pi.mjs" }
+  }));
+  await writeFile(entry, "#!/usr/bin/env node\nimport './alias.mjs';\n");
+  await chmod(entry, 0o700);
+  await writeFile(value, "export const value = 1;\n");
+  await symlink(value, alias);
+  assert.equal(await resolvePiExecutable(entry), null);
+  await rm(alias);
+  await symlink("value.mjs", alias);
+  assert.ok(await resolvePiExecutable(entry));
+});
+
+test("Pi snapshot construction propagates cleanup failure without private diagnostics", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const identity = {
+    command: "/fixture/pi",
+    executableFingerprint: `sha256:${"a".repeat(64)}`,
+    kind: "native",
+    target: path.join(root, "missing-pi"),
+    targetFingerprint: `sha256:${"b".repeat(64)}`
+  };
+  await assert.rejects(
+    materializePiExecutable(identity, {
+      createEnvironment: async () => ({
+        root,
+        cleanup: async () => { throw new Error("private cleanup detail"); }
+      })
+    }),
+    (error) => error.code === "pi_snapshot_cleanup_failed" && !error.message.includes("private cleanup detail")
+  );
 });
 
 test("Pi doctor discovery blocks timed-out, truncated, and settings-write probes without retaining diagnostics", async () => {

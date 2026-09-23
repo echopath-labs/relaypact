@@ -151,6 +151,7 @@ async function collectPiBundle(root, relative = "", depth = 0, state = null, opt
     const info = await lstat(absolute);
     if (info.isSymbolicLink()) {
       const target = await readlink(absolute);
+      if (path.isAbsolute(target)) throw new Error("Pi package contains an unsupported absolute symbolic link.");
       const resolved = await realpath(absolute);
       const prefix = `${state.canonicalRoot}${path.sep}`;
       if (resolved !== state.canonicalRoot && !resolved.startsWith(prefix)) throw new Error("Pi package contains an escaping symbolic link.");
@@ -303,11 +304,12 @@ async function findPiPackage(entry) {
   }
 }
 
-async function resolveVoltaTarget(candidate, environment, run, tool = "pi") {
+async function resolveVoltaTarget(candidate, environment, run, tool = "pi", cwd) {
   const volta = path.join(path.dirname(candidate), process.platform === "win32" ? "volta.exe" : "volta");
   try {
     const result = await run(volta, ["which", tool], {
-      env: minimalEnvironment(environment),
+      cwd,
+      env: environment,
       timeoutMs: PI_PROBE_TIMEOUT_MS,
       maxCaptureBytes: 16 * 1024
     });
@@ -332,17 +334,20 @@ function nodeCommandFromShebang(shebang) {
   return null;
 }
 
-async function resolveNodeRuntime(shebang, environment, run) {
+async function resolveNodeRuntime(shebang, environment, run, cwd) {
   const command = nodeCommandFromShebang(shebang);
   if (!command) return null;
   for (const candidate of commandCandidates(command, environment)) {
     try {
       await access(candidate, fsConstants.X_OK);
       const resolvedCommand = await realpath(candidate);
+      if (!/^node(?:\.exe)?$/iu.test(path.basename(resolvedCommand))) continue;
+      if ((await firstLine(resolvedCommand)).startsWith("#!")) continue;
       const launcherFingerprint = await executableFingerprint(resolvedCommand);
       if (!launcherFingerprint) continue;
-      const probe = await run(candidate, ["-p", "process.execPath"], {
-        env: minimalEnvironment(environment),
+      const probe = await run(resolvedCommand, ["-p", "process.execPath"], {
+        cwd,
+        env: environment,
         timeoutMs: PI_PROBE_TIMEOUT_MS,
         maxCaptureBytes: 16 * 1024
       });
@@ -353,6 +358,9 @@ async function resolveNodeRuntime(shebang, environment, run) {
       await access(target, fsConstants.X_OK);
       const targetFingerprint = await executableFingerprint(target);
       if (!targetFingerprint) continue;
+      // A wrapper or toolchain shim can add opaque environment or argv semantics.
+      // Execute only a directly resolved Node runtime that can be snapshotted exactly.
+      if (target !== resolvedCommand || targetFingerprint !== launcherFingerprint) continue;
       return {
         command: path.resolve(candidate),
         resolvedCommand,
@@ -375,50 +383,61 @@ export async function resolvePiExecutable(command, options = {}) {
   if (typeof command !== "string" || command.trim().length === 0 || command.includes("\0")) return null;
   const environment = options.environment ?? process.env;
   const run = options.runProcess ?? runProcess;
-  for (const candidate of commandCandidates(command, environment)) {
-    try {
-      await access(candidate, fsConstants.X_OK);
-      const resolvedCommand = await realpath(candidate);
-      const info = await stat(resolvedCommand);
-      if (!info.isFile() || info.size > MAX_PI_EXECUTABLE_BYTES) continue;
-      await access(resolvedCommand, fsConstants.X_OK);
-      const launcherFingerprint = await executableFingerprint(resolvedCommand);
-      if (!launcherFingerprint) continue;
-      const target = path.basename(resolvedCommand) === "volta-shim"
-        ? await resolveVoltaTarget(candidate, environment, run)
-        : resolvedCommand;
-      if (!target) continue;
-      const targetInfo = await stat(target);
-      if (!targetInfo.isFile() || targetInfo.size > MAX_PI_EXECUTABLE_BYTES) continue;
-      const targetFingerprint = await executableFingerprint(target);
-      if (!targetFingerprint) continue;
-      const shebang = await firstLine(target);
-      const nodeRuntime = await resolveNodeRuntime(shebang, environment, run);
-      const nodePackage = nodeRuntime ? await findPiPackage(target) : null;
-      if (shebang.startsWith("#!") && (!nodeRuntime || !nodePackage)) continue;
-      const identity = {
-        command: path.resolve(candidate),
-        resolvedCommand,
-        launcherFingerprint,
-        target,
-        targetFingerprint,
-        kind: nodePackage ? "node-package" : "native",
-        packageRoot: nodePackage?.root ?? null,
-        packageEntry: nodePackage?.entry ?? null,
-        packageGraph: nodePackage?.graph ?? null,
-        packageFingerprint: nodePackage?.fingerprint ?? null,
-        runtimeCommand: nodeRuntime?.target ?? null,
-        runtimeFingerprint: nodeRuntime?.targetFingerprint ?? null,
-        runtimeLaunchCommand: nodeRuntime?.command ?? null,
-        runtimeResolvedCommand: nodeRuntime?.resolvedCommand ?? null,
-        runtimeLauncherFingerprint: nodeRuntime?.launcherFingerprint ?? null
-      };
-      return { ...identity, executableFingerprint: piLaunchFingerprint(identity) };
-    } catch {
-      // Try the next explicit PATH candidate without retaining private path diagnostics.
+  const createEnvironment = options.createEnvironment ?? createIsolatedEnvironment;
+  let discovery;
+  try {
+    discovery = await createEnvironment(environment, { prefix: "relaypact-pi-resolve-" });
+    for (const candidate of commandCandidates(command, environment)) {
+      try {
+        await access(candidate, fsConstants.X_OK);
+        const resolvedCommand = await realpath(candidate);
+        const info = await stat(resolvedCommand);
+        if (!info.isFile() || info.size > MAX_PI_EXECUTABLE_BYTES) continue;
+        await access(resolvedCommand, fsConstants.X_OK);
+        const launcherFingerprint = await executableFingerprint(resolvedCommand);
+        if (!launcherFingerprint) continue;
+        const target = path.basename(resolvedCommand) === "volta-shim"
+          ? await resolveVoltaTarget(candidate, discovery.env, run, "pi", discovery.root)
+          : resolvedCommand;
+        if (!target) continue;
+        const targetInfo = await stat(target);
+        if (!targetInfo.isFile() || targetInfo.size > MAX_PI_EXECUTABLE_BYTES) continue;
+        const targetFingerprint = await executableFingerprint(target);
+        if (!targetFingerprint) continue;
+        const shebang = await firstLine(target);
+        const nodeRuntime = await resolveNodeRuntime(shebang, discovery.env, run, discovery.root);
+        const nodePackage = nodeRuntime ? await findPiPackage(target) : null;
+        if (shebang.startsWith("#!") && (!nodeRuntime || !nodePackage)) continue;
+        const identity = {
+          command: path.resolve(candidate),
+          resolvedCommand,
+          launcherFingerprint,
+          target,
+          targetFingerprint,
+          kind: nodePackage ? "node-package" : "native",
+          packageRoot: nodePackage?.root ?? null,
+          packageEntry: nodePackage?.entry ?? null,
+          packageGraph: nodePackage?.graph ?? null,
+          packageFingerprint: nodePackage?.fingerprint ?? null,
+          runtimeCommand: nodeRuntime?.target ?? null,
+          runtimeFingerprint: nodeRuntime?.targetFingerprint ?? null,
+          runtimeLaunchCommand: nodeRuntime?.command ?? null,
+          runtimeResolvedCommand: nodeRuntime?.resolvedCommand ?? null,
+          runtimeLauncherFingerprint: nodeRuntime?.launcherFingerprint ?? null
+        };
+        return { ...identity, executableFingerprint: piLaunchFingerprint(identity) };
+      } catch {
+        // Try the next explicit PATH candidate without retaining private path diagnostics.
+      }
+    }
+    return null;
+  } finally {
+    if (await cleanupPiResources(discovery)) {
+      const error = new Error("Pi executable discovery cleanup failed.");
+      error.code = "pi_resolution_cleanup_failed";
+      throw error;
     }
   }
-  return null;
 }
 
 function samePiExecutableIdentity(left, right) {
@@ -427,11 +446,12 @@ function samePiExecutableIdentity(left, right) {
     left.executableFingerprint === right.executableFingerprint);
 }
 
-export async function materializePiExecutable(identity) {
+export async function materializePiExecutable(identity, options = {}) {
   if (!identity || !path.isAbsolute(identity.command) || !/^sha256:[a-f0-9]{64}$/u.test(identity.executableFingerprint)) {
     throw new Error("Pi executable identity is incomplete.");
   }
-  const isolated = await createIsolatedEnvironment(process.env, { prefix: "relaypact-pi-exec-" });
+  const createEnvironment = options.createEnvironment ?? createIsolatedEnvironment;
+  const isolated = await createEnvironment(options.environment ?? process.env, { prefix: "relaypact-pi-exec-" });
   try {
     if (identity.kind === "native") {
       const executable = path.join(isolated.root, "pi");
@@ -440,7 +460,10 @@ export async function materializePiExecutable(identity) {
       if (await executableFingerprint(executable) !== identity.targetFingerprint) throw new Error("Pi executable changed during snapshot.");
       return { identity: { ...identity, launchCommand: executable, launchPrefix: [] }, cleanup: isolated.cleanup };
     }
-    if (identity.kind !== "node-package" || !plainObject(identity.packageGraph) || !path.isAbsolute(identity.runtimeCommand)) {
+    if (identity.kind !== "node-package" || !plainObject(identity.packageGraph) ||
+        !path.isAbsolute(identity.runtimeCommand) || !path.isAbsolute(identity.runtimeLaunchCommand) ||
+        identity.runtimeResolvedCommand !== identity.runtimeCommand ||
+        identity.runtimeLauncherFingerprint !== identity.runtimeFingerprint) {
       throw new Error("Pi package identity is incomplete.");
     }
     const store = path.join(isolated.root, "packages");
@@ -489,8 +512,17 @@ export async function materializePiExecutable(identity) {
       cleanup: isolated.cleanup
     };
   } catch {
-    await isolated.cleanup().catch(() => {});
-    throw new Error("Pi launch identity could not be snapshotted.");
+    let cleanupFailed = false;
+    try {
+      await isolated.cleanup();
+    } catch {
+      cleanupFailed = true;
+    }
+    const error = new Error(cleanupFailed
+      ? "Pi launch snapshot cleanup failed."
+      : "Pi launch identity could not be snapshotted.");
+    error.code = cleanupFailed ? "pi_snapshot_cleanup_failed" : "pi_snapshot_failed";
+    throw error;
   }
 }
 
@@ -539,10 +571,11 @@ async function probePiSnapshot(run, materializeExecutable, identity, args, envir
   try {
     materialized = await materializeExecutable(identity);
     outcome.probe = await probePi(run, materialized.identity, args, environment, cwd);
-  } catch {
+  } catch (error) {
     outcome.snapshotFailed = true;
+    if (error?.code === "pi_snapshot_cleanup_failed") outcome.cleanupFailed = true;
   } finally {
-    outcome.cleanupFailed = await cleanupPiResources(materialized);
+    outcome.cleanupFailed = await cleanupPiResources(materialized) || outcome.cleanupFailed;
   }
   return outcome;
 }
@@ -553,11 +586,16 @@ export async function discoverPiCli(options = {}) {
   const materializeExecutable = options.materializeExecutable ?? materializePiExecutable;
   const environment = options.environment ?? process.env;
   const selectedCommand = options.executorCommand ?? "pi";
-  const identity = await resolveExecutable(selectedCommand, {
-    environment,
-    commandBaseDirectory: options.commandBaseDirectory,
-    runProcess: run
-  });
+  let identity;
+  try {
+    identity = await resolveExecutable(selectedCommand, {
+      environment,
+      commandBaseDirectory: options.commandBaseDirectory,
+      runProcess: run
+    });
+  } catch (error) {
+    return unavailablePiReadiness(error?.code === "pi_resolution_cleanup_failed" ? "cleanup_failed" : "missing");
+  }
   if (!identity) return unavailablePiReadiness("missing");
 
   let isolated;
@@ -587,8 +625,8 @@ export async function discoverPiCli(options = {}) {
       : { probe: await probePi(run, identity, args, probeEnvironment, isolated.root), snapshotFailed: false, cleanupFailed: false };
 
     const versionOutcome = await runProbe(["--version"]);
-    if (versionOutcome.snapshotFailed) reason = "mutated";
-    else if (versionOutcome.cleanupFailed) reason = "cleanup_failed";
+    if (versionOutcome.cleanupFailed) reason = "cleanup_failed";
+    else if (versionOutcome.snapshotFailed) reason = "mutated";
     else {
       const versionProbe = versionOutcome.probe;
       settingsIsolated = !SETTINGS_WRITE_FAILURE.test(versionProbe.output);
@@ -604,8 +642,8 @@ export async function discoverPiCli(options = {}) {
 
     if (!reason) {
       const helpOutcome = await runProbe(["--help"]);
-      if (helpOutcome.snapshotFailed) reason = "mutated";
-      else if (helpOutcome.cleanupFailed) reason = "cleanup_failed";
+      if (helpOutcome.cleanupFailed) reason = "cleanup_failed";
+      else if (helpOutcome.snapshotFailed) reason = "mutated";
       else {
         const helpProbe = helpOutcome.probe;
         settingsIsolated = !SETTINGS_WRITE_FAILURE.test(helpProbe.output);
@@ -631,11 +669,16 @@ export async function discoverPiCli(options = {}) {
       }
     }
 
-    const verifiedIdentity = await resolveExecutable(selectedCommand, {
-      environment,
-      commandBaseDirectory: options.commandBaseDirectory,
-      runProcess: run
-    });
+    let verifiedIdentity;
+    try {
+      verifiedIdentity = await resolveExecutable(selectedCommand, {
+        environment,
+        commandBaseDirectory: options.commandBaseDirectory,
+        runProcess: run
+      });
+    } catch (error) {
+      if (error?.code === "pi_resolution_cleanup_failed") reason = "cleanup_failed";
+    }
     const executableStable = samePiExecutableIdentity(identity, verifiedIdentity);
     if (!executableStable) reason = "mutated";
     if (reason) {
@@ -1053,6 +1096,9 @@ export async function runExecutor(envelope, options) {
     );
     credentialEvidenceTrusted = await verifyPiProjection(projection);
   } catch (error) {
+    if (error?.code === "pi_snapshot_cleanup_failed" || error?.code === "pi_resolution_cleanup_failed") {
+      cleanupFailed = true;
+    }
     if (!processResult && !projection) credentialEvidenceTrusted = true;
     executionFailure = {
       reportedStatus: "failed",
@@ -1064,7 +1110,7 @@ export async function runExecutor(envelope, options) {
       output: ""
     };
   } finally {
-    cleanupFailed = await cleanupPiResources(isolated, executableSnapshot);
+    cleanupFailed = await cleanupPiResources(isolated, executableSnapshot) || cleanupFailed;
   }
 
   if (cleanupFailed) {
