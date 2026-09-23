@@ -147,22 +147,93 @@ function packageNameFor(root, absolute) {
 }
 
 function importedSpecifiers(source) {
-  const results = [];
-  const patterns = [
-    /\bfrom\s+["']([^"']+)["']/gu,
-    /\bimport\s+["']([^"']+)["']/gu,
-    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/gu
-  ];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) results.push(match[1]);
+  const results = staticImportedSpecifiers(source).filter((specifier) => typeof specifier === "string");
+  for (const match of source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/gu)) {
+    results.push(match[1]);
   }
   return results;
 }
 
+function skipJavaScriptTrivia(source, start) {
+  let index = start;
+  while (index < source.length) {
+    if (/\s/u.test(source[index])) {
+      index += 1;
+      continue;
+    }
+    if (source.startsWith("//", index)) {
+      const newline = source.indexOf("\n", index + 2);
+      return newline === -1 ? source.length : skipJavaScriptTrivia(source, newline + 1);
+    }
+    if (source.startsWith("/*", index)) {
+      const close = source.indexOf("*/", index + 2);
+      return close === -1 ? source.length : skipJavaScriptTrivia(source, close + 2);
+    }
+    break;
+  }
+  return index;
+}
+
+function readJavaScriptString(source, start) {
+  const quote = source[start];
+  if (quote !== '"' && quote !== "'") return null;
+  let value = "";
+  for (let index = start + 1; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === quote) return { value, end: index + 1 };
+    if (character === "\\" || character === "\n" || character === "\r") return { value: null, end: index + 1 };
+    value += character;
+  }
+  return { value: null, end: source.length };
+}
+
 function staticImportedSpecifiers(source) {
   const results = [];
-  for (const pattern of [/\bfrom\s+["']([^"']+)["']/gu, /\bimport\s+["']([^"']+)["']/gu]) {
-    for (const match of source.matchAll(pattern)) results.push(match[1]);
+  let braceDepth = 0;
+  for (let index = 0; index < source.length;) {
+    const next = skipJavaScriptTrivia(source, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    const character = source[index];
+    if (character === '"' || character === "'" || character === "`") {
+      const quote = character;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === "\\") index += 2;
+        else if (source[index] === quote) {
+          index += 1;
+          break;
+        } else index += 1;
+      }
+      continue;
+    }
+    if (character === "{") {
+      braceDepth += 1;
+      index += 1;
+      continue;
+    }
+    if (character === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+      index += 1;
+      continue;
+    }
+    if (/[A-Za-z_$]/u.test(character)) {
+      let end = index + 1;
+      while (end < source.length && /[A-Za-z0-9_$]/u.test(source[end])) end += 1;
+      const identifier = source.slice(index, end);
+      if (braceDepth === 0 && (identifier === "import" || identifier === "from")) {
+        const literalStart = skipJavaScriptTrivia(source, end);
+        if (identifier !== "import" || source[literalStart] !== "(") {
+          const literal = readJavaScriptString(source, literalStart);
+          if (literal) results.push(literal.value);
+        }
+      }
+      index = end;
+      continue;
+    }
+    index += 1;
   }
   return results;
 }
@@ -318,8 +389,11 @@ export async function validateArchitecture(rootInput) {
   const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
   const doctorSource = await readFile(doctorPath, "utf8").catch(() => "");
   const doctorStaticImports = staticImportedSpecifiers(doctorSource);
+  if (doctorStaticImports.includes(null)) {
+    errors.push("Default doctor must use plain, bounded static import specifiers.");
+  }
   const doctorStaticImportPaths = doctorStaticImports
-    .filter((specifier) => specifier.startsWith("."))
+    .filter((specifier) => typeof specifier === "string" && specifier.startsWith("."))
     .map((specifier) => {
       try {
         return fileURLToPath(new URL(specifier, pathToFileURL(doctorPath)));

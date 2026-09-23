@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, chmod, copyFile, cp, lstat, mkdir, open, readFile, readlink, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, cp, lstat, mkdir, open, opendir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createIsolatedEnvironment, minimalEnvironment } from "../../core/src/environment.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import {
@@ -213,12 +213,30 @@ async function firstLine(file) {
   }
 }
 
-async function collectPiBundle(root, relative = "", depth = 0, state = null, options = {}) {
+export async function collectPiBundle(root, relative = "", depth = 0, state = null, options = {}) {
   if (!state) state = { entries: [], bytes: 0, canonicalRoot: await realpath(root) };
   if (depth > MAX_PI_BUNDLE_DEPTH) throw new Error("Pi package exceeds the supported directory depth.");
   const directory = path.join(root, relative);
-  for (const name of (await readdir(directory)).sort()) {
-    if (options.excludeNodeModules === true && relative === "" && name === "node_modules") continue;
+  const maxFiles = Number.isSafeInteger(options.maxFiles) && options.maxFiles >= 0
+    ? Math.min(options.maxFiles, MAX_PI_BUNDLE_FILES)
+    : MAX_PI_BUNDLE_FILES;
+  const remaining = maxFiles - state.entries.length;
+  if (remaining < 0) throw new Error("Pi package exceeds the supported file-count bound.");
+  const names = [];
+  const openDirectory = options.openDirectory ?? opendir;
+  const handle = await openDirectory(directory);
+  try {
+    for await (const entry of handle) {
+      if (options.excludeNodeModules === true && relative === "" && entry.name === "node_modules") continue;
+      if (names.length >= remaining) throw new Error("Pi package exceeds the supported file-count bound.");
+      names.push(entry.name);
+    }
+  } finally {
+    await handle.close?.().catch(() => {});
+  }
+  names.sort();
+  for (const name of names) {
+    if (state.entries.length >= maxFiles) throw new Error("Pi package exceeds the supported file-count bound.");
     const nextRelative = relative ? path.join(relative, name) : name;
     const absolute = path.join(root, nextRelative);
     const info = await lstat(absolute);
@@ -245,7 +263,6 @@ async function collectPiBundle(root, relative = "", depth = 0, state = null, opt
     } else {
       throw new Error("Pi package contains an unsupported filesystem entry.");
     }
-    if (state.entries.length > MAX_PI_BUNDLE_FILES) throw new Error("Pi package exceeds the supported file-count bound.");
   }
   return state;
 }
@@ -346,7 +363,10 @@ async function collectPiPackageGraph(root) {
   for (let index = 0; index < nodes.length; index += 1) {
     const node = nodes[index];
     const manifest = await readPiPackageManifest(node.root);
-    const bundle = await collectPiBundle(node.root, "", 0, null, { excludeNodeModules: true });
+    const bundle = await collectPiBundle(node.root, "", 0, null, {
+      excludeNodeModules: true,
+      maxFiles: MAX_PI_BUNDLE_FILES - totalEntries
+    });
     node.entries = bundle.entries;
     totalBytes += bundle.bytes;
     totalEntries += bundle.entries.length;

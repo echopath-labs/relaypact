@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { validateTaskEnvelope } from "../packages/contracts/src/envelope.mjs";
 import { parseStatusPaths } from "../packages/core/src/git.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
-import { discoverPiCli, materializePiExecutable, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
+import { collectPiBundle, discoverPiCli, materializePiExecutable, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
 const fakePi = fileURLToPath(new URL("./fixtures/fake-pi.mjs", import.meta.url));
@@ -64,6 +64,31 @@ const piProbeResult = (stdout, overrides = {}) => ({
   stdoutTruncated: false,
   stderrTruncated: false,
   ...overrides
+});
+
+test("Pi bundle collection stops reading a directory at the remaining entry bound", async () => {
+  let reads = 0;
+  const handle = {
+    async *[Symbol.asyncIterator]() {
+      for (const name of ["one", "two", "three", "unreached"]) {
+        reads += 1;
+        yield { name };
+      }
+    },
+    close: async () => {}
+  };
+  await assert.rejects(
+    collectPiBundle("/fixture", "", 0, {
+      entries: [],
+      bytes: 0,
+      canonicalRoot: "/fixture"
+    }, {
+      maxFiles: 2,
+      openDirectory: async () => handle
+    }),
+    /supported file-count bound/u
+  );
+  assert.equal(reads, 3);
 });
 
 function piDoctorFixture(overrides = {}) {
