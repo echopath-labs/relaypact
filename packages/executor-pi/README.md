@@ -21,8 +21,10 @@ bootstrap files stay inside that disposable root and are deleted afterward.
 Global/project Pi settings and authentication are neither read nor modified.
 Timeout, truncation, executable drift and settings-lock failures block with
 fixed diagnostics that retain no native output or private paths. Snapshot
-copy, verification, or temporary-state cleanup failures use a structured blocked result. Probes and
-tasks execute from a verified private snapshot of that identity.
+copy, verification, or temporary-state cleanup failures use a structured blocked result. Each
+doctor probe and each task execute from a separate verified private snapshot of that identity.
+Task cleanup failures remain structured execution failures so Host filesystem and Git postflight
+evidence is still collected.
 
 Pi runs in print/text mode and must return exactly one final JSON object with
 `status` (`completed`, `blocked`, or `failed`), a string `summary`, and optional

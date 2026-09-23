@@ -99,7 +99,9 @@ function helpOptionLine(output, flag) {
 }
 
 async function cleanupPiResources(...resources) {
-  const results = await Promise.allSettled(resources.filter(Boolean).map((resource) => resource.cleanup()));
+  const results = await Promise.allSettled(
+    resources.filter(Boolean).map((resource) => Promise.resolve().then(() => resource.cleanup()))
+  );
   return results.some((result) => result.status === "rejected");
 }
 
@@ -531,6 +533,20 @@ async function probePi(run, identity, args, environment, cwd) {
   }
 }
 
+async function probePiSnapshot(run, materializeExecutable, identity, args, environment, cwd) {
+  const outcome = { probe: null, snapshotFailed: false, cleanupFailed: false };
+  let materialized;
+  try {
+    materialized = await materializeExecutable(identity);
+    outcome.probe = await probePi(run, materialized.identity, args, environment, cwd);
+  } catch {
+    outcome.snapshotFailed = true;
+  } finally {
+    outcome.cleanupFailed = await cleanupPiResources(materialized);
+  }
+  return outcome;
+}
+
 export async function discoverPiCli(options = {}) {
   const run = options.runProcess ?? runProcess;
   const resolveExecutable = options.resolveExecutable ?? resolvePiExecutable;
@@ -550,18 +566,10 @@ export async function discoverPiCli(options = {}) {
   let settingsIsolated = true;
   let capabilities = {};
   let reason = null;
-  let materialized;
-  if (run === runProcess || options.materializeExecutable) {
-    try {
-      materialized = await materializeExecutable(identity);
-    } catch {
-      return unavailablePiReadiness("mutated", { command: identity.command });
-    }
-  }
+  const snapshotProbes = run === runProcess || options.materializeExecutable;
   let readiness;
   let cleanupFailed = false;
   try {
-    const probeIdentity = materialized?.identity ?? identity;
     isolated = await createIsolatedEnvironment(environment, {
       prefix: "relaypact-pi-doctor-",
       grants: { GIT_OPTIONAL_LOCKS: "0" }
@@ -574,38 +582,52 @@ export async function discoverPiCli(options = {}) {
       PI_CODING_AGENT_SESSION_DIR: isolated.temporary
     };
 
-    const versionProbe = await probePi(run, probeIdentity, ["--version"], probeEnvironment, isolated.root);
-    settingsIsolated = !SETTINGS_WRITE_FAILURE.test(versionProbe.output);
-    if (!settingsIsolated) reason = "settings_write_attempt";
-    else if (versionProbe.state !== "complete") reason = versionProbe.state;
-    else if (versionProbe.exitCode !== 0 || versionProbe.signal) reason = "unsupported";
+    const runProbe = async (args) => snapshotProbes
+      ? probePiSnapshot(run, materializeExecutable, identity, args, probeEnvironment, isolated.root)
+      : { probe: await probePi(run, identity, args, probeEnvironment, isolated.root), snapshotFailed: false, cleanupFailed: false };
+
+    const versionOutcome = await runProbe(["--version"]);
+    if (versionOutcome.snapshotFailed) reason = "mutated";
+    else if (versionOutcome.cleanupFailed) reason = "cleanup_failed";
     else {
-      version = parsePiVersion(versionProbe.output);
-      versionCompatible = version !== null && compareVersions(version, MINIMUM_PI_VERSION) >= 0;
-      if (!versionCompatible) reason = "unsupported_version";
+      const versionProbe = versionOutcome.probe;
+      settingsIsolated = !SETTINGS_WRITE_FAILURE.test(versionProbe.output);
+      if (!settingsIsolated) reason = "settings_write_attempt";
+      else if (versionProbe.state !== "complete") reason = versionProbe.state;
+      else if (versionProbe.exitCode !== 0 || versionProbe.signal) reason = "unsupported";
+      else {
+        version = parsePiVersion(versionProbe.output);
+        versionCompatible = version !== null && compareVersions(version, MINIMUM_PI_VERSION) >= 0;
+        if (!versionCompatible) reason = "unsupported_version";
+      }
     }
 
     if (!reason) {
-      const helpProbe = await probePi(run, probeIdentity, ["--help"], probeEnvironment, isolated.root);
-      settingsIsolated = !SETTINGS_WRITE_FAILURE.test(helpProbe.output);
-      if (!settingsIsolated) reason = "settings_write_attempt";
-      else if (helpProbe.state !== "complete") reason = helpProbe.state;
-      else if (helpProbe.exitCode !== 0 || helpProbe.signal) reason = "unsupported";
+      const helpOutcome = await runProbe(["--help"]);
+      if (helpOutcome.snapshotFailed) reason = "mutated";
+      else if (helpOutcome.cleanupFailed) reason = "cleanup_failed";
       else {
-        const supported = Object.fromEntries(REQUIRED_PI_FLAGS.map((flag) => [flag, helpHasOption(helpProbe.output, flag)]));
-        const modeLine = helpOptionLine(helpProbe.output, "--mode");
-        capabilities = {
-          nonInteractive: supported["--print"] === true,
-          structuredOutput: supported["--mode"] === true && /\btext\b/u.test(modeLine) && /\bjson\b/u.test(modeLine),
-          toolSelection: supported["--tools"] === true,
-          timeout: true,
-          noSession: supported["--no-session"] === true,
-          projectIsolation: [
-            "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
-            "--no-context-files", "--no-approve", "--provider", "--model", "--thinking"
-          ].every((flag) => supported[flag] === true)
-        };
-        if (!Object.values(capabilities).every(Boolean)) reason = "unsupported_capabilities";
+        const helpProbe = helpOutcome.probe;
+        settingsIsolated = !SETTINGS_WRITE_FAILURE.test(helpProbe.output);
+        if (!settingsIsolated) reason = "settings_write_attempt";
+        else if (helpProbe.state !== "complete") reason = helpProbe.state;
+        else if (helpProbe.exitCode !== 0 || helpProbe.signal) reason = "unsupported";
+        else {
+          const supported = Object.fromEntries(REQUIRED_PI_FLAGS.map((flag) => [flag, helpHasOption(helpProbe.output, flag)]));
+          const modeLine = helpOptionLine(helpProbe.output, "--mode");
+          capabilities = {
+            nonInteractive: supported["--print"] === true,
+            structuredOutput: supported["--mode"] === true && /\btext\b/u.test(modeLine) && /\bjson\b/u.test(modeLine),
+            toolSelection: supported["--tools"] === true,
+            timeout: true,
+            noSession: supported["--no-session"] === true,
+            projectIsolation: [
+              "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
+              "--no-context-files", "--no-approve", "--provider", "--model", "--thinking"
+            ].every((flag) => supported[flag] === true)
+          };
+          if (!Object.values(capabilities).every(Boolean)) reason = "unsupported_capabilities";
+        }
       }
     }
 
@@ -640,7 +662,7 @@ export async function discoverPiCli(options = {}) {
       };
     }
   } finally {
-    cleanupFailed = await cleanupPiResources(isolated, materialized);
+    cleanupFailed = await cleanupPiResources(isolated);
   }
   return cleanupFailed
     ? unavailablePiReadiness("cleanup_failed", { command: identity.command })
@@ -991,6 +1013,8 @@ export async function runExecutor(envelope, options) {
   let processResult;
   let projection;
   let executableSnapshot;
+  let executionFailure;
+  let cleanupFailed = false;
   let credentialEvidenceTrusted = false;
   const finish = (result) => attachExecutorSecurity(result, { sensitiveValues, credentialEvidenceTrusted });
   try {
@@ -1000,7 +1024,7 @@ export async function runExecutor(envelope, options) {
       runProcess
     });
     if (!executableIdentity) throw new DelegationError("pi_executor_unavailable", "The selected Pi executable could not be resolved to a supported absolute launch identity.");
-    executableSnapshot = await materializePiExecutable(executableIdentity);
+    executableSnapshot = await (options.materializeExecutable ?? materializePiExecutable)(executableIdentity);
     isolated = await createIsolatedEnvironment(environmentSource, {
       prefix: "relaypact-pi-",
       grants: { ...explicitGrants, GIT_OPTIONAL_LOCKS: "0" }
@@ -1030,7 +1054,7 @@ export async function runExecutor(envelope, options) {
     credentialEvidenceTrusted = await verifyPiProjection(projection);
   } catch (error) {
     if (!processResult && !projection) credentialEvidenceTrusted = true;
-    return finish({
+    executionFailure = {
       reportedStatus: "failed",
       summary: conciseOutput(`Executor could not start: ${error.message}`, 4000, sensitiveValues),
       residualRisks: [],
@@ -1038,12 +1062,22 @@ export async function runExecutor(envelope, options) {
       signal: null,
       timedOut: false,
       output: ""
-    });
+    };
   } finally {
-    if (await cleanupPiResources(isolated, executableSnapshot)) {
-      throw new Error("Pi temporary state cleanup failed.");
-    }
+    cleanupFailed = await cleanupPiResources(isolated, executableSnapshot);
   }
+
+  if (cleanupFailed) {
+    return finish({
+      reportedStatus: "failed",
+      summary: "Pi temporary state cleanup failed.",
+      residualRisks: ["Executor temporary state cleanup requires Host review."],
+      failureCode: "pi_cleanup_failed",
+      ...processMetadata(processResult),
+      output: ""
+    });
+  }
+  if (executionFailure) return finish(executionFailure);
 
   if (!credentialEvidenceTrusted) {
     return finish({

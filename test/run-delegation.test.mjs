@@ -156,7 +156,30 @@ test("Pi doctor blocks when either disposable state cleanup fails", async () => 
   });
   assert.equal(readiness.state, "blocked");
   assert.equal(readiness.reason, "cleanup_failed");
-  assert.equal(fixture.calls.length, 2);
+  assert.equal(fixture.calls.length, 1);
+});
+
+test("Pi doctor uses a fresh verified executable snapshot for each probe", async () => {
+  const fixture = piDoctorFixture();
+  const snapshots = [];
+  const cleanups = [];
+  const readiness = await discoverPiCli({
+    ...fixture,
+    executorCommand: "/fixture/pi",
+    materializeExecutable: async (identity) => {
+      const sequence = snapshots.length + 1;
+      const launchCommand = `/private/snapshot-${sequence}/pi`;
+      snapshots.push(launchCommand);
+      return {
+        identity: { ...identity, launchCommand, launchPrefix: [] },
+        cleanup: async () => { cleanups.push(launchCommand); }
+      };
+    }
+  });
+  assert.equal(readiness.state, "ready");
+  assert.deepEqual(fixture.calls.map((item) => item.command), snapshots);
+  assert.deepEqual(cleanups, snapshots);
+  assert.equal(new Set(snapshots).size, 2);
 });
 
 test("Pi executable resolution rejects working-directory-relative launch paths", async () => {
@@ -701,6 +724,33 @@ test("Pi executor grants are snapshotted exactly once", async () => {
   assert.ok(result.scope.breaches.includes("evidence:credential value detected"));
   assert.doesNotMatch(JSON.stringify(result), new RegExp(firstSecret));
   assert.doesNotMatch(JSON.stringify(result), new RegExp(secondSecret));
+});
+
+test("Pi cleanup failure remains structured so Host postflight retains changed-path evidence", async () => {
+  const root = await createGitRepository();
+  const result = await runDelegation(withFixturePiRoute(makeEnvelope(root)), {
+    executorCommand: fakePi,
+    executorEnv: { FAKE_PI_SCENARIO: "success" },
+    materializeExecutable: async (identity) => {
+      const snapshot = await materializePiExecutable(identity);
+      return {
+        ...snapshot,
+        async cleanup() {
+          await snapshot.cleanup();
+          throw new Error("private cleanup detail");
+        }
+      };
+    }
+  });
+  assert.equal(result.status, "failed");
+  assert.deepEqual(result.changedPaths, ["allowed.txt"]);
+  assert.equal(result.scope.compliant, true);
+  assert.equal(result.executor.reportedStatus, "failed");
+  assert.equal(result.executor.failureCode, "pi_cleanup_failed");
+  assert.equal(result.executor.summary, "Pi temporary state cleanup failed.");
+  assert.equal(result.validations[0].status, "not_run");
+  assert.equal(result.validations[0].reason, "executor_failed");
+  assert.doesNotMatch(JSON.stringify(result), /private cleanup detail/u);
 });
 
 test("Pi validation output redacts the complete executor and validation grant union", async () => {
