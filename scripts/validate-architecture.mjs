@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const EXPECTED_PACKAGES = new Map([
   ["adapter-codex-codex", "@relaypact/adapter-codex-codex"],
@@ -320,7 +320,14 @@ export async function validateArchitecture(rootInput) {
   const doctorStaticImports = staticImportedSpecifiers(doctorSource);
   const doctorStaticImportPaths = doctorStaticImports
     .filter((specifier) => specifier.startsWith("."))
-    .map((specifier) => path.resolve(path.dirname(doctorPath), specifier));
+    .map((specifier) => {
+      try {
+        return fileURLToPath(new URL(specifier, pathToFileURL(doctorPath)));
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
   if (doctorStaticImportPaths.includes(path.join(root, "packages", "executor-cursor", "src", "executor.mjs"))) {
     errors.push("Default doctor must not statically load the optional Cursor executor.");
   }

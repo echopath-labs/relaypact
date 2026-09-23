@@ -458,7 +458,7 @@ test("architecture validation rejects eager Pi loading in default doctor", async
     )
     .replace(
       'from "../../executor-pi/src/executor.mjs";',
-      'from "../../executor-pi/src/./executor.mjs";'
+      'from "../../executor-pi/src/executor.mjs?eager";'
     );
   await writeFile(doctorPath, doctor);
   const errors = await validateArchitecture(root);

@@ -108,6 +108,16 @@ test("Pi doctor discovery blocks unsupported, missing, and mutated executables",
   assert.equal(prereleaseResult.reason, "unsupported_version");
   assert.equal(prereleaseResult.version, "0.84.0-beta.1");
 
+  const labeled = piDoctorFixture({ version: piProbeResult("launcher 22.0.0\nPi 0.1.0\n") });
+  const labeledResult = await discoverPiCli({ ...labeled, executorCommand: "/fixture/pi" });
+  assert.equal(labeledResult.reason, "unsupported_version");
+  assert.equal(labeledResult.version, "0.1.0");
+
+  const ambiguous = piDoctorFixture({ version: piProbeResult("22.0.0\n0.84.0\n") });
+  const ambiguousResult = await discoverPiCli({ ...ambiguous, executorCommand: "/fixture/pi" });
+  assert.equal(ambiguousResult.reason, "unsupported_version");
+  assert.equal(ambiguousResult.version, null);
+
   const laterPrerelease = piDoctorFixture({ version: piProbeResult("0.85.0-beta.1\n") });
   assert.equal((await discoverPiCli({ ...laterPrerelease, executorCommand: "/fixture/pi" })).state, "ready");
 

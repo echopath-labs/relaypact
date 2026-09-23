@@ -86,8 +86,21 @@ function compareVersions(left, right) {
 }
 
 function parsePiVersion(output) {
-  const candidate = new RegExp(`(?:^|\\s)(${SEMANTIC_VERSION_PATTERN})(?=\\s|$)`, "u").exec(output)?.[1] ?? null;
-  return candidate && parseSemanticVersion(candidate) ? candidate : null;
+  const lines = String(output).split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  const labeledPattern = new RegExp(
+    `^pi(?:\\s+coding\\s+agent)?(?:\\s+version)?\\s*(?::|=)?\\s*v?(${SEMANTIC_VERSION_PATTERN})$`,
+    "iu"
+  );
+  const labeled = lines.flatMap((line) => labeledPattern.exec(line)?.[1] ?? []);
+  if (labeled.length === 1) return parseSemanticVersion(labeled[0]) ? labeled[0] : null;
+  if (labeled.length > 1) return null;
+
+  const tokenPattern = new RegExp(`(?:^|\\s)(${SEMANTIC_VERSION_PATTERN})(?=\\s|$)`, "gu");
+  const tokens = [...String(output).matchAll(tokenPattern)].map((match) => match[1]);
+  if (tokens.length !== 1) return null;
+  const barePattern = new RegExp(`^(${SEMANTIC_VERSION_PATTERN})$`, "u");
+  const bare = lines.flatMap((line) => barePattern.exec(line)?.[1] ?? []);
+  return bare.length === 1 && bare[0] === tokens[0] && parseSemanticVersion(bare[0]) ? bare[0] : null;
 }
 
 function helpHasOption(output, flag) {
