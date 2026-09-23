@@ -569,14 +569,15 @@ node ./bin/relaypact.mjs run-pi \
   --executor /absolute/path/to/pi
 ```
 
-Pi executable snapshots use an executable-capable private runtime directory rather
-than the system temporary directory. RelayPact prefers
-`$XDG_RUNTIME_DIR/relaypact/pi-executable-snapshots`, then
-`$HOME/.cache/relaypact/pi-executable-snapshots`; if neither private location passes
-directory and executable-file probes, it tries a private subdirectory of the system
-temporary directory. On hosts that require another executable filesystem, set
-`RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT` to an absolute, private directory. RelayPact
-probes the selected filesystem before copying or launching Pi.
+Pi executable snapshots are created atomically beneath a trusted, executable-capable
+ancestor. RelayPact prefers `$XDG_RUNTIME_DIR`, then `$HOME`; if neither passes
+ownership, permission, directory and executable-file probes, it creates the private
+snapshot directly beneath the trusted sticky system temporary directory. On hosts
+that require another executable filesystem, set
+`RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT` to an absolute, pre-existing private
+directory whose ancestors are owned by the current user or root and are not
+group/world writable unless protected by the sticky bit. RelayPact probes the
+selected filesystem before copying or launching Pi.
 
 Read [`packages/adapter-codex-pi/README.md`](../packages/adapter-codex-pi/README.md)
 before selecting it. Pi configuration must not become an implicit dependency or

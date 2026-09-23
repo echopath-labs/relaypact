@@ -14,6 +14,9 @@ snapshots the complete Pi launch identity and resolved runtime dependency
 closure, including the Node runtime selected by the entry shebang and toolchain;
 relative path executors are refused. Prereleases below the minimum stable version,
 partial help-option matches, and mode values not associated with `--mode` are refused.
+The experimental route is currently admitted on macOS and Linux. Windows `.cmd`
+and `.bat` command shims are rejected because their wrapper semantics are not yet
+captured by the immutable launch snapshot; Windows support is not claimed.
 It probes only `--version` and `--help` inside disposable Pi state;
 it does not read authentication, invoke a model or prove provider availability.
 

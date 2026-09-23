@@ -71,7 +71,8 @@ const ROUTE_EXPECTATIONS = new Map([
     rootPluginActivation: false,
     prerequisites: [
       "Node.js 20 or later",
-      "Pi 0.84.0 or later and an explicit execution profile"
+      "Pi 0.84.0 or later and an explicit execution profile",
+      "macOS or Linux; Windows command shims are not supported"
     ],
     deterministicCheck: "npm run check:codex-pi",
     liveSmoke: "npm run smoke:pi"

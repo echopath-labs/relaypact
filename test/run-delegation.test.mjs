@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { validateTaskEnvelope } from "../packages/contracts/src/envelope.mjs";
 import { parseStatusPaths } from "../packages/core/src/git.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
-import { collectPiBundle, discoverPiCli, materializePiExecutable, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
+import { collectPiBundle, discoverPiCli, executableFingerprint, materializePiExecutable, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
 const fakePi = fileURLToPath(new URL("./fixtures/fake-pi.mjs", import.meta.url));
@@ -292,6 +292,24 @@ test("Pi executable resolution classifies disposable-state setup failure", async
   assert.doesNotMatch(JSON.stringify(readiness), /private temporary path/u);
 });
 
+test("Pi executable fingerprinting rejects a FIFO without waiting for a writer", async (context) => {
+  if (process.platform === "win32") return context.skip("Named-pipe fixture requires mkfifo.");
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const fifo = path.join(root, "pi-fifo");
+  await execFileAsync("mkfifo", [fifo]);
+  assert.equal(await executableFingerprint(fifo), null);
+});
+
+test("Pi executable resolution rejects unsupported Windows command shims", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const shim = path.join(root, "pi.cmd");
+  await writeFile(shim, "@echo off\r\nnode %~dp0\\pi.mjs %*\r\n");
+  await chmod(shim, 0o700);
+  assert.equal(await resolvePiExecutable(shim), null);
+});
+
 test("Pi delegation never resolves a relative executor inside the target repository", async () => {
   const root = await createGitRepository();
   const relativeExecutor = path.join(root, "target-pi.mjs");
@@ -372,6 +390,39 @@ test("Pi launch identity covers imported package files and execution uses an imm
     "--version"
   ]);
   assert.equal(stdout, "0.84.0\n");
+});
+
+test("Pi snapshot copies only recorded package entries before rejecting source growth", async (context) => {
+  const root = await createDirectory();
+  const snapshotBase = await createDirectory();
+  const snapshotRoot = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  context.after(() => rm(snapshotBase, { recursive: true, force: true }));
+  context.after(() => rm(snapshotRoot, { recursive: true, force: true }));
+  const entry = path.join(root, "pi.mjs");
+  await writeFile(path.join(root, "package.json"), JSON.stringify({
+    name: "fixture-pi-bounded-copy",
+    private: true,
+    type: "module",
+    bin: { pi: "pi.mjs" }
+  }));
+  await writeFile(entry, "#!/usr/bin/env node\n");
+  await chmod(entry, 0o700);
+  const identity = await resolvePiExecutable(entry);
+  await writeFile(path.join(root, "unexpected.bin"), "must-not-be-copied\n");
+  await assert.rejects(
+    materializePiExecutable(identity, {
+      snapshotBaseDirectory: snapshotBase,
+      createEnvironment: async () => ({
+        root: snapshotRoot,
+        env: process.env,
+        cleanup: async () => {}
+      }),
+      runProcess: async () => piProbeResult("")
+    }),
+    (error) => error.code === "pi_snapshot_failed"
+  );
+  await assert.rejects(readFile(path.join(snapshotRoot, "packages", "0", "unexpected.bin")), { code: "ENOENT" });
 });
 
 test("Pi snapshot includes dependencies hoisted beside the selected package", async (context) => {
@@ -609,9 +660,40 @@ test("Pi snapshots use a configurable executable-capable private root and fail c
   });
   assert.equal(executableProbeCount, 2);
   assert.equal(fallbackSnapshot.identity.launchCommand.startsWith(
-    `${await realpath(path.join(homeRoot, ".cache", "relaypact", "pi-executable-snapshots"))}${path.sep}`
+    `${await realpath(homeRoot)}${path.sep}`
   ), true);
   await fallbackSnapshot.cleanup();
+});
+
+test("Pi snapshots reject a private base beneath an untrusted writable ancestor", async (context) => {
+  if (process.platform === "win32") return context.skip("POSIX ancestor permissions are not available.");
+  const root = await createDirectory();
+  const writableAncestor = path.join(root, "writable");
+  const snapshotBase = path.join(writableAncestor, "private");
+  context.after(async () => {
+    await chmod(writableAncestor, 0o700).catch(() => {});
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(snapshotBase, { recursive: true });
+  await chmod(snapshotBase, 0o700);
+  await chmod(writableAncestor, 0o777);
+  const executableRoot = await createDirectory();
+  context.after(() => rm(executableRoot, { recursive: true, force: true }));
+  const executable = path.join(executableRoot, "pi-native");
+  await writeFile(executable, "native bytes\n");
+  await chmod(executable, 0o700);
+  const fingerprint = await executableFingerprint(executable);
+  await assert.rejects(
+    materializePiExecutable({
+      command: executable,
+      resolvedCommand: executable,
+      executableFingerprint: fingerprint,
+      kind: "native",
+      target: executable,
+      targetFingerprint: fingerprint
+    }, { snapshotBaseDirectory: snapshotBase }),
+    (error) => error.code === "pi_snapshot_root_unavailable"
+  );
 });
 
 test("Pi doctor discovery blocks timed-out, truncated, and settings-write probes without retaining diagnostics", async () => {

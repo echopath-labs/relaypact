@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, chmod, copyFile, cp, lstat, mkdir, open, opendir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, open, opendir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createIsolatedEnvironment, minimalEnvironment } from "../../core/src/environment.mjs";
 import { DelegationError } from "../../contracts/src/errors.mjs";
 import {
@@ -135,23 +135,40 @@ function piSnapshotBaseDirectories(environment, explicitRoot) {
     candidates.push(configured);
   } else {
     if (typeof environment.XDG_RUNTIME_DIR === "string" && path.isAbsolute(environment.XDG_RUNTIME_DIR)) {
-      candidates.push(path.join(environment.XDG_RUNTIME_DIR, "relaypact", "pi-executable-snapshots"));
+      candidates.push(environment.XDG_RUNTIME_DIR);
     }
     const home = typeof environment.HOME === "string" && path.isAbsolute(environment.HOME)
       ? environment.HOME
       : os.homedir();
-    candidates.push(path.join(home, ".cache", "relaypact", "pi-executable-snapshots"));
-    candidates.push(path.join(os.tmpdir(), "relaypact", "pi-executable-snapshots"));
+    candidates.push(home);
+    candidates.push(os.tmpdir());
   }
   return [...new Set(candidates)];
 }
 
 async function preparePiSnapshotBaseDirectory(base) {
-  await mkdir(base, { recursive: true, mode: 0o700 });
-  const info = await lstat(base);
-  if (!info.isDirectory() || info.isSymbolicLink()) throw piSnapshotRootUnavailable();
-  await chmod(base, 0o700);
-  return realpath(base);
+  const provided = await lstat(base);
+  if (!provided.isDirectory() || provided.isSymbolicLink()) throw piSnapshotRootUnavailable();
+  const canonical = await realpath(base);
+  if (process.platform === "win32") return canonical;
+  const effectiveUser = typeof process.geteuid === "function" ? process.geteuid() : null;
+  const parsed = path.parse(canonical);
+  const ancestors = [parsed.root];
+  let current = parsed.root;
+  for (const segment of path.relative(parsed.root, canonical).split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    ancestors.push(current);
+  }
+  for (const ancestor of ancestors) {
+    const info = await lstat(ancestor);
+    const trustedOwner = effectiveUser !== null && (info.uid === effectiveUser || info.uid === 0);
+    const writableByOthers = (info.mode & 0o022) !== 0;
+    const sticky = (info.mode & 0o1000) !== 0;
+    if (!info.isDirectory() || info.isSymbolicLink() || !trustedOwner || (writableByOthers && !sticky)) {
+      throw piSnapshotRootUnavailable();
+    }
+  }
+  return canonical;
 }
 
 async function assertPiSnapshotRootExecutable(isolated, environment, run) {
@@ -189,8 +206,11 @@ function commandCandidates(command, environment) {
     .flatMap((directory) => extensions.map((extension) => path.join(directory, `${command}${extension}`)));
 }
 
-async function executableFingerprint(file) {
-  const handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+export async function executableFingerprint(file) {
+  const handle = await open(
+    file,
+    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0)
+  );
   try {
     const info = await handle.stat();
     if (!info.isFile() || info.size > MAX_PI_EXECUTABLE_BYTES) return null;
@@ -203,7 +223,10 @@ async function executableFingerprint(file) {
 }
 
 async function firstLine(file) {
-  const handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  const handle = await open(
+    file,
+    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0)
+  );
   try {
     const buffer = Buffer.alloc(4096);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
@@ -265,6 +288,98 @@ export async function collectPiBundle(root, relative = "", depth = 0, state = nu
     }
   }
   return state;
+}
+
+function piBundlePath(root, relative) {
+  if (typeof relative !== "string" || relative === "" || path.isAbsolute(relative)) {
+    throw new Error("Pi package entry path is invalid.");
+  }
+  const normalized = path.normalize(relative);
+  if (normalized === ".." || normalized.startsWith(`..${path.sep}`)) {
+    throw new Error("Pi package entry path escapes its root.");
+  }
+  return path.join(root, normalized);
+}
+
+async function copyBoundedPiFile(source, destination, expected = {}) {
+  const sourceHandle = await open(
+    source,
+    fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0)
+  );
+  let destinationHandle;
+  try {
+    const before = await sourceHandle.stat();
+    const maxBytes = expected.maxBytes ?? MAX_PI_BUNDLE_BYTES;
+    if (!before.isFile() || before.size > maxBytes ||
+        (expected.size !== undefined && before.size !== expected.size)) {
+      throw new Error("Pi snapshot source file is unsupported.");
+    }
+    destinationHandle = await open(
+      destination,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0),
+      expected.executable === true ? 0o500 : 0o400
+    );
+    const hash = createHash("sha256");
+    const buffer = Buffer.alloc(64 * 1024);
+    let total = 0;
+    while (true) {
+      const { bytesRead } = await sourceHandle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > maxBytes || (expected.size !== undefined && total > expected.size)) {
+        throw new Error("Pi snapshot source file exceeds its recorded bound.");
+      }
+      hash.update(buffer.subarray(0, bytesRead));
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await destinationHandle.write(buffer, written, bytesRead - written, null);
+        if (result.bytesWritten === 0) throw new Error("Pi snapshot destination stopped accepting bytes.");
+        written += result.bytesWritten;
+      }
+    }
+    const after = await sourceHandle.stat();
+    const fingerprint = `sha256:${hash.digest("hex")}`;
+    if (total !== before.size || (expected.size !== undefined && total !== expected.size) ||
+        after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size ||
+        after.mtimeMs !== before.mtimeMs || fingerprint !== expected.fingerprint) {
+      throw new Error("Pi snapshot source file changed while it was copied.");
+    }
+  } catch (error) {
+    await destinationHandle?.close().catch(() => {});
+    destinationHandle = null;
+    await rm(destination, { force: true }).catch(() => {});
+    throw error;
+  } finally {
+    await destinationHandle?.close().catch(() => {});
+    await sourceHandle.close().catch(() => {});
+  }
+}
+
+async function copyRecordedPiBundle(root, destination, entries) {
+  await mkdir(destination, { mode: 0o700 });
+  for (const entry of entries) {
+    const sourcePath = piBundlePath(root, entry.path);
+    const destinationPath = piBundlePath(destination, entry.path);
+    if (entry.type === "directory") {
+      const info = await lstat(sourcePath);
+      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Pi package directory changed during snapshot.");
+      await mkdir(destinationPath, { mode: 0o700 });
+    } else if (entry.type === "symlink") {
+      const info = await lstat(sourcePath);
+      const target = info.isSymbolicLink() ? await readlink(sourcePath) : null;
+      if (target !== entry.target || path.isAbsolute(target)) throw new Error("Pi package symlink changed during snapshot.");
+      await symlink(target, destinationPath);
+    } else if (entry.type === "file") {
+      await copyBoundedPiFile(sourcePath, destinationPath, {
+        size: entry.size,
+        maxBytes: MAX_PI_BUNDLE_BYTES,
+        fingerprint: entry.fingerprint,
+        executable: entry.executable
+      });
+    } else {
+      throw new Error("Pi package entry type is unsupported.");
+    }
+  }
 }
 
 function piBundleFingerprint(entries) {
@@ -530,6 +645,7 @@ export async function resolvePiExecutable(command, options = {}) {
       if (!info.isFile()) continue;
       try {
         if (info.size > MAX_PI_EXECUTABLE_BYTES) return null;
+        if (/\.(?:cmd|bat)$/iu.test(resolvedCommand)) return null;
         await access(resolvedCommand, fsConstants.X_OK);
         const launcherFingerprint = await executableFingerprint(resolvedCommand);
         if (!launcherFingerprint) return null;
@@ -618,9 +734,11 @@ export async function materializePiExecutable(identity, options = {}) {
     if (!isolated) throw piSnapshotRootUnavailable();
     if (identity.kind === "native") {
       const executable = path.join(isolated.root, "pi");
-      await copyFile(identity.target, executable, fsConstants.COPYFILE_EXCL | (fsConstants.COPYFILE_FICLONE ?? 0));
-      await chmod(executable, 0o500);
-      if (await executableFingerprint(executable) !== identity.targetFingerprint) throw new Error("Pi executable changed during snapshot.");
+      await copyBoundedPiFile(identity.target, executable, {
+        maxBytes: MAX_PI_EXECUTABLE_BYTES,
+        fingerprint: identity.targetFingerprint,
+        executable: true
+      });
       return { identity: { ...identity, launchCommand: executable, launchPrefix: [] }, cleanup: isolated.cleanup };
     }
     if (identity.kind !== "node-package" || !plainObject(identity.packageGraph) ||
@@ -635,17 +753,18 @@ export async function materializePiExecutable(identity, options = {}) {
     for (const node of identity.packageGraph.nodes) {
       const destination = path.join(store, String(node.id));
       destinations.set(node.id, destination);
-      await cp(node.root, destination, {
-        recursive: true,
-        verbatimSymlinks: true,
-        filter(source) {
-          const relative = path.relative(node.root, source);
-          return relative === "" || relative.split(path.sep)[0] !== "node_modules";
-        }
+      await copyRecordedPiBundle(node.root, destination, node.entries);
+      const sourceBundle = await collectPiBundle(node.root, "", 0, null, {
+        excludeNodeModules: true,
+        maxFiles: node.entries.length
       });
-      await chmod(destination, 0o700);
-      const copiedBundle = await collectPiBundle(destination, "", 0, null, { excludeNodeModules: true });
-      if (piBundleFingerprint(copiedBundle.entries) !== piBundleFingerprint(node.entries)) {
+      const copiedBundle = await collectPiBundle(destination, "", 0, null, {
+        excludeNodeModules: true,
+        maxFiles: node.entries.length
+      });
+      const expectedFingerprint = piBundleFingerprint(node.entries);
+      if (piBundleFingerprint(sourceBundle.entries) !== expectedFingerprint ||
+          piBundleFingerprint(copiedBundle.entries) !== expectedFingerprint) {
         throw new Error("Pi package changed during snapshot.");
       }
     }
@@ -664,9 +783,11 @@ export async function materializePiExecutable(identity, options = {}) {
       throw new Error("Pi dependency closure identity changed during snapshot.");
     }
     const runtime = path.join(isolated.root, "node");
-    await copyFile(identity.runtimeCommand, runtime, fsConstants.COPYFILE_EXCL | (fsConstants.COPYFILE_FICLONE ?? 0));
-    await chmod(runtime, 0o500);
-    if (await executableFingerprint(runtime) !== identity.runtimeFingerprint) throw new Error("Pi runtime changed during snapshot.");
+    await copyBoundedPiFile(identity.runtimeCommand, runtime, {
+      maxBytes: MAX_PI_EXECUTABLE_BYTES,
+      fingerprint: identity.runtimeFingerprint,
+      executable: true
+    });
     return {
       identity: {
         ...identity,

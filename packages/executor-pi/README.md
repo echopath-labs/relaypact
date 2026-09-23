@@ -31,13 +31,14 @@ Delegated execution reruns the same version, capability, settings-isolation, and
 at the route boundary and refuses an executable that changes after readiness.
 
 Executable snapshots prefer private roots because hardened Linux hosts may mount the
-system temporary directory with `noexec`. RelayPact tries the private XDG runtime
-directory, then `$HOME/.cache/relaypact/pi-executable-snapshots`, and finally a private
-system-temp subdirectory. It accepts the first candidate whose directory and
-executable-file probes pass.
+system temporary directory with `noexec`. RelayPact creates the snapshot atomically
+under the XDG runtime directory, then the home directory, and finally the trusted
+sticky system temporary directory. It accepts the first candidate whose ownership,
+ancestor permissions, directory and executable-file probes pass.
 An absolute private override is available through
-`RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT`. The selected root must pass an executable-file
-probe before Pi package or runtime bytes are copied.
+`RELAYPACT_PI_EXECUTABLE_SNAPSHOT_ROOT`. The selected root must already exist, have
+trusted non-writable ancestors (or sticky writable ancestors), and pass an
+executable-file probe before Pi package or runtime bytes are copied.
 
 Pi runs in print/text mode and must return exactly one final JSON object with
 `status` (`completed`, `blocked`, or `failed`), a string `summary`, and optional
