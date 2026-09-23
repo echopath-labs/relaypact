@@ -15,6 +15,7 @@ All notable public changes to RelayPact are recorded here.
 - Reject the first opaque shebang-selected Node runtime without PATH fallback, try every private snapshot root through an executable probe, classify invalid snapshot roots consistently, and return sanitized blocked readiness when doctor isolation cannot be created.
 - Enforce Pi readiness again at delegated execution, keep unrun settings probes unverified, sanitize post-creation doctor setup failures, bind package-manifest bounds to one no-follow file handle, and normalize lazy-route import paths during architecture validation.
 - Bind Pi version admission to one explicit Pi-labeled or otherwise unambiguous version field, and normalize ESM query and fragment suffixes before lazy-route import comparison.
+- Stop Pi command discovery at the first executable regular-file PATH candidate and distinguish disposable resolver-state failures from a missing installation.
 
 ### Compatibility
 - Pi remains experimental and inactive at the root Plugin. Pi doctor does not read authentication, select a provider or model, prove live availability, or permit route fallback. A missing, unsupported, mutated, timed-out, truncated, temporary-state-creation-failing, or settings-isolation-failing probe blocks readiness with sanitized evidence.

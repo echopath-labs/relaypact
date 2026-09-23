@@ -231,6 +231,42 @@ test("Pi executable resolution rejects working-directory-relative launch paths",
   assert.equal(await resolvePiExecutable("./fake-pi.mjs", { environment: { PATH: process.env.PATH } }), null);
 });
 
+test("Pi executable resolution never falls through the first executable PATH candidate", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const firstBin = path.join(root, "first");
+  const secondBin = path.join(root, "second");
+  const runtimeBin = path.join(root, "runtime");
+  await mkdir(firstBin);
+  await mkdir(secondBin);
+  await mkdir(runtimeBin);
+  await writeFile(path.join(firstBin, "pi"), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await symlink(fakePi, path.join(secondBin, "pi"));
+  await symlink(process.execPath, path.join(runtimeBin, "node"));
+  const identity = await resolvePiExecutable("pi", {
+    environment: { PATH: [firstBin, secondBin, runtimeBin].join(path.delimiter) }
+  });
+  assert.equal(identity, null);
+});
+
+test("Pi executable resolution classifies disposable-state setup failure", async () => {
+  await assert.rejects(
+    resolvePiExecutable(fakePi, {
+      createEnvironment: async () => { throw new Error("private temporary path"); }
+    }),
+    (error) => error.code === "pi_resolution_isolation_unavailable" && !error.message.includes("private temporary path")
+  );
+  const error = new Error("private temporary path");
+  error.code = "pi_resolution_isolation_unavailable";
+  const readiness = await discoverPiCli({
+    executorCommand: fakePi,
+    resolveExecutable: async () => { throw error; }
+  });
+  assert.equal(readiness.state, "blocked");
+  assert.equal(readiness.reason, "isolation_unavailable");
+  assert.doesNotMatch(JSON.stringify(readiness), /private temporary path/u);
+});
+
 test("Pi delegation never resolves a relative executor inside the target repository", async () => {
   const root = await createGitRepository();
   const relativeExecutor = path.join(root, "target-pi.mjs");

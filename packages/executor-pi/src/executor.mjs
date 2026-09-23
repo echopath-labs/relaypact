@@ -486,28 +486,45 @@ export async function resolvePiExecutable(command, options = {}) {
   const createEnvironment = options.createEnvironment ?? createIsolatedEnvironment;
   let discovery;
   try {
-    discovery = await createEnvironment(environment, { prefix: "relaypact-pi-resolve-" });
+    try {
+      discovery = await createEnvironment(environment, { prefix: "relaypact-pi-resolve-" });
+    } catch {
+      const error = new Error("Pi executable discovery state is unavailable.");
+      error.code = "pi_resolution_isolation_unavailable";
+      throw error;
+    }
     for (const candidate of commandCandidates(command, environment)) {
       try {
         await access(candidate, fsConstants.X_OK);
-        const resolvedCommand = await realpath(candidate);
-        const info = await stat(resolvedCommand);
-        if (!info.isFile() || info.size > MAX_PI_EXECUTABLE_BYTES) continue;
+      } catch {
+        continue;
+      }
+      let resolvedCommand;
+      let info;
+      try {
+        resolvedCommand = await realpath(candidate);
+        info = await stat(resolvedCommand);
+      } catch {
+        return null;
+      }
+      if (!info.isFile()) continue;
+      try {
+        if (info.size > MAX_PI_EXECUTABLE_BYTES) return null;
         await access(resolvedCommand, fsConstants.X_OK);
         const launcherFingerprint = await executableFingerprint(resolvedCommand);
-        if (!launcherFingerprint) continue;
+        if (!launcherFingerprint) return null;
         const target = path.basename(resolvedCommand) === "volta-shim"
           ? await resolveVoltaTarget(candidate, discovery.env, run, "pi", discovery.root)
           : resolvedCommand;
-        if (!target) continue;
+        if (!target) return null;
         const targetInfo = await stat(target);
-        if (!targetInfo.isFile() || targetInfo.size > MAX_PI_EXECUTABLE_BYTES) continue;
+        if (!targetInfo.isFile() || targetInfo.size > MAX_PI_EXECUTABLE_BYTES) return null;
         const targetFingerprint = await executableFingerprint(target);
-        if (!targetFingerprint) continue;
+        if (!targetFingerprint) return null;
         const shebang = await firstLine(target);
         const nodeRuntime = await resolveNodeRuntime(shebang, discovery.env, run, discovery.root);
         const nodePackage = nodeRuntime ? await findPiPackage(target) : null;
-        if (shebang.startsWith("#!") && (!nodeRuntime || !nodePackage)) continue;
+        if (shebang.startsWith("#!") && (!nodeRuntime || !nodePackage)) return null;
         const identity = {
           command: path.resolve(candidate),
           resolvedCommand,
@@ -527,7 +544,9 @@ export async function resolvePiExecutable(command, options = {}) {
         };
         return { ...identity, executableFingerprint: piLaunchFingerprint(identity) };
       } catch {
-        // Try the next explicit PATH candidate without retaining private path diagnostics.
+        // The first executable regular-file PATH candidate is selected by command lookup.
+        // Reject it if its launch identity cannot be reproduced; never fall through.
+        return null;
       }
     }
     return null;
@@ -729,7 +748,12 @@ export async function discoverPiCli(options = {}) {
       runProcess: run
     });
   } catch (error) {
-    return unavailablePiReadiness(error?.code === "pi_resolution_cleanup_failed" ? "cleanup_failed" : "missing");
+    const reason = error?.code === "pi_resolution_cleanup_failed"
+      ? "cleanup_failed"
+      : error?.code === "pi_resolution_isolation_unavailable"
+        ? "isolation_unavailable"
+        : "missing";
+    return unavailablePiReadiness(reason);
   }
   if (!identity) return unavailablePiReadiness("missing");
 
@@ -829,9 +853,10 @@ export async function discoverPiCli(options = {}) {
       });
     } catch (error) {
       if (error?.code === "pi_resolution_cleanup_failed") reason = "cleanup_failed";
+      else if (error?.code === "pi_resolution_isolation_unavailable") reason = "isolation_unavailable";
     }
     const executableStable = samePiExecutableIdentity(identity, verifiedIdentity);
-    if (!executableStable && reason !== "cleanup_failed") reason = "mutated";
+    if (!executableStable && reason !== "cleanup_failed" && reason !== "isolation_unavailable") reason = "mutated";
     if (reason) {
       readiness = unavailablePiReadiness(reason, {
         command: identity.command,
