@@ -581,6 +581,26 @@ test("architecture validation rejects eager optional doctor calls", async () => 
   }
 });
 
+test("architecture validation rejects eager optional doctor calls in static dependencies", async () => {
+  for (const helperSource of [
+    'import { runPiDoctor } from "./doctor.mjs";\nvoid runPiDoctor();\n',
+    'import * as doctor from "./doctor.mjs";\nvoid doctor["runPiDoctor"]();\n'
+  ]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+    const packages = path.join(root, "packages");
+    await cp(path.join(packageRoot, "packages"), packages, { recursive: true });
+    await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+    await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+    const doctorPath = path.join(packages, "cli", "src", "doctor.mjs");
+    const helperPath = path.join(packages, "cli", "src", "eager-route-helper.mjs");
+    await writeFile(helperPath, helperSource);
+    await writeFile(doctorPath, `${await readFile(doctorPath, "utf8")}\nimport "./eager-route-helper.mjs";\n`);
+    const errors = await validateArchitecture(root);
+    assert(errors.some((item) => item.includes("static dependencies must not reference optional route functions or import the doctor entry")));
+    await rm(root, { recursive: true });
+  }
+});
+
 test("architecture validation rejects prerequisite and live-smoke drift", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
   await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });

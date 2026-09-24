@@ -605,13 +605,29 @@ export async function validateArchitecture(rootInput) {
       javascriptIdentifierCount(doctorSource, "runPiDoctor") !== 1) {
     errors.push("Default doctor must not eagerly invoke optional route functions.");
   }
+  let routeReferenceInDependency = false;
+  let dynamicImportInDependency = false;
   for (const importedPath of doctorStaticImportPaths) {
     if (importedPath === doctorPath) continue;
     const importedSource = await readFile(importedPath, "utf8").catch(() => "");
-    if (dynamicImportCount(importedSource) > 0) {
-      errors.push("Default doctor static dependencies must not dynamically import optional executors.");
-      break;
-    }
+    const routeReference = ["runCursorDoctor", "runPiDoctor"].some((name) =>
+      javascriptIdentifierCount(importedSource, name) !== 0);
+    const importsDoctor = staticImportedSpecifiers(importedSource).some((specifier) => {
+      if (typeof specifier !== "string" || !specifier.startsWith(".")) return false;
+      try {
+        return fileURLToPath(new URL(specifier, pathToFileURL(importedPath))) === doctorPath;
+      } catch {
+        return false;
+      }
+    });
+    routeReferenceInDependency ||= routeReference || importsDoctor;
+    dynamicImportInDependency ||= dynamicImportCount(importedSource) > 0;
+  }
+  if (routeReferenceInDependency) {
+    errors.push("Default doctor static dependencies must not reference optional route functions or import the doctor entry.");
+  }
+  if (dynamicImportInDependency) {
+    errors.push("Default doctor static dependencies must not dynamically import optional executors.");
   }
 
   for (const legacy of ["src", "contracts", "hosts", "executors", "adapters"]) {
