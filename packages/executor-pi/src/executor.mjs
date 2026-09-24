@@ -189,7 +189,9 @@ async function createPiIsolatedEnvironment(environment, options = {}) {
       const trustedBase = await preparePiSnapshotBaseDirectory(candidate);
       return await createEnvironment(environment, { ...isolationOptions, baseDirectory: trustedBase });
     } catch (error) {
-      if (error?.code === "environment_cleanup_failed") throw error;
+      if (["environment_cleanup_failed", "invalid_environment_grant", "invalid_environment_root"].includes(error?.code)) {
+        throw error;
+      }
       if (baseDirectory !== undefined) break;
     }
   }
@@ -1583,6 +1585,7 @@ export async function runExecutor(envelope, options) {
         snapshotBaseDirectory: options.snapshotBaseDirectory
       });
     isolated = await createPiIsolatedEnvironment(environmentSource, {
+      createEnvironment: options.createEnvironment,
       baseDirectory: options.snapshotBaseDirectory,
       prefix: "relaypact-pi-",
       grants: { ...explicitGrants, GIT_OPTIONAL_LOCKS: "0" }
@@ -1611,7 +1614,7 @@ export async function runExecutor(envelope, options) {
     );
     credentialEvidenceTrusted = await verifyPiProjection(projection);
   } catch (error) {
-    if (error?.code === "pi_snapshot_cleanup_failed" || error?.code === "pi_resolution_cleanup_failed") {
+    if (["pi_snapshot_cleanup_failed", "pi_resolution_cleanup_failed", "environment_cleanup_failed"].includes(error?.code)) {
       cleanupFailed = true;
     }
     if (!processResult && !projection) credentialEvidenceTrusted = true;
@@ -1627,6 +1630,9 @@ export async function runExecutor(envelope, options) {
     };
     if (readinessBlocked) executionFailure.failureCode = "pi_readiness_blocked";
     if (error?.code === "pi_snapshot_root_unavailable") executionFailure.failureCode = "pi_snapshot_unavailable";
+    if (["invalid_environment_grant", "invalid_environment_root"].includes(error?.code)) {
+      executionFailure.failureCode = error.code;
+    }
   } finally {
     cleanupFailed = await cleanupPiResources(isolated, executableSnapshot) || cleanupFailed;
   }

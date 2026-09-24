@@ -6,6 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { validateTaskEnvelope } from "../packages/contracts/src/envelope.mjs";
+import { createIsolatedEnvironment } from "../packages/core/src/environment.mjs";
 import { parseStatusPaths } from "../packages/core/src/git.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
 import { collectPiBundle, discoverPiCli, executableFingerprint, hasLoaderRelativeRuntimeReference, materializePiExecutable, piPlatformSupported, readPiPackageManifest, resolvePiExecutable } from "../packages/executor-pi/src/executor.mjs";
@@ -1367,6 +1368,61 @@ test("Pi readiness cleanup failure remains a structured execution cleanup failur
   assert.equal(result.executor.reportedStatus, "failed");
   assert.equal(result.executor.failureCode, "pi_cleanup_failed");
   assert.ok(result.residualRisks.includes("Executor temporary state cleanup requires Host review."));
+});
+
+test("Pi task-isolation construction cleanup failure retains cleanup risk", async () => {
+  const root = await createGitRepository();
+  const identity = await resolvePiExecutable(fakePi);
+  const cleanupError = new Error("private cleanup detail");
+  cleanupError.code = "environment_cleanup_failed";
+  const result = await runDelegation(withFixturePiRoute(makeEnvelope(root)), {
+    executorCommand: fakePi,
+    discoverPiCli: async () => ({
+      state: "ready",
+      command: identity.command,
+      executableFingerprint: identity.executableFingerprint
+    }),
+    materializeExecutable: async (selectedIdentity) => ({
+      identity: { ...selectedIdentity, launchCommand: process.execPath, launchPrefix: [] },
+      cleanup: async () => {}
+    }),
+    createEnvironment: async () => { throw cleanupError; }
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.executor.failureCode, "pi_cleanup_failed");
+  assert.ok(result.residualRisks.includes("Executor temporary state cleanup requires Host review."));
+  assert.doesNotMatch(JSON.stringify(result), /private cleanup detail/u);
+});
+
+test("Pi task isolation preserves invalid environment-grant errors without root retries", async () => {
+  const root = await createGitRepository();
+  const identity = await resolvePiExecutable(fakePi);
+  let attempts = 0;
+  const result = await runDelegation(withFixturePiRoute(makeEnvelope(root)), {
+    executorCommand: fakePi,
+    executorEnv: { "INVALID-NAME": "value" },
+    snapshotBaseDirectory: root,
+    discoverPiCli: async () => ({
+      state: "ready",
+      command: identity.command,
+      executableFingerprint: identity.executableFingerprint
+    }),
+    materializeExecutable: async (selectedIdentity) => ({
+      identity: { ...selectedIdentity, launchCommand: process.execPath, launchPrefix: [] },
+      cleanup: async () => {}
+    }),
+    createEnvironment: async (source, options) => {
+      if (options.grants?.["INVALID-NAME"] === "value") {
+        attempts += 1;
+      }
+      return createIsolatedEnvironment(source, options);
+    }
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.executor.failureCode, "invalid_environment_grant");
+  assert.match(result.executor.summary, /Environment grant is invalid/u);
+  assert.doesNotMatch(result.executor.summary, /snapshot root/u);
+  assert.equal(attempts, 1);
 });
 
 test("out-of-scope edit is independently rejected", async () => {
