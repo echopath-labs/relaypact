@@ -134,6 +134,7 @@ From a source clone:
 ```bash
 node ./bin/relaypact.mjs support
 node ./bin/relaypact.mjs doctor
+node ./bin/relaypact.mjs doctor --route codex-pi
 node ./bin/relaypact.mjs doctor --route codex-cursor
 ```
 
@@ -158,6 +159,23 @@ Selected-route Cursor doctor checks only local CLI capability and authentication
 status. It does not invoke a model, retain account output, or prove live model
 availability. Live execution is evaluated only after the user explicitly
 selects and invokes the route.
+
+Selected-route Pi doctor requires Pi 0.84.0 or later, binds and snapshots the
+complete selected launch identity, including its Node package, resolved runtime
+dependency closure, and the Node runtime selected by its entry shebang and
+toolchain. It verifies exact noninteractive option tokens and their associated
+mode values, including conditional `--thinking`. Version
+compatibility uses semantic-version precedence, so a prerelease below 0.84.0
+does not satisfy the minimum. An explicit `--executor` path must be
+absolute. It runs only `--version` and `--help` from disposable HOME, settings,
+session and working directories. Native bootstrap writes stay inside that
+temporary root and are deleted afterward; global/project Pi settings and
+authentication are not read or modified. Missing, unsupported, mutated,
+timed-out, truncated, temporary-state-creation-failing or settings-isolation-failing probes return `blocked` with
+fixed diagnostics. A `ready` result does not prove authentication, provider or
+model availability. `run-pi` repeats readiness and exact identity verification before
+credential projection or task launch, so a stale earlier doctor result cannot authorize a
+changed or unsupported executable.
 
 ## Prepare private roots
 
@@ -543,9 +561,26 @@ process; the Host must coordinate concurrent writers and the execution boundary.
 Pi remains an explicit experimental route and is not loaded by `run-codex`:
 
 ```bash
+node ./bin/relaypact.mjs doctor --route codex-pi \
+  --executor /absolute/path/to/pi
+
 node ./bin/relaypact.mjs run-pi \
-  --envelope /absolute/private/pi-task-envelope.json
+  --envelope /absolute/private/pi-task-envelope.json \
+  --executor /absolute/path/to/pi
 ```
+
+Pi executable snapshots are created atomically beneath a trusted, executable-capable
+ancestor. RelayPact considers `XDG_RUNTIME_DIR`, `HOME`, `TMPDIR`, `TMP`, then
+`TEMP` from the environment supplied to the Pi route. Each candidate must be
+an absolute, pre-existing directory that passes ownership, permission and
+executable-file probes. The CLI uses its process environment; an embedding that
+supplies a separate environment never falls back to the process-global home or
+temporary directory. A Host embedding the Pi route may instead pass an absolute,
+pre-existing private snapshot root explicitly. If no supplied root is usable,
+readiness blocks. Root ancestors must be owned by the current user or root and
+must not be group/world writable unless protected by the sticky bit. RelayPact
+probes the selected filesystem before copying or launching Pi and tries later
+supplied roots after a capacity failure.
 
 Read [`packages/adapter-codex-pi/README.md`](../packages/adapter-codex-pi/README.md)
 before selecting it. Pi configuration must not become an implicit dependency or
@@ -561,6 +596,7 @@ Offline deterministic checks:
 ```bash
 npm run check
 npm run check:codex-codex
+npm run check:codex-pi
 npm run check:codex-cursor
 npm pack --dry-run
 ```

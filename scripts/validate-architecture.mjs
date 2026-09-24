@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const EXPECTED_PACKAGES = new Map([
   ["adapter-codex-codex", "@relaypact/adapter-codex-codex"],
@@ -71,7 +71,8 @@ const ROUTE_EXPECTATIONS = new Map([
     rootPluginActivation: false,
     prerequisites: [
       "Node.js 20 or later",
-      "an explicit compatible Pi installation and execution profile"
+      "Node-packaged Pi 0.84.0 or later and an explicit execution profile; native launchers are not supported",
+      "macOS or Linux; Windows command shims are not supported"
     ],
     deterministicCheck: "npm run check:codex-pi",
     liveSmoke: "npm run smoke:pi"
@@ -147,16 +148,285 @@ function packageNameFor(root, absolute) {
 }
 
 function importedSpecifiers(source) {
-  const results = [];
-  const patterns = [
-    /\bfrom\s+["']([^"']+)["']/gu,
-    /\bimport\s+["']([^"']+)["']/gu,
-    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/gu
-  ];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) results.push(match[1]);
+  const results = staticImportedSpecifiers(source).filter((specifier) => typeof specifier === "string");
+  for (const match of source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/gu)) {
+    results.push(match[1]);
   }
   return results;
+}
+
+function skipJavaScriptTrivia(source, start) {
+  let index = start;
+  while (index < source.length) {
+    if (/\s/u.test(source[index])) {
+      index += 1;
+      continue;
+    }
+    if (source.startsWith("//", index)) {
+      const newline = source.indexOf("\n", index + 2);
+      return newline === -1 ? source.length : skipJavaScriptTrivia(source, newline + 1);
+    }
+    if (source.startsWith("/*", index)) {
+      const close = source.indexOf("*/", index + 2);
+      return close === -1 ? source.length : skipJavaScriptTrivia(source, close + 2);
+    }
+    break;
+  }
+  return index;
+}
+
+function readJavaScriptString(source, start) {
+  const quote = source[start];
+  if (quote !== '"' && quote !== "'") return null;
+  let value = "";
+  for (let index = start + 1; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === quote) return { value, end: index + 1 };
+    if (character === "\n" || character === "\r") return { value: null, end: index + 1 };
+    if (character === "\\") {
+      const escaped = source[index + 1];
+      if (escaped === undefined) return { value: null, end: source.length };
+      const simple = new Map([
+        ["b", "\b"], ["f", "\f"], ["n", "\n"], ["r", "\r"],
+        ["t", "\t"], ["v", "\v"], ["0", "\0"], ["\\", "\\"],
+        ['"', '"'], ["'", "'"]
+      ]);
+      if (simple.has(escaped)) {
+        if (escaped === "0" && /[0-9]/u.test(source[index + 2] ?? "")) {
+          return { value: null, end: index + 2 };
+        }
+        value += simple.get(escaped);
+        index += 1;
+        continue;
+      }
+      if (escaped === "\n" || escaped === "\r") {
+        if (escaped === "\r" && source[index + 2] === "\n") index += 1;
+        index += 1;
+        continue;
+      }
+      if (escaped === "x") {
+        const digits = source.slice(index + 2, index + 4);
+        if (!/^[0-9A-Fa-f]{2}$/u.test(digits)) return { value: null, end: index + 2 };
+        value += String.fromCharCode(Number.parseInt(digits, 16));
+        index += 3;
+        continue;
+      }
+      if (escaped === "u") {
+        if (source[index + 2] === "{") {
+          const close = source.indexOf("}", index + 3);
+          const digits = close === -1 ? "" : source.slice(index + 3, close);
+          const codePoint = /^[0-9A-Fa-f]{1,6}$/u.test(digits) ? Number.parseInt(digits, 16) : NaN;
+          if (!Number.isInteger(codePoint) || codePoint > 0x10FFFF) return { value: null, end: index + 2 };
+          value += String.fromCodePoint(codePoint);
+          index = close;
+          continue;
+        }
+        const digits = source.slice(index + 2, index + 6);
+        if (!/^[0-9A-Fa-f]{4}$/u.test(digits)) return { value: null, end: index + 2 };
+        value += String.fromCharCode(Number.parseInt(digits, 16));
+        index += 5;
+        continue;
+      }
+      value += escaped;
+      index += 1;
+      continue;
+    }
+    value += character;
+  }
+  return { value: null, end: source.length };
+}
+
+function readJavaScriptRegex(source, start) {
+  let inCharacterClass = false;
+  for (let index = start + 1; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "\n" || character === "\r") return null;
+    if (character === "\\") {
+      index += 1;
+      continue;
+    }
+    if (character === "[") inCharacterClass = true;
+    else if (character === "]") inCharacterClass = false;
+    else if (character === "/" && !inCharacterClass) {
+      let end = index + 1;
+      while (end < source.length && /[A-Za-z]/u.test(source[end])) end += 1;
+      return end;
+    }
+  }
+  return null;
+}
+
+function readJavaScriptTemplateChunk(source, start) {
+  for (let index = start; index < source.length; index += 1) {
+    if (source[index] === "\\") {
+      index += 1;
+      continue;
+    }
+    if (source[index] === "`") return { end: index + 1, expression: false };
+    if (source[index] === "$" && source[index + 1] === "{") return { end: index + 2, expression: true };
+  }
+  return { end: source.length, expression: false };
+}
+
+const REGEX_PREFIX_KEYWORDS = new Set([
+  "await", "case", "delete", "in", "instanceof", "new", "of", "return",
+  "throw", "typeof", "void", "yield"
+]);
+
+function staticImportedSpecifiers(source, onIdentifier = () => {}, onUnsupported = () => {}) {
+  const results = [];
+  let expressionExpected = true;
+  let braceDepth = 0;
+  const templateBases = [];
+  for (let index = 0; index < source.length;) {
+    const next = skipJavaScriptTrivia(source, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    const character = source[index];
+    if (character === "\\") {
+      onUnsupported("escaped identifier");
+      index += 1;
+      expressionExpected = false;
+      continue;
+    }
+    if (character === "`") {
+      const chunk = readJavaScriptTemplateChunk(source, index + 1);
+      index = chunk.end;
+      if (chunk.expression) {
+        templateBases.push(braceDepth);
+        braceDepth += 1;
+        expressionExpected = true;
+      } else expressionExpected = false;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      const quote = character;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === "\\") index += 2;
+        else if (source[index] === quote) {
+          index += 1;
+          break;
+        } else index += 1;
+      }
+      expressionExpected = false;
+      continue;
+    }
+    if (character === "/" && expressionExpected) {
+      const end = readJavaScriptRegex(source, index);
+      if (end !== null) {
+        index = end;
+        expressionExpected = false;
+        continue;
+      }
+    }
+    if (character === "{") {
+      braceDepth += 1;
+      index += 1;
+      expressionExpected = true;
+      continue;
+    }
+    if (character === "}") {
+      const templateBase = templateBases.at(-1);
+      if (templateBase !== undefined && braceDepth === templateBase + 1) {
+        braceDepth -= 1;
+        templateBases.pop();
+        const chunk = readJavaScriptTemplateChunk(source, index + 1);
+        index = chunk.end;
+        if (chunk.expression) {
+          templateBases.push(braceDepth);
+          braceDepth += 1;
+          expressionExpected = true;
+        } else expressionExpected = false;
+        continue;
+      }
+      braceDepth = Math.max(0, braceDepth - 1);
+      index += 1;
+      expressionExpected = false;
+      continue;
+    }
+    if (character === "(" || character === "[" || character === "," || character === ";" ||
+        character === ":" || character === "?" || character === "=" || character === "!" ||
+        character === "&" || character === "|" || character === "+" || character === "-" ||
+        character === "*" || character === "%" || character === "^" || character === "~" ||
+        character === "<" || character === ">" || character === "/") {
+      index += 1;
+      expressionExpected = true;
+      continue;
+    }
+    if (character === ")" || character === "]") {
+      index += 1;
+      expressionExpected = false;
+      continue;
+    }
+    if (/[A-Za-z_$]/u.test(character)) {
+      let end = index + 1;
+      while (end < source.length && /[A-Za-z0-9_$]/u.test(source[end])) end += 1;
+      const identifier = source.slice(index, end);
+      onIdentifier(identifier);
+      if (identifier === "import" || identifier === "from") {
+        const literalStart = skipJavaScriptTrivia(source, end);
+        if (identifier !== "import" || source[literalStart] !== "(") {
+          const literal = readJavaScriptString(source, literalStart);
+          if (literal) results.push(literal.value);
+        }
+      }
+      expressionExpected = REGEX_PREFIX_KEYWORDS.has(identifier);
+      index = end;
+      continue;
+    }
+    if (/[0-9]/u.test(character)) {
+      let end = index + 1;
+      while (end < source.length && /[0-9A-Fa-f_xXoObBeE.n]/u.test(source[end])) end += 1;
+      index = end;
+      expressionExpected = false;
+      continue;
+    }
+    index += 1;
+  }
+  return results;
+}
+
+function javascriptIdentifierCount(source, target) {
+  let count = 0;
+  let unsupported = false;
+  staticImportedSpecifiers(source, (identifier) => {
+    if (identifier === target) count += 1;
+  }, () => {
+    unsupported = true;
+  });
+  return unsupported ? null : count;
+}
+
+async function staticImportClosure(entry, allowedRoot) {
+  const closure = new Set();
+  const pending = [entry];
+  const prefix = `${allowedRoot}${path.sep}`;
+  while (pending.length > 0) {
+    const current = pending.shift();
+    if (closure.has(current)) continue;
+    closure.add(current);
+    const source = await readFile(current, "utf8").catch(() => null);
+    if (source === null) continue;
+    for (const specifier of staticImportedSpecifiers(source)) {
+      if (typeof specifier !== "string" || !specifier.startsWith(".")) continue;
+      let target;
+      try {
+        target = fileURLToPath(new URL(specifier, pathToFileURL(current)));
+      } catch {
+        continue;
+      }
+      if (target !== allowedRoot && !target.startsWith(prefix)) continue;
+      if (!closure.has(target)) pending.push(target);
+    }
+  }
+  return closure;
+}
+
+function dynamicImportCount(source) {
+  return [...source.matchAll(/\bimport(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$))*\(/gu)].length;
 }
 
 export async function validateArchitecture(rootInput) {
@@ -309,11 +579,55 @@ export async function validateArchitecture(rootInput) {
 
   const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
   const doctorSource = await readFile(doctorPath, "utf8").catch(() => "");
-  if (/^import\s+.*executor-cursor/mu.test(doctorSource)) {
+  const doctorStaticImports = staticImportedSpecifiers(doctorSource);
+  if (doctorStaticImports.includes(null)) {
+    errors.push("Default doctor must use plain, bounded static import specifiers.");
+  }
+  const doctorStaticImportPaths = await staticImportClosure(doctorPath, path.join(root, "packages"));
+  if (doctorStaticImportPaths.has(path.join(root, "packages", "executor-cursor", "src", "executor.mjs"))) {
     errors.push("Default doctor must not statically load the optional Cursor executor.");
   }
-  if (!doctorSource.includes('await import("../../executor-cursor/src/executor.mjs")')) {
+  const cursorDoctorPrefix = 'export async function runCursorDoctor(options = {}) {\n  const { discoverCursorCli } = await import("../../executor-cursor/src/executor.mjs");';
+  if (!doctorSource.includes(cursorDoctorPrefix)) {
     errors.push("Cursor doctor must load the Cursor executor only inside the selected diagnostic route.");
+  }
+  if (doctorStaticImportPaths.has(path.join(root, "packages", "executor-pi", "src", "executor.mjs"))) {
+    errors.push("Default doctor must not statically load the optional Pi executor.");
+  }
+  const piDoctorPrefix = 'export async function runPiDoctor(options = {}) {\n  const { discoverPiCli, MINIMUM_PI_VERSION } = await import("../../executor-pi/src/executor.mjs");';
+  if (!doctorSource.includes(piDoctorPrefix)) {
+    errors.push("Pi doctor must load the Pi executor only inside the selected diagnostic route.");
+  }
+  if (dynamicImportCount(doctorSource) !== 2) {
+    errors.push("Default doctor may dynamically import optional executors only inside the Cursor and Pi route functions.");
+  }
+  if (javascriptIdentifierCount(doctorSource, "runCursorDoctor") !== 1 ||
+      javascriptIdentifierCount(doctorSource, "runPiDoctor") !== 1) {
+    errors.push("Default doctor must not eagerly invoke optional route functions.");
+  }
+  let routeReferenceInDependency = false;
+  let dynamicImportInDependency = false;
+  for (const importedPath of doctorStaticImportPaths) {
+    if (importedPath === doctorPath) continue;
+    const importedSource = await readFile(importedPath, "utf8").catch(() => "");
+    const routeReference = ["runCursorDoctor", "runPiDoctor"].some((name) =>
+      javascriptIdentifierCount(importedSource, name) !== 0);
+    const importsDoctor = staticImportedSpecifiers(importedSource).some((specifier) => {
+      if (typeof specifier !== "string" || !specifier.startsWith(".")) return false;
+      try {
+        return fileURLToPath(new URL(specifier, pathToFileURL(importedPath))) === doctorPath;
+      } catch {
+        return false;
+      }
+    });
+    routeReferenceInDependency ||= routeReference || importsDoctor;
+    dynamicImportInDependency ||= dynamicImportCount(importedSource) > 0;
+  }
+  if (routeReferenceInDependency) {
+    errors.push("Default doctor static dependencies must not reference optional route functions or import the doctor entry.");
+  }
+  if (dynamicImportInDependency) {
+    errors.push("Default doctor static dependencies must not dynamically import optional executors.");
   }
 
   for (const legacy of ["src", "contracts", "hosts", "executors", "adapters"]) {

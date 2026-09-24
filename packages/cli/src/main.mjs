@@ -12,7 +12,7 @@ function usage() {
   return [
     "Usage:",
     "  relaypact support",
-    "  relaypact doctor [--route <codex-codex|codex-cursor>] [--executor <cursor-path>]",
+    "  relaypact doctor [--route <codex-codex|codex-pi|codex-cursor>] [--executor <pi-or-cursor-path>]",
     "  relaypact run-codex --envelope <file> --profiles <file> --state-root <dir> --host-instance <id>",
     "  relaypact correct-codex --task-root <dir> --profiles <file> --prompt <file>",
     "  relaypact decide-codex --task-root <dir> --profiles <file> --action <accept|reject|abandon> --actor <id> --archive-root <dir>",
@@ -60,8 +60,8 @@ function parseArgs(argv) {
   if (command === "support" && argv.length !== 1) throw new Error(usage());
   if (command === "doctor") {
     options.route ??= "codex-codex";
-    if (!["codex-codex", "codex-cursor", ...Object.keys(WORKBUDDY_ROUTES)].includes(options.route)) throw new Error(usage());
-    if (options.executor && options.route !== "codex-cursor") throw new Error(usage());
+    if (!["codex-codex", "codex-pi", "codex-cursor", ...Object.keys(WORKBUDDY_ROUTES)].includes(options.route)) throw new Error(usage());
+    if (options.executor && !["codex-pi", "codex-cursor"].includes(options.route)) throw new Error(usage());
   }
   const workbuddy = command === "run-workbuddy" || (command === "doctor" && Object.hasOwn(WORKBUDDY_ROUTES, options.route));
   if (workbuddy) {
@@ -248,6 +248,9 @@ export async function runCli(argv, io = process, runtime = {}) {
       } else if (options.route === "codex-cursor") {
         const { runCursorDoctor } = await import("./doctor.mjs");
         result = await runCursorDoctor({ ...runtime.doctor, executorCommand: options.executor });
+      } else if (options.route === "codex-pi") {
+        const { runPiDoctor } = await import("./doctor.mjs");
+        result = await runPiDoctor({ ...runtime.doctor, executorCommand: options.executor });
       } else {
         const { runDoctor } = await import("./doctor.mjs");
         result = await runDoctor(runtime.doctor);

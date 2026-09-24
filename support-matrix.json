@@ -30,7 +30,8 @@
       "rootPluginActivation": false,
       "prerequisites": [
         "Node.js 20 or later",
-        "an explicit compatible Pi installation and execution profile"
+        "Node-packaged Pi 0.84.0 or later and an explicit execution profile; native launchers are not supported",
+        "macOS or Linux; Windows command shims are not supported"
       ],
       "deterministicCheck": "npm run check:codex-pi",
       "liveSmoke": "npm run smoke:pi"

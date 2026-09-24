@@ -42,7 +42,7 @@ test("opt-in real Pi delegated execution", { skip: !enabled }, async (context) =
 
   try {
     const result = await runDelegation(makeEnvelope(root, overrides), {
-      executorCommand: process.env.RELAYPACT_PI_COMMAND ?? "pi"
+      ...(process.env.RELAYPACT_PI_COMMAND ? { executorCommand: process.env.RELAYPACT_PI_COMMAND } : {})
     });
     context.diagnostic(JSON.stringify({
       status: result.status,

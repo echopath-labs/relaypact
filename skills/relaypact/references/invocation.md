@@ -131,11 +131,28 @@ tools before launch and tells the executor that the task has zero write authorit
 Set `validation: []` and run checks in an external read-only or disposable
 environment; repository validation commands are refused before Pi starts.
 
+Run the selected-route readiness probe first. It uses only disposable Pi state,
+does not invoke a model, and blocks when the executable identity, minimum
+version, required flags or bounded probe completion cannot be verified:
+
+```text
+node <skill-directory>/scripts/relaypact.mjs doctor
+  --route codex-pi
+  [--executor <absolute-pi-path>]
+```
+
 ```text
 node <skill-directory>/scripts/relaypact.mjs run-pi
   --envelope <task-envelope.json>
-  [--executor <pi-path>]
+  [--executor <absolute-pi-path>]
 ```
+
+An explicit Pi executor path must be absolute. RelayPact fingerprints and
+snapshots the complete launch identity and resolved runtime dependency closure,
+including the Node runtime selected by the entry shebang and toolchain. It uses
+semantic-version precedence and requires every complete option token and
+associated mode value used by the adapter, including conditional `--thinking`,
+before execution.
 
 A Host review of a one-shot result does not create a tool terminal record.
 

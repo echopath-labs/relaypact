@@ -252,7 +252,7 @@ test("versioned documentation requires complete install identity without publica
     await writeFile(target, valid);
   }
   for (const [file, from, to, expected] of [
-    ["CHANGELOG.md", "### Compatibility", "### Compatibility\n\nThis is an unreleased source candidate.", "CHANGELOG.md must not retain candidate-only status"],
+    ["CHANGELOG.md", "## [0.3.5] - 2026-09-22 - Release", "## [0.3.5] - 2026-09-22 - Release\n\nThis is an unreleased source candidate.", "CHANGELOG.md must not retain candidate-only status"],
     ["RELEASING.md", "The checked-in metadata describes 0.3.5 Release, dated 2026-09-22.", "The checked-in state is a 0.3.5 source candidate. The release date is intentionally unset.", "RELEASING.md must describe the dated versioned current state."]
   ]) {
     const target = path.join(root, file);
@@ -442,6 +442,163 @@ test("architecture validation rejects eager Cursor loading in default doctor", a
   const errors = await validateArchitecture(root);
   assert(errors.some((item) => item.includes("must not statically load the optional Cursor executor")));
   await rm(root, { recursive: true });
+});
+
+test("architecture validation rejects eager Pi loading in default doctor", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const doctor = (await readFile(doctorPath, "utf8"))
+    .replace('const { discoverPiCli, MINIMUM_PI_VERSION } = await import("../../executor-pi/src/executor.mjs");', "")
+    .replace(
+      'import { MINIMUM_CODEX_VERSION, parseCodexVersion } from "../../executor-codex/src/compatibility.mjs";',
+      'import { MINIMUM_CODEX_VERSION, parseCodexVersion } from "../../executor-codex/src/compatibility.mjs";\nimport {\n  discoverPiCli,\n  MINIMUM_PI_VERSION\n} from "../../executor-pi/src/executor.mjs";'
+    )
+    .replace(
+      'from "../../executor-pi/src/executor.mjs";',
+      'from "../../executor-pi/src/executor.mjs?eager";'
+    );
+  await writeFile(doctorPath, doctor);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("must not statically load the optional Pi executor")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation rejects commented eager Pi imports", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const doctor = `${await readFile(doctorPath, "utf8")}\nimport /* eager */ "../../executor-pi/src/executor.mjs";\n`;
+  await writeFile(doctorPath, doctor);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("must not statically load the optional Pi executor")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation rejects token-adjacent eager Pi imports", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const doctor = `${await readFile(doctorPath, "utf8")}\nimport{discoverPiCli as eagerPi}from"../../executor-pi/src/executor.mjs";\n`;
+  await writeFile(doctorPath, doctor);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("must not statically load the optional Pi executor")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation rejects transitive eager Pi imports from default doctor", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const helperPath = path.join(root, "packages", "cli", "src", "eager-pi-helper.mjs");
+  await writeFile(helperPath, 'export { discoverPiCli } from "../../executor-pi/src/executor.mjs";\n');
+  await writeFile(doctorPath, `${await readFile(doctorPath, "utf8")}\nimport "./eager-pi-helper.mjs";\n`);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("must not statically load the optional Pi executor")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation decodes escaped transitive import specifiers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const helperPath = path.join(root, "packages", "cli", "src", "eager-pi-helper.mjs");
+  await writeFile(helperPath, 'export { discoverPiCli } from "../../executor\\u002dpi/src/executor.mjs";\n');
+  await writeFile(doctorPath, `${await readFile(doctorPath, "utf8")}\nimport "./eager-pi-helper.mjs";\n`);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("must not statically load the optional Pi executor")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation ignores regex braces before transitive imports", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const helperPath = path.join(root, "packages", "cli", "src", "eager-pi-helper.mjs");
+  await writeFile(helperPath, 'const pattern = /{/;\nexport { discoverPiCli } from "../../executor-pi/src/executor.mjs";\n');
+  await writeFile(doctorPath, `${await readFile(doctorPath, "utf8")}\nimport "./eager-pi-helper.mjs";\n`);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("must not statically load the optional Pi executor")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation rejects a top-level Pi dynamic import", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const importLine = 'const { discoverPiCli, MINIMUM_PI_VERSION } = await import("../../executor-pi/src/executor.mjs");';
+  const doctor = (await readFile(doctorPath, "utf8")).replace(`  ${importLine}`, "");
+  await writeFile(doctorPath, `${importLine}\n${doctor}`);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("Pi doctor must load the Pi executor only inside")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation rejects transitive dynamic imports from doctor helpers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+  await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+  await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+  await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+  const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+  const helperPath = path.join(root, "packages", "cli", "src", "dynamic-pi-helper.mjs");
+  await writeFile(helperPath, 'export const eagerPi = await import("../../executor-pi/src/executor.mjs");\n');
+  await writeFile(doctorPath, `${await readFile(doctorPath, "utf8")}\nimport "./dynamic-pi-helper.mjs";\n`);
+  const errors = await validateArchitecture(root);
+  assert(errors.some((item) => item.includes("static dependencies must not dynamically import")));
+  await rm(root, { recursive: true });
+});
+
+test("architecture validation rejects eager optional doctor calls", async () => {
+  for (const invocation of [
+    "await runPiDoctor();",
+    "async function eagerRoute() { return runCursorDoctor(); }\nawait eagerRoute();",
+    "`${runPiDoctor()}`;",
+    "runPiDoct\\u006fr();"
+  ]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+    await cp(path.join(packageRoot, "packages"), path.join(root, "packages"), { recursive: true });
+    await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+    await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+    const doctorPath = path.join(root, "packages", "cli", "src", "doctor.mjs");
+    await writeFile(doctorPath, `${await readFile(doctorPath, "utf8")}\n${invocation}\n`);
+    const errors = await validateArchitecture(root);
+    assert(errors.some((item) => item.includes("must not eagerly invoke optional route functions")));
+    await rm(root, { recursive: true });
+  }
+});
+
+test("architecture validation rejects eager optional doctor calls in static dependencies", async () => {
+  for (const helperSource of [
+    'import { runPiDoctor } from "./doctor.mjs";\nvoid runPiDoctor();\n',
+    'import * as doctor from "./doctor.mjs";\nvoid doctor["runPiDoctor"]();\n'
+  ]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "relaypact-architecture-"));
+    const packages = path.join(root, "packages");
+    await cp(path.join(packageRoot, "packages"), packages, { recursive: true });
+    await cp(path.join(packageRoot, "package.json"), path.join(root, "package.json"));
+    await cp(path.join(packageRoot, "support-matrix.json"), path.join(root, "support-matrix.json"));
+    const doctorPath = path.join(packages, "cli", "src", "doctor.mjs");
+    const helperPath = path.join(packages, "cli", "src", "eager-route-helper.mjs");
+    await writeFile(helperPath, helperSource);
+    await writeFile(doctorPath, `${await readFile(doctorPath, "utf8")}\nimport "./eager-route-helper.mjs";\n`);
+    const errors = await validateArchitecture(root);
+    assert(errors.some((item) => item.includes("static dependencies must not reference optional route functions or import the doctor entry")));
+    await rm(root, { recursive: true });
+  }
 });
 
 test("architecture validation rejects prerequisite and live-smoke drift", async () => {

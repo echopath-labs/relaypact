@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { chmod, lstat, mkdir, readFile, readdir, realpath, symlink, utimes, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import test from "node:test";
@@ -30,6 +31,7 @@ import { evaluatePathScope } from "../packages/contracts/src/path-policy.mjs";
 import { runProcess } from "../packages/core/src/process.mjs";
 import { conciseOutput } from "../packages/core/src/redact.mjs";
 import { createSignedStateStore } from "../packages/core/src/signed-state.mjs";
+import { createIsolatedEnvironment } from "../packages/core/src/environment.mjs";
 import { runDelegation } from "../packages/adapter-codex-pi/src/run-delegation.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 
@@ -63,6 +65,18 @@ const profile = {
   provider: undefined,
   fingerprint: "sha256:profile"
 };
+
+test("isolated environment construction reports cleanup failure", async () => {
+  const partialRoot = path.join(os.tmpdir(), "relaypact-partial-environment");
+  await assert.rejects(createIsolatedEnvironment({}, {
+    baseDirectory: os.tmpdir(),
+    fileSystem: {
+      async mkdtemp() { return partialRoot; },
+      async mkdir() { throw new Error("injected setup failure"); },
+      async rm() { throw new Error("injected cleanup failure"); }
+    }
+  }), (error) => error.code === "environment_cleanup_failed" && !error.message.includes(partialRoot));
+});
 
 test("process capture reports truncation and hard timeout settlement", async () => {
   let spawnAcknowledgements = 0;

@@ -1,4 +1,7 @@
 {
   "name": "@anysphere/agent-cli-runtime",
-  "private": true
+  "private": true,
+  "bin": {
+    "pi": "fake-pi.mjs"
+  }
 }

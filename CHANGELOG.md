@@ -2,6 +2,38 @@
 
 All notable public changes to RelayPact are recorded here.
 
+## [Unreleased]
+
+### Added
+- Add `doctor --route codex-pi [--executor <absolute-pi-path>]` as a structured, no-model readiness check for the experimental Pi route. It binds and snapshots the complete launch identity, including the Node package, resolved runtime dependency closure and shebang/toolchain-selected runtime when applicable, verifies Pi 0.84.0 or later under semantic-version precedence and every complete CLI option token plus associated mode value used by the adapter including conditional `--thinking`, and runs version/help probes from separate verified executable snapshots with disposable HOME, settings, session and working directories. Relative path executors are rejected, and snapshot or cleanup failures remain sanitized structured blocked results.
+
+### Fixed
+- Keep Pi discovery, doctor, and execution disposable state beneath Host-supplied temporary roots, derive optional Pi configuration only from Host-supplied paths, and document the actual root-selection order.
+- Keep Pi executable snapshot roots within the Host-supplied environment, blocking when it provides no usable absolute root instead of falling back to ambient home or temporary-directory settings.
+- Inspect complete static import specifiers, including multiline imports, when enforcing lazy loading for experimental executors in default doctor.
+- Preserve structured Pi execution failure and Host filesystem/Git postflight evidence when temporary-state cleanup fails.
+- Resolve Node runtime identity from disposable state, reject opaque runtime launchers and absolute package symlinks, and propagate partial-snapshot cleanup failures without private diagnostics.
+- Preserve resolution cleanup failures during final identity verification, normalize copied package-root permissions for immutable installations, and use a configurable executable-capable private root instead of the system temporary directory for Pi snapshots.
+- Reject the first opaque shebang-selected Node runtime without PATH fallback, try every private snapshot root through an executable probe, classify invalid snapshot roots consistently, and return sanitized blocked readiness when doctor isolation cannot be created.
+- Enforce Pi readiness again at delegated execution, keep unrun settings probes unverified, sanitize post-creation doctor setup failures, bind package-manifest bounds to one no-follow file handle, and normalize lazy-route import paths during architecture validation.
+- Bind Pi version admission to one explicit Pi-labeled or otherwise unambiguous version field, and normalize ESM query and fragment suffixes before lazy-route import comparison.
+- Stop Pi command discovery at the first executable regular-file PATH candidate and distinguish disposable resolver-state failures from a missing installation.
+- Parse comment-separated static imports during architecture validation and bound Pi directory enumeration before sorting package entries.
+- Create Pi snapshots directly beneath validated trusted ancestors, copy only the recorded bounded package graph with nonblocking source handles, and reject unsupported Windows command shims explicitly.
+- Reject native Pi launchers with unresolved sibling dependencies, validate the exact shebang-selected Node runtime at version 20 or later, and traverse the default doctor's transitive static-import graph.
+- Decode JavaScript string escapes while traversing static imports and preserve isolated-environment cleanup failures as stable blocked outcomes.
+- Tokenize regular-expression literals during static-import traversal and block the Pi route on hosts outside macOS and Linux.
+- Remove ambient Pi snapshot-root selection, reject loader-relative Node runtimes, and retry managed snapshot roots after capacity failures.
+- Require optional executor dynamic imports to remain uniquely inside their selected doctor route functions.
+- Bound executable hashing to the initial file size and reject metadata drift observed through the same open handle.
+- Require stable package-manifest reads, relocation-safe package symlinks, option-definition help evidence, and accurate snapshot-capacity diagnostics.
+- Preserve Pi isolation and cleanup diagnostics through doctor and execution, and reject eager optional-doctor invocation.
+- Inspect executable template-literal substitutions when enforcing optional-doctor lazy loading.
+- Preserve root-cause remediation across dependent Pi doctor checks, require snapshots under injected process runners, validate the copied Node runtime directly without a shell probe, and fail closed on escaped identifiers in optional-doctor architecture guards.
+
+### Compatibility
+- Pi remains experimental and inactive at the root Plugin. Pi doctor does not read authentication, select a provider or model, prove live availability, or permit route fallback. A missing, unsupported, mutated, timed-out, truncated, temporary-state-creation-failing, or settings-isolation-failing probe blocks readiness with sanitized evidence.
+
 ## [0.3.5] - 2026-09-22 - Release
 
 ### Fixed

@@ -9,6 +9,42 @@ loaded only through the explicit `run-pi` command. Pi does not own task framing
 or final acceptance. Provider and model selection
 come from Pi configuration or an explicit non-secret execution profile.
 
+Before a task, `relaypact doctor --route codex-pi [--executor <absolute-pi-path>]`
+resolves and fingerprints the complete selected launch identity, including the
+Node package, its resolved runtime dependency closure, and runtime when
+applicable; the Node runtime is resolved through the entry shebang and selected
+toolchain. Runtime discovery uses disposable HOME, temporary, and working directories;
+opaque Node wrappers or shims and absolute package symlinks are rejected because their
+launch or copy semantics cannot be reproduced exactly. Doctor requires Pi 0.84.0 or later under semantic-version precedence and
+verifies complete noninteractive option tokens below, including conditional
+`--thinking`, without sending a prompt. Relative path executors are rejected. The probe
+uses disposable HOME, settings, session and working directories; any native
+bootstrap files stay inside that disposable root and are deleted afterward.
+Global/project Pi settings and authentication are neither read nor modified.
+Timeout, truncation, executable drift and settings-lock failures block with
+fixed diagnostics that retain no native output or private paths. Snapshot
+copy, verification, or temporary-state cleanup failures use a structured blocked result. Each
+doctor probe and each task execute from a separate verified private snapshot of that identity.
+Task cleanup failures remain structured execution failures so Host filesystem and Git postflight
+evidence is still collected.
+Delegated execution reruns the same version, capability, settings-isolation, and identity checks
+at the route boundary and refuses an executable that changes after readiness.
+Resolution admits only a Node-packaged Pi entry whose selected runtime is Node 20 or
+later. Native launchers and Windows command shims remain unsupported because their
+launcher-relative dependency semantics are not part of the immutable snapshot.
+
+Executable snapshots prefer private roots because hardened Linux hosts may mount the
+system temporary directory with `noexec`. RelayPact tries absolute roots supplied in
+`XDG_RUNTIME_DIR`, `HOME`, `TMPDIR`, `TMP`, and `TEMP`, in that order. It accepts the first
+candidate whose ownership, ancestor permissions, directory, executable-file, and
+capacity checks pass. Pi discovery, doctor, and execution also create disposable state
+only beneath these supplied roots. A Host embedding the route may pass an absolute
+private snapshot root explicitly for all Pi temporary state; it must already exist,
+have trusted non-writable ancestors (or sticky writable ancestors), and pass an
+executable-file probe before Pi package or runtime bytes are copied. If no supplied
+root is usable, readiness blocks without falling back to process-global temporary
+directory settings.
+
 Pi runs in print/text mode and must return exactly one final JSON object with
 `status` (`completed`, `blocked`, or `failed`), a string `summary`, and optional
 `residualRisks`. Put explanations inside that object. Bare compact or multiline
@@ -26,8 +62,10 @@ rejects any observed mutation.
 The adapter gives Pi a disposable HOME and temporary directory and projects a
 task-scoped `PI_CODING_AGENT_DIR` containing only the selected provider's
 authentication, custom model definition when needed, and safe defaults. It
-does not expose the original configuration directory. Credential environment
-references must be exact explicit grants. Only literal or exact-reference
+reads the source configuration from an explicit `PI_CODING_AGENT_DIR` or the
+supplied `HOME`; when neither is supplied, projection starts with empty
+configuration. It does not expose the original configuration directory.
+Credential environment references must be exact explicit grants. Only literal or exact-reference
 `api_key` auth is supported; command-resolved, OAuth, provider-specific
 environment, interpolation/escape, and unknown auth shapes are rejected.
 Explicit grants are snapshotted once, and provider base URLs containing
