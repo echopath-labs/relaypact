@@ -829,6 +829,27 @@ test("Pi snapshots use a configurable executable-capable private root and fail c
     (error) => error.code === "pi_snapshot_root_unavailable"
   );
 
+  let unexpectedSnapshotCreation = false;
+  await assert.rejects(
+    materializePiExecutable(identity, {
+      environment: { HOME: "relative-home", TMPDIR: "relative-temp" },
+      createEnvironment: async () => {
+        unexpectedSnapshotCreation = true;
+        throw new Error("Snapshot creation must not use ambient roots.");
+      }
+    }),
+    (error) => error.code === "pi_snapshot_root_unavailable"
+  );
+  assert.equal(unexpectedSnapshotCreation, false);
+
+  const suppliedTempSnapshot = await materializePiExecutable(identity, {
+    environment: { TMPDIR: snapshotBase }
+  });
+  assert.equal(suppliedTempSnapshot.identity.launchCommand.startsWith(
+    `${await realpath(snapshotBase)}${path.sep}`
+  ), true);
+  await suppliedTempSnapshot.cleanup();
+
   let executableProbeCount = 0;
   const fallbackSnapshot = await materializePiExecutable(identity, {
     environment: { XDG_RUNTIME_DIR: xdgRoot, HOME: homeRoot },

@@ -147,14 +147,12 @@ function piSnapshotBaseDirectories(environment, explicitRoot) {
     }
     candidates.push(explicitRoot);
   } else {
-    if (typeof environment.XDG_RUNTIME_DIR === "string" && path.isAbsolute(environment.XDG_RUNTIME_DIR)) {
-      candidates.push(environment.XDG_RUNTIME_DIR);
+    for (const name of ["XDG_RUNTIME_DIR", "HOME", "TMPDIR", "TMP", "TEMP"]) {
+      const candidate = environment[name];
+      if (typeof candidate === "string" && path.isAbsolute(candidate) && !candidate.includes("\0")) {
+        candidates.push(candidate);
+      }
     }
-    const home = typeof environment.HOME === "string" && path.isAbsolute(environment.HOME)
-      ? environment.HOME
-      : os.homedir();
-    candidates.push(home);
-    candidates.push(os.tmpdir());
   }
   return [...new Set(candidates)];
 }

@@ -570,15 +570,17 @@ node ./bin/relaypact.mjs run-pi \
 ```
 
 Pi executable snapshots are created atomically beneath a trusted, executable-capable
-ancestor. RelayPact prefers `$XDG_RUNTIME_DIR`, then `$HOME`; if neither passes
-ownership, permission, directory and executable-file probes, it creates the private
-snapshot directly beneath the trusted sticky system temporary directory. On hosts
-that require another executable filesystem, a Host embedding the Pi route may pass
-an absolute, pre-existing private snapshot root explicitly. Inherited environment
-variables do not select this location. Its ancestors must be owned by the current
-user or root and must not be group/world writable unless protected by the sticky
-bit. RelayPact probes the selected filesystem before copying or launching Pi and
-tries later managed roots after a capacity failure.
+ancestor. RelayPact considers `XDG_RUNTIME_DIR`, `HOME`, `TMPDIR`, `TMP`, then
+`TEMP` from the environment supplied to the Pi route. Each candidate must be
+an absolute, pre-existing directory that passes ownership, permission and
+executable-file probes. The CLI uses its process environment; an embedding that
+supplies a separate environment never falls back to the process-global home or
+temporary directory. A Host embedding the Pi route may instead pass an absolute,
+pre-existing private snapshot root explicitly. If no supplied root is usable,
+readiness blocks. Root ancestors must be owned by the current user or root and
+must not be group/world writable unless protected by the sticky bit. RelayPact
+probes the selected filesystem before copying or launching Pi and tries later
+supplied roots after a capacity failure.
 
 Read [`packages/adapter-codex-pi/README.md`](../packages/adapter-codex-pi/README.md)
 before selecting it. Pi configuration must not become an implicit dependency or
