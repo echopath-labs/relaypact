@@ -1,4 +1,3 @@
-import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -180,6 +179,21 @@ async function preparePiSnapshotBaseDirectory(base) {
     }
   }
   return canonical;
+}
+
+async function createPiIsolatedEnvironment(environment, options = {}) {
+  const { createEnvironment = createIsolatedEnvironment, baseDirectory, ...isolationOptions } = options;
+  const candidates = piSnapshotBaseDirectories(environment, baseDirectory);
+  for (const candidate of candidates) {
+    try {
+      const trustedBase = await preparePiSnapshotBaseDirectory(candidate);
+      return await createEnvironment(environment, { ...isolationOptions, baseDirectory: trustedBase });
+    } catch (error) {
+      if (error?.code === "environment_cleanup_failed") throw error;
+      if (baseDirectory !== undefined) break;
+    }
+  }
+  throw piSnapshotRootUnavailable("Pi disposable state root is unavailable.");
 }
 
 async function assertPiSnapshotRootExecutable(materialized, isolated, environment, run) {
@@ -708,7 +722,11 @@ export async function resolvePiExecutable(command, options = {}) {
   let discovery;
   try {
     try {
-      discovery = await createEnvironment(environment, { prefix: "relaypact-pi-resolve-" });
+      discovery = await createPiIsolatedEnvironment(environment, {
+        createEnvironment,
+        baseDirectory: options.snapshotBaseDirectory,
+        prefix: "relaypact-pi-resolve-"
+      });
     } catch (cause) {
       const error = new Error("Pi executable discovery state is unavailable.");
       error.code = cause?.code === "environment_cleanup_failed"
@@ -1001,6 +1019,7 @@ export async function discoverPiCli(options = {}) {
     identity = await resolveExecutable(selectedCommand, {
       environment,
       commandBaseDirectory: options.commandBaseDirectory,
+      snapshotBaseDirectory: options.snapshotBaseDirectory,
       runProcess: run
     });
   } catch (error) {
@@ -1022,7 +1041,9 @@ export async function discoverPiCli(options = {}) {
   let readiness;
   let cleanupFailed = false;
   try {
-    isolated = await createEnvironment(environment, {
+    isolated = await createPiIsolatedEnvironment(environment, {
+      createEnvironment,
+      baseDirectory: options.snapshotBaseDirectory,
       prefix: "relaypact-pi-doctor-",
       grants: { GIT_OPTIONAL_LOCKS: "0" }
     });
@@ -1322,15 +1343,17 @@ function collectModelCredentialValues(value, explicitGrants, output, credentialC
 
 async function materializePiProjection({ sourceDirectory, destination, envelope, explicitGrants }) {
   let source = null;
-  try {
-    const sourceInfo = await lstat(sourceDirectory);
-    if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) {
-      throw new DelegationError("pi_config_projection_unsupported", "Pi configuration root must be a real directory.");
+  if (sourceDirectory !== null) {
+    try {
+      const sourceInfo = await lstat(sourceDirectory);
+      if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) {
+        throw new DelegationError("pi_config_projection_unsupported", "Pi configuration root must be a real directory.");
+      }
+      source = await realpath(sourceDirectory);
+    } catch (error) {
+      if (error instanceof DelegationError) throw error;
+      if (error?.code !== "ENOENT") throw error;
     }
-    source = await realpath(sourceDirectory);
-  } catch (error) {
-    if (error instanceof DelegationError) throw error;
-    if (error?.code !== "ENOENT") throw error;
   }
   const settings = source
     ? await readBoundedJson(path.join(source, "settings.json"), "Pi settings", { optional: true }) ?? {}
@@ -1487,9 +1510,11 @@ export async function runExecutor(envelope, options) {
   const explicitGrants = snapshotEnvironmentGrants(options.executorEnv ?? {});
   let sensitiveValues = Object.values(explicitGrants)
     .filter((value) => typeof value === "string" && value.length > 0);
+  const suppliedHome = typeof environmentSource.HOME === "string" && path.isAbsolute(environmentSource.HOME)
+    && !environmentSource.HOME.includes("\0") ? environmentSource.HOME : null;
   const piConfigDirectory = explicitGrants.PI_CODING_AGENT_DIR
     ?? environmentSource.PI_CODING_AGENT_DIR
-    ?? path.join(os.homedir(), ".pi", "agent");
+    ?? (suppliedHome === null ? null : path.join(suppliedHome, ".pi", "agent"));
   let isolated;
   let processResult;
   let projection;
@@ -1512,6 +1537,7 @@ export async function runExecutor(envelope, options) {
     const executableIdentity = await resolvePiExecutable(selectedCommand, {
       environment: environmentSource,
       commandBaseDirectory: options.commandBaseDirectory ?? process.cwd(),
+      snapshotBaseDirectory: options.snapshotBaseDirectory,
       runProcess
     });
     if (!executableIdentity) throw new DelegationError("pi_executor_unavailable", "The selected Pi executable could not be resolved to a supported absolute launch identity.");
@@ -1524,7 +1550,8 @@ export async function runExecutor(envelope, options) {
         environment: environmentSource,
         snapshotBaseDirectory: options.snapshotBaseDirectory
       });
-    isolated = await createIsolatedEnvironment(environmentSource, {
+    isolated = await createPiIsolatedEnvironment(environmentSource, {
+      baseDirectory: options.snapshotBaseDirectory,
       prefix: "relaypact-pi-",
       grants: { ...explicitGrants, GIT_OPTIONAL_LOCKS: "0" }
     });

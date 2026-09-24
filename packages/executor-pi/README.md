@@ -34,14 +34,16 @@ later. Native launchers and Windows command shims remain unsupported because the
 launcher-relative dependency semantics are not part of the immutable snapshot.
 
 Executable snapshots prefer private roots because hardened Linux hosts may mount the
-system temporary directory with `noexec`. RelayPact creates the snapshot atomically
-under the XDG runtime directory, then the home directory, and finally the trusted
-sticky system temporary directory. It accepts the first candidate whose ownership,
-ancestor permissions, directory, executable-file, and capacity checks pass. A Host
-embedding the route may pass an absolute private snapshot root explicitly; inherited
-environment variables never select this location. An explicit root must already
-exist, have trusted non-writable ancestors (or sticky writable ancestors), and pass
-an executable-file probe before Pi package or runtime bytes are copied.
+system temporary directory with `noexec`. RelayPact tries absolute roots supplied in
+`XDG_RUNTIME_DIR`, `HOME`, `TMPDIR`, `TMP`, and `TEMP`, in that order. It accepts the first
+candidate whose ownership, ancestor permissions, directory, executable-file, and
+capacity checks pass. Pi discovery, doctor, and execution also create disposable state
+only beneath these supplied roots. A Host embedding the route may pass an absolute
+private snapshot root explicitly for all Pi temporary state; it must already exist,
+have trusted non-writable ancestors (or sticky writable ancestors), and pass an
+executable-file probe before Pi package or runtime bytes are copied. If no supplied
+root is usable, readiness blocks without falling back to process-global temporary
+directory settings.
 
 Pi runs in print/text mode and must return exactly one final JSON object with
 `status` (`completed`, `blocked`, or `failed`), a string `summary`, and optional
@@ -60,8 +62,10 @@ rejects any observed mutation.
 The adapter gives Pi a disposable HOME and temporary directory and projects a
 task-scoped `PI_CODING_AGENT_DIR` containing only the selected provider's
 authentication, custom model definition when needed, and safe defaults. It
-does not expose the original configuration directory. Credential environment
-references must be exact explicit grants. Only literal or exact-reference
+reads the source configuration from an explicit `PI_CODING_AGENT_DIR` or the
+supplied `HOME`; when neither is supplied, projection starts with empty
+configuration. It does not expose the original configuration directory.
+Credential environment references must be exact explicit grants. Only literal or exact-reference
 `api_key` auth is supported; command-resolved, OAuth, provider-specific
 environment, interpolation/escape, and unknown auth shapes are rejected.
 Explicit grants are snapshotted once, and provider base URLs containing

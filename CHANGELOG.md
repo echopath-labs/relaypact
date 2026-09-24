@@ -8,6 +8,7 @@ All notable public changes to RelayPact are recorded here.
 - Add `doctor --route codex-pi [--executor <absolute-pi-path>]` as a structured, no-model readiness check for the experimental Pi route. It binds and snapshots the complete launch identity, including the Node package, resolved runtime dependency closure and shebang/toolchain-selected runtime when applicable, verifies Pi 0.84.0 or later under semantic-version precedence and every complete CLI option token plus associated mode value used by the adapter including conditional `--thinking`, and runs version/help probes from separate verified executable snapshots with disposable HOME, settings, session and working directories. Relative path executors are rejected, and snapshot or cleanup failures remain sanitized structured blocked results.
 
 ### Fixed
+- Keep Pi discovery, doctor, and execution disposable state beneath Host-supplied temporary roots, derive optional Pi configuration only from Host-supplied paths, and document the actual root-selection order.
 - Keep Pi executable snapshot roots within the Host-supplied environment, blocking when it provides no usable absolute root instead of falling back to ambient home or temporary-directory settings.
 - Inspect complete static import specifiers, including multiline imports, when enforcing lazy loading for experimental executors in default doctor.
 - Preserve structured Pi execution failure and Host filesystem/Git postflight evidence when temporary-state cleanup fails.

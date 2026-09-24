@@ -118,11 +118,13 @@ function piDoctorFixture(overrides = {}) {
   };
 }
 
-test("Pi doctor discovery is model-free and isolates settings from the project and ambient environment", async () => {
+test("Pi doctor discovery is model-free and isolates settings within a supplied root", async (context) => {
+  const suppliedRoot = await createDirectory();
+  context.after(() => rm(suppliedRoot, { recursive: true, force: true }));
   const fixture = piDoctorFixture();
   const readiness = await discoverPiCli({
     ...fixture,
-    environment: { PATH: "/fixture", HOME: "/Users/private", SECRET_TOKEN: "opaque" },
+    environment: { PATH: "/fixture", HOME: "/Users/private", TMPDIR: suppliedRoot, SECRET_TOKEN: "opaque" },
     executorCommand: "/fixture/pi"
   });
   assert.equal(readiness.state, "ready");
@@ -132,9 +134,26 @@ test("Pi doctor discovery is model-free and isolates settings from the project a
   assert.equal(Object.values(readiness.capabilities).every(Boolean), true);
   assert.deepEqual(fixture.calls.map((item) => item.args), [["--version"], ["--help"]]);
   assert.equal(fixture.calls.every((item) => item.options.cwd.includes("relaypact-pi-doctor-")), true);
+  const canonicalRoot = await realpath(suppliedRoot);
+  assert.equal(fixture.calls.every((item) => item.options.cwd.startsWith(`${canonicalRoot}${path.sep}`)), true);
   assert.equal(fixture.calls.every((item) => item.options.env.HOME.includes("relaypact-pi-doctor-")), true);
   assert.equal(fixture.calls.every((item) => item.options.env.PI_CODING_AGENT_DIR.includes("relaypact-pi-doctor-")), true);
   assert.equal(fixture.calls.every((item) => item.options.env.SECRET_TOKEN === undefined), true);
+});
+
+test("Pi doctor blocks before creating disposable state when the supplied environment has no root", async () => {
+  const fixture = piDoctorFixture();
+  let attempted = false;
+  const readiness = await discoverPiCli({
+    ...fixture,
+    environment: { PATH: "/fixture" },
+    executorCommand: "/fixture/pi",
+    createEnvironment: async () => { attempted = true; throw new Error("unexpected ambient fallback"); }
+  });
+  assert.equal(readiness.state, "blocked");
+  assert.equal(readiness.reason, "isolation_unavailable");
+  assert.equal(attempted, false);
+  assert.equal(fixture.calls.length, 0);
 });
 
 test("Pi doctor discovery blocks unsupported, missing, and mutated executables", async () => {
@@ -298,8 +317,10 @@ test("Pi doctor does not bypass snapshots when the process runner is injected", 
   assert.equal(calls.some((item) => item.args[0] === "-e" && item.args[1] === "process.exit(0)"), true);
 });
 
-test("Pi executable resolution rejects working-directory-relative launch paths", async () => {
-  assert.equal(await resolvePiExecutable("./fake-pi.mjs", { environment: { PATH: process.env.PATH } }), null);
+test("Pi executable resolution rejects working-directory-relative launch paths", async (context) => {
+  const root = await createDirectory();
+  context.after(() => rm(root, { recursive: true, force: true }));
+  assert.equal(await resolvePiExecutable("./fake-pi.mjs", { environment: { PATH: process.env.PATH, TMPDIR: root } }), null);
 });
 
 test("Pi executable resolution never falls through the first executable PATH candidate", async (context) => {
@@ -315,7 +336,7 @@ test("Pi executable resolution never falls through the first executable PATH can
   await symlink(fakePi, path.join(secondBin, "pi"));
   await symlink(process.execPath, path.join(runtimeBin, "node"));
   const identity = await resolvePiExecutable("pi", {
-    environment: { PATH: [firstBin, secondBin, runtimeBin].join(path.delimiter) }
+    environment: { PATH: [firstBin, secondBin, runtimeBin].join(path.delimiter), TMPDIR: root }
   });
   assert.equal(identity, null);
 });
@@ -657,7 +678,7 @@ test("Pi identity snapshots a directly resolved Node runtime selected by the ent
   ].join("\n"));
   await chmod(entry, 0o700);
 
-  const identity = await resolvePiExecutable(entry, { environment: { PATH: bin } });
+  const identity = await resolvePiExecutable(entry, { environment: { PATH: bin, TMPDIR: root } });
   assert.equal(identity?.runtimeCommand, await realpath(selectedNode));
   assert.notEqual(identity.runtimeCommand, await realpath(process.execPath));
   const snapshot = await materializePiExecutable(identity);
@@ -693,24 +714,24 @@ test("Pi identity rejects an opaque Node launcher and resolves runtime probes in
   }));
   await writeFile(entry, "#!/usr/bin/env node\n");
   await chmod(entry, 0o700);
-  assert.equal(await resolvePiExecutable(entry, { environment: { PATH: bin } }), null);
+  assert.equal(await resolvePiExecutable(entry, { environment: { PATH: bin, TMPDIR: root } }), null);
 
   const fallbackBin = path.join(root, "fallback-bin");
   await mkdir(fallbackBin);
   await symlink(selectedNode, path.join(fallbackBin, "node"));
   assert.equal(await resolvePiExecutable(entry, {
-    environment: { PATH: `${bin}${path.delimiter}${fallbackBin}` }
+    environment: { PATH: `${bin}${path.delimiter}${fallbackBin}`, TMPDIR: root }
   }), null);
 
   await rm(nodeLauncher);
   await symlink(selectedNode, nodeLauncher);
   assert.equal(await resolvePiExecutable(entry, {
-    environment: { PATH: bin },
+    environment: { PATH: bin, TMPDIR: root },
     runProcess: async () => piProbeResult(JSON.stringify({ execPath: selectedNode, version: "18.20.0" }))
   }), null);
   const probes = [];
   const identity = await resolvePiExecutable(entry, {
-    environment: { PATH: bin, HOME: "/ambient/home", SECRET_TOKEN: "opaque" },
+    environment: { PATH: bin, HOME: "/ambient/home", TMPDIR: root, SECRET_TOKEN: "opaque" },
     runProcess: async (command, args, options) => {
       probes.push({ command, args, options });
       return piProbeResult(JSON.stringify({ execPath: selectedNode, version: process.versions.node }));
