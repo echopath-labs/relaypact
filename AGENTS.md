@@ -40,9 +40,26 @@ configuration discovery, or an automatic fallback between adapters.
   should also run its focused check and relevant opt-in smoke when configured.
 - Deterministic tests must remain offline and independent of user Pi, Codex,
   provider, model, proxy, router, network, or credential configuration.
-- Codex tasks use `codex/<scope>` by default. `feat/<scope>`, `fix/<scope>`,
-  `chore/<scope>`, and `docs/<scope>` are also permitted. Branch names do not
-  confer merge or release authority.
 - Do not commit, push, tag, publish, release, or change repository settings
   without explicit human authorization. Executor completion is never final
   host or human acceptance.
+
+## Collaboration working rules
+
+- Keep each pull request focused on one responsibility and to approximately
+  400 or fewer net added lines. Split larger changes into multiple pull
+  requests before implementation continues.
+- Before implementation begins, record the acceptance commands in the
+  corresponding OpenSpec change or pull request description.
+- Run the full `npm test` suite locally before every push and include a concise
+  result summary in the pull request description.
+- Treat bot reviews as advisory rather than as merge gates. Stop after at most
+  two or three bot-driven fix rounds on the same pull request, document any
+  remaining findings in the pull request description, and escalate them to a
+  human reviewer.
+- Name branches with a `feat/`, `fix/`, `docs/`, or `chore/` prefix. Do not use
+  the `codex/` prefix. Branch names do not confer merge or release authority.
+- Start every work session with `git fetch origin && git status` to verify that
+  the local baseline is current.
+- Resolve every review thread before merge. The repository ruleset enforces
+  this requirement.
