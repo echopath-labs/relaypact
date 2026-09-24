@@ -253,6 +253,7 @@ export async function runCursorDoctor(options = {}) {
 function piReasonDetail(reason, minimumVersion) {
   const details = {
     missing: "The selected Pi executable is unavailable.",
+    invalid_executor_path: "An explicit Pi executor must be an absolute path.",
     timed_out: "The Pi readiness probe timed out.",
     truncated: "The Pi readiness probe exceeded the diagnostic output bound.",
     unsupported: "The selected Pi executable did not complete the no-model readiness probe.",
@@ -271,6 +272,7 @@ function piReasonDetail(reason, minimumVersion) {
 function piReasonRemediation(reason, fallback) {
   const remediations = {
     missing: "install-pi",
+    invalid_executor_path: "provide-absolute-pi-executor",
     unsupported_platform: "use-supported-pi-platform",
     snapshot_unavailable: "configure-pi-snapshot-root",
     isolation_unavailable: "repair-pi-readiness-isolation",

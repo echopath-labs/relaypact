@@ -216,6 +216,28 @@ async function assertPiSnapshotRootExecutable(materialized, isolated, environmen
   }
 }
 
+async function probePiSnapshotRootExecutable(isolated, environment, run) {
+  if (process.platform === "win32") return;
+  const probe = path.join(isolated.root, "root-exec-probe");
+  await writeFile(probe, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await chmod(probe, 0o700);
+  try {
+    const result = await run(probe, [], {
+      cwd: isolated.root,
+      env: minimalEnvironment(isolated.env ?? environment),
+      timeoutMs: PI_PROBE_TIMEOUT_MS,
+      maxCaptureBytes: 1024
+    });
+    if (result.exitCode !== 0 || result.signal || result.timedOut || result.cancelled) {
+      throw piSnapshotRootUnavailable();
+    }
+  } catch {
+    throw piSnapshotRootUnavailable();
+  } finally {
+    await rm(probe, { force: true });
+  }
+}
+
 function commandCandidates(command, environment) {
   if (path.isAbsolute(command)) return [command];
   if (command.includes("/") || command.includes("\\")) return [];
@@ -715,6 +737,7 @@ export function piPlatformSupported(platform = process.platform) {
 
 export async function resolvePiExecutable(command, options = {}) {
   if (typeof command !== "string" || command.trim().length === 0 || command.includes("\0")) return null;
+  if (!path.isAbsolute(command) && options.allowPathLookup !== true) return null;
   if (!piPlatformSupported()) return null;
   const environment = options.environment ?? process.env;
   const run = options.runProcess ?? runProcess;
@@ -892,6 +915,7 @@ export async function materializePiExecutable(identity, options = {}) {
           baseDirectory: snapshotBase
         });
         materializationStarted = true;
+        await probePiSnapshotRootExecutable(candidateEnvironment, environment, options.runProcess ?? runProcess);
         const materializeCandidate = options.materializeCandidate ?? materializePiExecutableInEnvironment;
         materialized = await materializeCandidate(identity, candidateEnvironment);
         await assertPiSnapshotRootExecutable(
@@ -1004,6 +1028,10 @@ async function probePiSnapshot(run, materializeExecutable, identity, args, envir
 
 export async function discoverPiCli(options = {}) {
   if (!piPlatformSupported()) return unavailablePiReadiness("unsupported_platform");
+  if (options.executorCommand !== undefined &&
+      (typeof options.executorCommand !== "string" || !path.isAbsolute(options.executorCommand))) {
+    return unavailablePiReadiness("invalid_executor_path");
+  }
   const run = options.runProcess ?? runProcess;
   const resolveExecutable = options.resolveExecutable ?? resolvePiExecutable;
   const environment = options.environment ?? process.env;
@@ -1020,6 +1048,7 @@ export async function discoverPiCli(options = {}) {
       environment,
       commandBaseDirectory: options.commandBaseDirectory,
       snapshotBaseDirectory: options.snapshotBaseDirectory,
+      allowPathLookup: options.executorCommand === undefined,
       runProcess: run
     });
   } catch (error) {
@@ -1132,6 +1161,8 @@ export async function discoverPiCli(options = {}) {
       verifiedIdentity = await resolveExecutable(selectedCommand, {
         environment,
         commandBaseDirectory: options.commandBaseDirectory,
+        snapshotBaseDirectory: options.snapshotBaseDirectory,
+        allowPathLookup: options.executorCommand === undefined,
         runProcess: run
       });
     } catch (error) {
@@ -1525,7 +1556,7 @@ export async function runExecutor(envelope, options) {
   const finish = (result) => attachExecutorSecurity(result, { sensitiveValues, credentialEvidenceTrusted });
   try {
     const readiness = await (options.discoverPiCli ?? discoverPiCli)({
-      executorCommand: selectedCommand,
+      executorCommand: options.executorCommand,
       environment: environmentSource,
       commandBaseDirectory: options.commandBaseDirectory ?? process.cwd(),
       snapshotBaseDirectory: options.snapshotBaseDirectory
@@ -1538,6 +1569,7 @@ export async function runExecutor(envelope, options) {
       environment: environmentSource,
       commandBaseDirectory: options.commandBaseDirectory ?? process.cwd(),
       snapshotBaseDirectory: options.snapshotBaseDirectory,
+      allowPathLookup: options.executorCommand === undefined,
       runProcess
     });
     if (!executableIdentity) throw new DelegationError("pi_executor_unavailable", "The selected Pi executable could not be resolved to a supported absolute launch identity.");

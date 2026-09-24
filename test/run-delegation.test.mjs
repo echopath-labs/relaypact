@@ -156,6 +156,58 @@ test("Pi doctor blocks before creating disposable state when the supplied enviro
   assert.equal(fixture.calls.length, 0);
 });
 
+test("Pi doctor reuses an explicit root for both executable identity checks", async (context) => {
+  const snapshotBase = await createDirectory();
+  context.after(() => rm(snapshotBase, { recursive: true, force: true }));
+  const fixture = piDoctorFixture();
+  const resolveExecutable = fixture.resolveExecutable;
+  let resolutions = 0;
+  fixture.resolveExecutable = async (command, options) => {
+    resolutions += 1;
+    assert.equal(options.snapshotBaseDirectory, snapshotBase);
+    return resolveExecutable(command, options);
+  };
+  const readiness = await discoverPiCli({
+    ...fixture,
+    environment: { PATH: "/fixture" },
+    executorCommand: "/fixture/pi",
+    snapshotBaseDirectory: snapshotBase
+  });
+  assert.equal(readiness.state, "ready");
+  assert.equal(resolutions, 2);
+});
+
+test("Pi doctor rejects an explicit bare executor before PATH lookup", async () => {
+  const fixture = piDoctorFixture();
+  let resolved = false;
+  const readiness = await discoverPiCli({
+    ...fixture,
+    executorCommand: "pi",
+    resolveExecutable: async () => { resolved = true; return piIdentity(); }
+  });
+  assert.equal(readiness.reason, "invalid_executor_path");
+  assert.equal(resolved, false);
+  const doctor = await runPiDoctor({
+    executorCommand: "pi",
+    runProcess: async () => piProbeResult("git version 2.0.0")
+  });
+  assert.equal(doctor.state, "blocked");
+  assert.equal(doctor.checks.find((item) => item.id === "pi-executable").remediation, "provide-absolute-pi-executor");
+});
+
+test("Pi doctor still discovers Pi on PATH when no executor is explicit", async (context) => {
+  const root = await createDirectory();
+  const bin = path.join(root, "bin");
+  await mkdir(bin);
+  await symlink(fakePi, path.join(bin, "pi"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const readiness = await discoverPiCli({
+    environment: { PATH: `${bin}${path.delimiter}${process.env.PATH}`, TMPDIR: root }
+  });
+  assert.equal(readiness.state, "ready");
+  assert.equal(readiness.command, path.join(bin, "pi"));
+});
+
 test("Pi doctor discovery blocks unsupported, missing, and mutated executables", async () => {
   const unsupported = piDoctorFixture({ version: piProbeResult("0.83.9\n") });
   assert.equal((await discoverPiCli({ ...unsupported, executorCommand: "/fixture/pi" })).reason, "unsupported_version");
@@ -336,7 +388,8 @@ test("Pi executable resolution never falls through the first executable PATH can
   await symlink(fakePi, path.join(secondBin, "pi"));
   await symlink(process.execPath, path.join(runtimeBin, "node"));
   const identity = await resolvePiExecutable("pi", {
-    environment: { PATH: [firstBin, secondBin, runtimeBin].join(path.delimiter), TMPDIR: root }
+    environment: { PATH: [firstBin, secondBin, runtimeBin].join(path.delimiter), TMPDIR: root },
+    allowPathLookup: true
   });
   assert.equal(identity, null);
 });
@@ -501,7 +554,7 @@ test("Pi delegation never resolves a relative executor inside the target reposit
     executorCommand: "./target-pi.mjs"
   });
   assert.equal(result.status, "blocked");
-  assert.match(result.executor.summary, /readiness is blocked: missing/u);
+  assert.match(result.executor.summary, /readiness is blocked: invalid_executor_path/u);
   await assert.rejects(readFile(path.join(root, "allowed.txt"), "utf8"), { code: "ENOENT" });
 });
 
@@ -833,10 +886,13 @@ test("Pi snapshots use a configurable executable-capable private root and fail c
     }
   });
   assert.equal(snapshot.identity.launchCommand.startsWith(`${await realpath(snapshotBase)}${path.sep}`), true);
-  assert.deepEqual(executableProbes, [{
+  assert.equal(executableProbes.length, 2);
+  assert.equal(executableProbes[0].command.startsWith(`${await realpath(snapshotBase)}${path.sep}`), true);
+  assert.deepEqual(executableProbes[0].args, []);
+  assert.deepEqual(executableProbes[1], {
     command: snapshot.identity.launchCommand,
     args: ["-e", "process.exit(0)"]
-  }]);
+  });
   await snapshot.cleanup();
   await assert.rejects(
     materializePiExecutable(identity, {
@@ -879,11 +935,28 @@ test("Pi snapshots use a configurable executable-capable private root and fail c
       return piProbeResult("", { exitCode: executableProbeCount === 1 ? 126 : 0 });
     }
   });
-  assert.equal(executableProbeCount, 2);
+  assert.equal(executableProbeCount, 3);
   assert.equal(fallbackSnapshot.identity.launchCommand.startsWith(
     `${await realpath(homeRoot)}${path.sep}`
   ), true);
   await fallbackSnapshot.cleanup();
+
+  const copiedRoots = [];
+  let preflightCount = 0;
+  const preflightFallback = await materializePiExecutable(identity, {
+    environment: { XDG_RUNTIME_DIR: xdgRoot, HOME: homeRoot },
+    runProcess: async () => piProbeResult("", { exitCode: ++preflightCount === 1 ? 126 : 0 }),
+    materializeCandidate: async (selectedIdentity, isolated) => {
+      copiedRoots.push(isolated.root);
+      return {
+        identity: { ...selectedIdentity, launchCommand: process.execPath, launchPrefix: [] },
+        cleanup: isolated.cleanup
+      };
+    }
+  });
+  assert.equal(copiedRoots.length, 1);
+  assert.equal(copiedRoots[0].startsWith(`${await realpath(homeRoot)}${path.sep}`), true);
+  await preflightFallback.cleanup();
 
   const ambientOverrideIgnored = await materializePiExecutable(identity, {
     environment: {
