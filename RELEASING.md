@@ -1,6 +1,6 @@
 # Release Checklist
 
-This checklist prepares a human-authorized `0.3.5` GitHub Release. It
+This checklist prepares a human-authorized `0.3.6` GitHub Release. It
 does not authorize a commit, remote change, push, tag, GitHub release, npm
 publish, or deployment.
 
@@ -38,9 +38,9 @@ The candidate `LICENSE` must contain the reviewed Apache License 2.0 text,
 `plugin.json`, both README language entries, and contribution guidance must use
 the exact SPDX identifier `Apache-2.0`. License drift is a release blocker.
 
-## 0.3.5 release-time documentation closeout
+## 0.3.6 release-time documentation closeout
 
-The checked-in metadata describes 0.3.5 Release, dated 2026-09-22.
+The checked-in metadata describes 0.3.6 Release, dated 2026-09-24.
 The release process merges reviewed documentation before publishing the tag
 and ordinary GitHub Release. Confirm both remote objects exist before treating the
 version as installable; metadata alone does not establish publication.
@@ -58,18 +58,18 @@ visible official tag and GitHub Release.
    integration. Preparation alone does not grant these operations.
 4. Prepare one scoped versioned-documentation commit:
    - Set PROJECT_RELEASE_STATE in scripts/validate-package.mjs to versioned;
-     set PROJECT_VERSION to 0.3.5 and the previous published version at 0.3.4.
+     set PROJECT_VERSION to 0.3.6 and the previous published version at 0.3.5.
    - Update README.md, README.zh-CN.md, docs/agent-quickstart.md,
      docs/agent-quickstart.zh-CN.md and docs/manual-configuration.md to name
-     v0.3.5 as the installation target, require a visible official GitHub Release
+     v0.3.6 as the installation target, require a visible official GitHub Release
      before running install commands, and verify the peeled
-     v0.3.5^{} commit. Remove candidate-only statements and the guidance caveat
+     v0.3.6^{} commit. Remove candidate-only statements and the guidance caveat
      that applies to the older installation; retain explicitly historical notes.
-   - Date the 0.3.5 changelog entry and add its comparison link.
+   - Date the 0.3.6 changelog entry and add its comparison link.
    - Versioned documentation is not a publication announcement. Do not label
-     v0.3.5 as latest published before the remote tag and Release exist.
+     v0.3.6 as latest published before the remote tag and Release exist.
      If publication fails after merge, installation must stop at the Release
-     availability precondition; the previous v0.3.4 remains the fallback.
+     availability precondition; the previous v0.3.5 remains the fallback.
    - Update this checklist's current-state paragraph and version-sensitive
      validation fixtures so the release itself does not retain a stale
      candidate-state description. Keep route status and known limits accurate.
@@ -80,7 +80,7 @@ visible official tag and GitHub Release.
    reviewed PR before creating the release tag, then verify the merged main tree
    matches the reviewed content and its post-merge CI passes. Earlier main CI is
    not final release-candidate CI.
-6. Under the explicit remote authorization, create the annotated v0.3.5 tag at
+6. Under the explicit remote authorization, create the annotated v0.3.6 tag at
    that verified merged main commit, push only the approved tag and create a
    ordinary GitHub Release. Verify the peeled tag and the visible GitHub Release.
 7. Recheck main, tag identity, Release visibility, bilingual links and install
@@ -111,7 +111,7 @@ Verify the existing repository gates for each release:
 
 ## Release Positioning
 
-Describe 0.3.5 as an ordinary GitHub Release for practical Host-supervised
+Describe 0.3.6 as an ordinary GitHub Release for practical Host-supervised
 delegation, with Codex as the admitted Host. Continue reviewing and improving
 delegation mechanisms and constraints. Preserve the existing route maturity
 labels independently: Codex-to-Codex remains the active public-preview route;
