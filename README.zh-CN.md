@@ -221,5 +221,5 @@ npm run check
 通过 `execution.filesystemEvidenceMaxBytes` 显式配置最高 8 GiB 的预算，
 并在任务全程保持一致。配置、扫描成本和独立限制见
 [预算说明](skills/relaypact/references/task-envelope.md#filesystem-evidence-budget)。
-v0.3.5 另行允许最多 64 MiB 的机器可读 Git stdout；文件系统预算不会扩大
+v0.3.4 另行允许最多 64 MiB 的机器可读 Git stdout；文件系统预算不会扩大
 这一固定上限。v0.3.1 安装版仍使用固定的 512 MiB 文件系统限制。

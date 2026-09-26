@@ -250,6 +250,6 @@ filesystem evidence budget is 512 MiB; installed monorepos can exceed it even
 with clean Git status. Version 0.3.2 adds explicit Host configuration through
 `execution.filesystemEvidenceMaxBytes` (up to 8 GiB), retained throughout the task.
 See [the budget reference](skills/relaypact/references/task-envelope.md#filesystem-evidence-budget)
-for configuration, costs and remaining limits. Version 0.3.5 separately allows
+for configuration, costs and remaining limits. Version 0.3.4 separately allows
 up to 64 MiB of machine-readable Git stdout; that fixed bound is not expanded by
 the filesystem budget. Version 0.3.1 keeps the fixed filesystem limit.
