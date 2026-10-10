@@ -8,7 +8,7 @@ does not authorize broader access or automatic patch application.
 
 The [Host Skill](../skills/relaypact/SKILL.md) defines the shared delegation and
 review requirements. Read this manual when using the CLI tools, whose schemas
-and lifecycle constraints remain required. Version 0.3.6 includes the shared
+and lifecycle constraints remain required. Version 0.3.7 includes the shared
 Host guidance and the experimental Cursor adapter.
 
 ## Execution exit codes since v0.3.1
@@ -61,24 +61,24 @@ codex exec --help
 
 ## Release state and version verification
 
-The installation target is `v0.3.6`. Package and Plugin version fields
+The installation target is `v0.3.7`. Package and Plugin version fields
 alone are not release identity; verify the official tag's peeled commit.
 
-Before installing, confirm the [v0.3.6 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.6) is visible.
-If unavailable, stop these installation steps and use [v0.3.5](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.5) instead.
+Before installing, confirm the [v0.3.7 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.7) is visible.
+If unavailable, stop these installation steps and use [v0.3.6](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.6) instead.
 These versioned instructions are not a publication announcement.
 
 Install and verify the target release only after confirming its availability:
 
 ```bash
 set -e
-git clone --branch v0.3.6 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.6
-checkout_commit="$(git -C relaypact-v0.3.6 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.3.6 rev-parse 'v0.3.6^{}')"
+git clone --branch v0.3.7 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.7
+checkout_commit="$(git -C relaypact-v0.3.7 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.7 rev-parse 'v0.3.7^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.3.6
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.6"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.7
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.7"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json

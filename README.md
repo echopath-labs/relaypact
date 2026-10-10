@@ -11,7 +11,7 @@ invocation and evidence tools for that work.
 The [Host Skill](skills/relaypact/SKILL.md) states those shared requirements;
 its references explain the selected tools only when needed. See
 [eight review cases](examples/host-delegation-cases.md) for concrete expectations.
-Version 0.3.6 includes this guidance and experimental Cursor and WorkBuddy routes.
+Version 0.3.7 includes this guidance and experimental Cursor and WorkBuddy routes.
 General Host wording does not add support for
 other Host products; Codex remains the admitted Host in the support matrix.
 
@@ -36,12 +36,12 @@ Shell execution and same-session continuation are not admitted. See the
 
 ## Release status
 
-The v0.3.6 target is an ordinary GitHub Release for practical, Host-supervised delegation.
+The v0.3.7 target is an ordinary GitHub Release for practical, Host-supervised delegation.
 Delegation mechanisms and constraints continue to evolve through review and use.
 Product release status is separate from each adapter's maturity in the support matrix.
 
-- Source package metadata: **0.3.6**.
-- Release target: **v0.3.6**.
+- Source package metadata: **0.3.7**.
+- Release target: **v0.3.7**.
 - Support: `codex-codex` is `public-preview`; `codex-pi` remains
   `experimental` and inactive; `codex-cursor` is source-included,
   `experimental`, and inactive at the root Plugin. WorkBuddy and WorkBuddy AI
@@ -79,24 +79,24 @@ and Codex CLI 0.147.0 or later with both `codex --version` and
 for a release only after its exact candidate passes public CI. Windows support
 is not yet claimed.
 
-## Five-minute start with the v0.3.6 release
+## Five-minute start with the v0.3.7 release
 
-Use the versioned `v0.3.6` tag for a reproducible release installation.
-Confirm the [GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.6)
+Use the versioned `v0.3.7` tag for a reproducible release installation.
+Confirm the [GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.7)
 is available before installing; package metadata or a PR alone is not publication.
 
-Before installing, confirm the [v0.3.6 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.6) is visible.
-If unavailable, stop these installation steps and use [v0.3.5](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.5) instead.
+Before installing, confirm the [v0.3.7 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.7) is visible.
+If unavailable, stop these installation steps and use [v0.3.6](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.6) instead.
 These versioned instructions are not a publication announcement.
 
 Give a coordinating Codex instance this prompt:
 
 ```text
-Clone the versioned v0.3.6 release tag from
+Clone the versioned v0.3.7 release tag from
 https://github.com/echopath-labs/relaypact into a local tools directory outside
 my target repository. Record the exact checkout commit, verify it against the
-peeled v0.3.6 tag commit, and verify that package.json and plugin.json both
-report 0.3.6.
+peeled v0.3.7 tag commit, and verify that package.json and plugin.json both
+report 0.3.7.
 Read README.md and the nearest AGENTS.md. Verify Node.js 20 or later, Git,
 Codex CLI 0.147.0 or later, and `codex exec --help`. Install the root Agent
 Plugin through its local marketplace, start no worker, then run the installed
@@ -110,13 +110,13 @@ The equivalent release commands are:
 
 ```bash
 set -e
-git clone --branch v0.3.6 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.6
-checkout_commit="$(git -C relaypact-v0.3.6 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.3.6 rev-parse 'v0.3.6^{}')"
+git clone --branch v0.3.7 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.7
+checkout_commit="$(git -C relaypact-v0.3.7 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.7 rev-parse 'v0.3.7^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.3.6
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.6"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.7
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.7"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -129,22 +129,22 @@ documentation file.
 
 ## Install the versioned release
 
-Before running this block, confirm the official [v0.3.6 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.6) is visible. If it is unavailable, stop and use [v0.3.5](https://github.com/echopath-labs/relaypact/tree/v0.3.5). A tag alone does not satisfy this precondition.
+Before running this block, confirm the official [v0.3.7 GitHub Release](https://github.com/echopath-labs/relaypact/releases/tag/v0.3.7) is visible. If it is unavailable, stop and use [v0.3.6](https://github.com/echopath-labs/relaypact/tree/v0.3.6). A tag alone does not satisfy this precondition.
 
-The installation target is `v0.3.6`:
+The installation target is `v0.3.7`:
 
 The previous `v0.1.2`, `v0.1.1` and `v0.1.0` releases remain available for exact
 historical installs.
 
 ```bash
 set -e
-git clone --branch v0.3.6 --depth 1 \
-  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.6
-checkout_commit="$(git -C relaypact-v0.3.6 rev-parse HEAD)"
-release_commit="$(git -C relaypact-v0.3.6 rev-parse 'v0.3.6^{}')"
+git clone --branch v0.3.7 --depth 1 \
+  https://github.com/echopath-labs/relaypact.git relaypact-v0.3.7
+checkout_commit="$(git -C relaypact-v0.3.7 rev-parse HEAD)"
+release_commit="$(git -C relaypact-v0.3.7 rev-parse 'v0.3.7^{}')"
 test "$checkout_commit" = "$release_commit"
-cd relaypact-v0.3.6
-node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.6"||q.version!==p.version) process.exit(1)'
+cd relaypact-v0.3.7
+node -e 'const p=require("./package.json"),q=require("./plugin.json"); if(p.version!=="0.3.7"||q.version!==p.version) process.exit(1)'
 codex plugin marketplace add "$PWD" --json
 codex plugin add relaypact@relaypact-local --json
 codex plugin list --marketplace relaypact-local --json
@@ -218,14 +218,14 @@ only supported persistent modes can record a tool terminal decision.
 - [Contribution guide](CONTRIBUTING.md)
 - [NOTICE](NOTICE) and [Apache License 2.0](LICENSE) (`Apache-2.0`)
 
-## Changes in v0.3.6
+## Changes in v0.3.7
 
-- Add `doctor --route codex-pi [--executor <absolute-pi-path>]` as a structured,
-  no-model preflight for the experimental Pi route.
-- Bind the complete Pi launch identity and probe it from isolated, disposable
-  settings and executable snapshots with sanitized, fail-closed outcomes.
-- Keep Pi experimental, explicitly selected, and inactive at the root Plugin;
-  readiness does not select a provider or model or prove live availability.
+- Add explicit `decide-cursor --action abandon --retire-stale-review` for a
+  settled review after Host/user file edits, preserving the original review and
+  filesystem drift evidence without accepting or reverting the workspace.
+- Keep stale acceptance/correction, unknown execution completion, Git metadata
+  drift, invalid signatures, live leases and unsafe cleanup blocking.
+- Retain experimental route labels and recoverable archive/cleanup checks.
 
 See the [changelog](CHANGELOG.md) for details and compatibility notes.
 

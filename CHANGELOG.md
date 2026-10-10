@@ -4,6 +4,8 @@ All notable public changes to RelayPact are recorded here.
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-10-10 - Release
+
 ### Fixed
 - Add explicit `decide-cursor --action abandon --retire-stale-review` for settled
   persistent reviews after filesystem drift. Preserve the original review and
@@ -339,3 +341,5 @@ All notable public changes to RelayPact are recorded here.
 [0.3.5]: https://github.com/echopath-labs/relaypact/compare/v0.3.4...v0.3.5
 
 [0.3.6]: https://github.com/echopath-labs/relaypact/compare/v0.3.5...v0.3.6
+
+[0.3.7]: https://github.com/echopath-labs/relaypact/compare/v0.3.6...v0.3.7
