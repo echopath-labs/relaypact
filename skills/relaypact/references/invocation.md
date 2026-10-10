@@ -110,6 +110,14 @@ Cursor correction resumes only the protected original session and never adds a
 model flag. It also reuses the exact executor command bound to the original
 session; an explicit mismatched override is refused. Terminal decision rechecks the signed direct-worktree review basis,
 archives no raw session handle, and leaves source changes untouched.
+For a settled stale review caused only by filesystem edits, explicitly use
+`decide-cursor --action abandon --retire-stale-review`. This archives the original
+review and drift fingerprints as `abandoned`, with acceptance eligibility false.
+HEAD, branch, Git controls and index must remain unchanged. Further drift during
+archival, unknown execution completion, invalid signatures and live leases still
+block retirement. Ordinary stale accept/reject/abandon and correction remain
+refused; the option neither refreshes evidence nor reverts files. Use the same
+action, actor and archive root for cleanup retries.
 An explicit `abandon` may clean a prepared task or a failed task with signed
 execution-completion evidence. It refuses with `task_state_busy` while an active
 execution lease still has a live owner, and with `execution_stop_unverified`

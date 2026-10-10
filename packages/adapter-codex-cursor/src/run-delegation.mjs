@@ -197,7 +197,7 @@ export async function correctDelegation(taskRoot, prompt, options = {}) {
   };
 }
 
-export async function decideDelegation(taskRoot, action, actor, archiveRoot) {
+export async function decideDelegation(taskRoot, action, actor, archiveRoot, options = {}) {
   const prepared = await loadDirectDelegation(taskRoot, ROUTE);
-  return decideDirectDelegation(prepared, action, actor, archiveRoot);
+  return decideDirectDelegation(prepared, action, actor, archiveRoot, options);
 }

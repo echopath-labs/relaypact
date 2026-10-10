@@ -4,6 +4,14 @@ All notable public changes to RelayPact are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+- Add explicit `decide-cursor --action abandon --retire-stale-review` for settled
+  persistent reviews after filesystem drift. Preserve the original review and
+  drift fingerprints in a non-accepting archive, retain Git identity/control,
+  signature, lease, concurrency and retry safeguards, and keep stale acceptance
+  and correction refused. This requires signed execution-completion evidence;
+  Git metadata drift remains blocked. ([#39](https://github.com/echopath-labs/relaypact/issues/39))
+
 ## [0.3.6] - 2026-09-24 - Release
 
 ### Added

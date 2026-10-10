@@ -22,7 +22,7 @@ function usage() {
     "  relaypact run-pi --envelope <file> [--executor <pi-path>]  # experimental",
     "  relaypact run-cursor --envelope <file> [--executor <cursor-path>] [--read-only] [--state-root <dir> --host-instance <id>]  # experimental",
     "  relaypact correct-cursor --task-root <dir> --prompt <file> [--executor <cursor-path>]  # experimental",
-    "  relaypact decide-cursor --task-root <dir> --action <accept|reject|abandon> --actor <id> --archive-root <dir>  # experimental"
+    "  relaypact decide-cursor --task-root <dir> --action <accept|reject|abandon> --actor <id> --archive-root <dir> [--retire-stale-review]  # experimental; retirement requires abandon"
   ].join("\n");
 }
 
@@ -36,6 +36,10 @@ function parseArgs(argv) {
   for (let index = 1; index < argv.length; index += 1) {
     const key = argv[index];
     const value = argv[index + 1];
+    if (key === "--retire-stale-review") {
+      options.retireStaleReview = true;
+      continue;
+    }
     if (key === "--read-only") {
       options.readOnly = true;
       continue;
@@ -58,6 +62,9 @@ function parseArgs(argv) {
     index += 1;
   }
   if (command === "support" && argv.length !== 1) throw new Error(usage());
+  if (options.retireStaleReview && (command !== "decide-cursor" || options.action !== "abandon")) {
+    throw new Error("--retire-stale-review requires decide-cursor --action abandon.");
+  }
   if (command === "doctor") {
     options.route ??= "codex-codex";
     if (!["codex-codex", "codex-pi", "codex-cursor", ...Object.keys(WORKBUDDY_ROUTES)].includes(options.route)) throw new Error(usage());
@@ -216,7 +223,8 @@ async function decideCursor(options) {
     resolve(options.taskRoot),
     options.action,
     options.actor,
-    resolve(options.archiveRoot)
+    resolve(options.archiveRoot),
+    { retireStaleReview: options.retireStaleReview === true }
   );
 }
 

@@ -36,7 +36,8 @@ import {
 } from "../packages/core/src/direct-lifecycle.mjs";
 import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mjs";
 import { createSignedStateStore } from "../packages/core/src/signed-state.mjs";
-import { assertRepositoryLinks, snapshotFilesystem } from "../packages/core/src/filesystem-evidence.mjs";
+import { assertRepositoryLinks, snapshotFilesystem, snapshotGitControls } from "../packages/core/src/filesystem-evidence.mjs";
+import { snapshotGitIndex } from "../packages/core/src/git.mjs";
 
 const fakeCursorLauncherSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.sh", import.meta.url));
 const fakeCursorImplementationSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.mjs", import.meta.url));
@@ -1142,6 +1143,169 @@ test("Cursor terminal decision refuses candidate drift after persistent review",
     await rm(stateRoot, { recursive: true, force: true });
     await rm(archiveRoot, { recursive: true, force: true });
   }
+});
+
+async function staleRetirementFixture(t, correction = false) {
+  const root = await createGitRepository(), stateRoot = await createDirectory(), archiveRoot = await createDirectory();
+  t.after(async () => { for (const directory of [root, stateRoot, archiveRoot]) await rm(directory, { recursive: true, force: true }); });
+  const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-read-only", scope: { allowedPaths: [] }, validation: [] }), {
+    executorCommand: fakeCursor, stateRoot, hostInstanceId: "host"
+  });
+  if (correction) {
+    const corrected = await correctDelegation(first.taskRoot, "Complete the same read-only review.");
+    first.evidence = corrected.evidence;
+  }
+  const prepared = await loadDirectDelegation(first.taskRoot);
+  const originalReview = JSON.parse(await readFile(first.evidence.reviewPath, "utf8"));
+  await writeFile(path.join(root, "host-doc.md"), "authorized Host documentation edit\n");
+  return { root, stateRoot, archiveRoot, first, prepared, originalReview };
+}
+
+test("stale review retirement explicitly abandons a corrected task without accepting, refreshing or reverting evidence", async (t) => {
+  const { root, archiveRoot, first, prepared, originalReview } = await staleRetirementFixture(t, true);
+  assert.equal(originalReview.correctionSequence, 1);
+  for (const action of ["accept", "reject", "abandon"]) {
+    await assert.rejects(decideDelegation(first.taskRoot, action, "host", archiveRoot), { code: "stale_review" });
+  }
+  await assert.rejects(authorizeDirectCorrection(prepared, "Review again."), { code: "stale_review" });
+  const before = await snapshotFilesystem(root, { exclude: [".git"] });
+  const controls = await snapshotGitControls(root, { excludeIndexes: true }), index = await snapshotGitIndex(root);
+  const args = [cli, "decide-cursor", "--task-root", first.taskRoot, "--action", "abandon", "--actor", "host", "--archive-root", archiveRoot, "--retire-stale-review"];
+  const result = JSON.parse((await execFileAsync(process.execPath, args)).stdout);
+  assert.equal(result.lifecycleState, "abandoned");
+  assert.deepEqual(result.acceptance, { status: "abandoned", eligible: false, decidedBy: "host" });
+  const archived = JSON.parse(await readFile(result.archive.reviewPath, "utf8"));
+  assert.deepEqual(archived.staleReviewRetirement.originalReview, originalReview);
+  assert.equal(archived.staleReviewRetirement.reason, "filesystem_changed_after_review");
+  assert.equal(archived.staleReviewRetirement.observedFilesystemFingerprint, before.fingerprint);
+  assert.equal(archived.staleReviewRetirement.reviewedFilesystemFingerprint, prepared.state.reviewFilesystemFingerprint);
+  assert.notEqual(before.fingerprint, prepared.state.reviewFilesystemFingerprint);
+  assert.doesNotMatch(JSON.stringify(archived), /fixture-cursor-session/u);
+  assert.equal((await snapshotFilesystem(root, { exclude: [".git"] })).fingerprint, before.fingerprint);
+  assert.equal((await snapshotGitControls(root, { excludeIndexes: true })).fingerprint, controls.fingerprint);
+  assert.equal((await snapshotGitIndex(root)).fingerprint, index.fingerprint);
+  assert.equal(await readFile(path.join(root, "host-doc.md"), "utf8"), "authorized Host documentation edit\n");
+  await assert.rejects(access(first.taskRoot), { code: "ENOENT" });
+  assert.deepEqual(JSON.parse((await execFileAsync(process.execPath, args)).stdout), result);
+});
+
+for (const hazard of ["accept", "reject", "unchanged", "unsettled", "legacy", "signature", "review", "task-root", "archive", "archive-symlink", "index", "git-control", "HEAD", "branch", "live-lock"]) {
+  test(`stale review retirement refuses ${hazard}`, async (t) => {
+    const { root, stateRoot, archiveRoot, first, prepared } = await staleRetirementFixture(t);
+    let targetArchive = archiveRoot;
+    const signedStore = createSignedStateStore(first.statePath, () => {});
+    const codes = {
+      accept: "invalid_host_action", reject: "invalid_host_action", unchanged: "stale_review_required",
+      unsettled: "execution_stop_unverified", legacy: "execution_stop_unverified", signature: "task_state_unavailable",
+      review: "review_identity_mismatch", "task-root": "task_state_mismatch", archive: "invalid_archive_root",
+      "archive-symlink": "invalid_archive_root",
+      index: "stale_review", "git-control": "stale_review", HEAD: "stale_review", branch: "stale_review", "live-lock": "task_state_busy"
+    };
+    if (hazard === "unchanged") await rm(path.join(root, "host-doc.md"));
+    if (["unsettled", "legacy"].includes(hazard)) {
+      const state = { ...prepared.state, executionSettled: false };
+      if (hazard === "legacy") delete state.executionSettled;
+      await signedStore.persist(state);
+    }
+    if (hazard === "signature") await writeFile(first.statePath, JSON.stringify({ ...prepared.state, hostInstanceId: "forged" }));
+    if (hazard === "review") {
+      const review = JSON.parse(await readFile(first.evidence.reviewPath, "utf8"));
+      review.executionResult.summary = "forged";
+      await writeFile(first.evidence.reviewPath, JSON.stringify(review));
+    }
+    if (hazard === "task-root") {
+      await rename(first.taskRoot, first.taskRoot + "-original"); await mkdir(first.taskRoot);
+      for (const file of ["state.json", "task-envelope.json", "initial-filesystem.json"]) await copyFile(path.join(first.taskRoot + "-original", file), path.join(first.taskRoot, file));
+    }
+    if (hazard === "archive") targetArchive = root;
+    if (hazard === "archive-symlink") { targetArchive = path.join(stateRoot, "archive-link"); await symlink(archiveRoot, targetArchive); }
+    if (hazard === "index") execFileSync("git", ["add", "host-doc.md"], { cwd: root });
+    if (hazard === "git-control") execFileSync("git", ["config", "test.retirement", "changed"], { cwd: root });
+    if (hazard === "HEAD") execFileSync("git", ["commit", "--allow-empty", "-m", "external commit"], { cwd: root, stdio: "ignore" });
+    if (hazard === "branch") execFileSync("git", ["switch", "-c", "external-branch"], { cwd: root, stdio: "ignore" });
+    const decision = () => decideDelegation(first.taskRoot, ["accept", "reject"].includes(hazard) ? hazard : "abandon", "host", targetArchive, { retireStaleReview: true });
+    if (hazard === "live-lock") await signedStore.withLock(async () => assert.rejects(decision(), { code: codes[hazard] }));
+    else await assert.rejects(decision(), { code: codes[hazard] });
+    assert.deepEqual(await readdir(archiveRoot), []);
+    await access(first.taskRoot);
+  });
+}
+
+for (const phase of ["beforeFinalBasisCheck", "afterTerminalStateCommit"]) {
+  test(`stale review retirement refuses further drift at ${phase} and remains retryable`, async (t) => {
+    const { root, archiveRoot, first, prepared } = await staleRetirementFixture(t);
+    await assert.rejects(finalizeDirectTerminalDecision(prepared, "abandon", "host", archiveRoot, {
+      retireStaleReview: true,
+      [phase]: () => writeFile(path.join(root, "host-doc.md"), "additional edit\n")
+    }), { code: "stale_review" });
+    assert.equal((await loadDirectDelegation(first.taskRoot)).state.lifecycleState, "awaiting_review");
+    assert.deepEqual(await readdir(archiveRoot), []);
+    const result = await decideDelegation(first.taskRoot, "abandon", "host", archiveRoot, { retireStaleReview: true });
+    assert.equal(result.lifecycleState, "abandoned");
+    assert.equal(await readFile(path.join(root, "host-doc.md"), "utf8"), "additional edit\n");
+  });
+}
+
+test("stale review retirement partial cleanup verifies archive, actor and directory on retry", async (t) => {
+  const { root, archiveRoot, first, prepared, originalReview } = await staleRetirementFixture(t);
+  await assert.rejects(finalizeDirectTerminalDecision(prepared, "abandon", "host", archiveRoot, {
+    retireStaleReview: true,
+    async removeTask(taskRoot) { await rm(path.join(taskRoot, "state.json")); throw new Error("injected removal failure"); }
+  }), /injected removal failure/u);
+  await writeFile(path.join(root, "host-doc.md"), "later independent work\n");
+  await assert.rejects(decideDelegation(first.taskRoot, "abandon", "different-host", archiveRoot), { code: "cleanup_refused" });
+  await assert.rejects(decideDelegation(first.taskRoot, "accept", "host", archiveRoot), { code: "cleanup_refused" });
+  const reviewFile = path.join(archiveRoot, (await readdir(archiveRoot))[0], "host-review.json");
+  const bytes = await readFile(reviewFile);
+  await writeFile(reviewFile, "{}");
+  await assert.rejects(decideDelegation(first.taskRoot, "abandon", "host", archiveRoot), { code: "archive_verification_failed" });
+  await writeFile(reviewFile, bytes);
+  await rename(first.taskRoot, first.taskRoot + "-original"); await mkdir(first.taskRoot);
+  await writeFile(path.join(first.taskRoot, "unrelated.txt"), "keep");
+  await assert.rejects(decideDelegation(first.taskRoot, "abandon", "host", archiveRoot), { code: "cleanup_refused" });
+  assert.equal(await readFile(path.join(first.taskRoot, "unrelated.txt"), "utf8"), "keep");
+  await rm(first.taskRoot, { recursive: true }); await rename(first.taskRoot + "-original", first.taskRoot);
+  const result = await decideDelegation(first.taskRoot, "abandon", "host", archiveRoot);
+  assert.equal(result.lifecycleState, "abandoned");
+  assert.deepEqual(JSON.parse(await readFile(reviewFile)).staleReviewRetirement.originalReview, originalReview);
+  assert.equal(await readFile(path.join(root, "host-doc.md"), "utf8"), "later independent work\n");
+  assert.equal((await readdir(archiveRoot)).length, 1);
+  assert.deepEqual(await decideDelegation(first.taskRoot, "abandon", "host", archiveRoot), result);
+});
+
+test("stale review retirement serializes competing decisions", async (t) => {
+  const { archiveRoot, first } = await staleRetirementFixture(t);
+  const outcomes = await Promise.allSettled(["host-a", "host-b"].map(actor => (
+    decideDelegation(first.taskRoot, "abandon", actor, archiveRoot, { retireStaleReview: true })
+  )));
+  assert.equal(outcomes.filter(item => item.status === "fulfilled").length, 1);
+  assert.equal(outcomes.filter(item => item.status === "rejected").length, 1);
+  assert.equal((await readdir(archiveRoot)).length, 1);
+});
+
+test("stale review retirement prepared receipt cannot use a missing cleanup proof after further drift", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async (t) => {
+  const { root, stateRoot, archiveRoot, first, prepared, originalReview } = await staleRetirementFixture(t);
+  const integrityRoot = path.join(stateRoot, ".relaypact-integrity");
+  t.after(() => chmod(integrityRoot, 0o700).catch(() => {}));
+  await assert.rejects(finalizeDirectTerminalDecision(prepared, "abandon", "host", archiveRoot, {
+    retireStaleReview: true, afterTerminalStateCommit: () => chmod(integrityRoot, 0o500)
+  }), { code: "EACCES" });
+  await chmod(integrityRoot, 0o700);
+  const receiptName = (await readdir(integrityRoot)).find(name => name.endsWith(".cleanup.json"));
+  assert.equal(JSON.parse(await readFile(path.join(integrityRoot, receiptName))).phase, "prepared");
+  const signedStore = createSignedStateStore(first.statePath, () => {});
+  const authorized = await signedStore.read();
+  const incomplete = { ...authorized, stateRevision: authorized.stateRevision - 1 };
+  delete incomplete.cleanupAuthorization;
+  await signedStore.persist(incomplete);
+  await writeFile(path.join(root, "host-doc.md"), "later independent work\n");
+  await assert.rejects(decideDelegation(first.taskRoot, "abandon", "host", archiveRoot), { code: "stale_review" });
+  await access(first.taskRoot);
+  await signedStore.persist(authorized);
+  const result = await decideDelegation(first.taskRoot, "abandon", "host", archiveRoot);
+  assert.equal(result.lifecycleState, "abandoned");
+  assert.deepEqual(JSON.parse(await readFile(result.archive.reviewPath)).staleReviewRetirement.originalReview, originalReview);
+  assert.equal(await readFile(path.join(root, "host-doc.md"), "utf8"), "later independent work\n");
 });
 
 test("Cursor terminal decision remains pending when evidence changes during archival", async () => {
