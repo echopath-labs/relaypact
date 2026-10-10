@@ -254,6 +254,32 @@ async function assertReviewBasis(state) {
   return evidence;
 }
 
+async function staleReviewRetirement(state, review) {
+  if (state.executionSettled !== true) {
+    throw new DelegationError("execution_stop_unverified", "Stale review retirement requires signed execution-completion evidence.");
+  }
+  const evidence = await currentEvidence(state.repositoryRoot, state.filesystemEvidenceMaxBytes);
+  // Only filesystem drift may be retired. Git identity/controls remain bound
+  // to the original review, and the observed filesystem is frozen for cleanup.
+  await assertReviewBasis({ ...state, reviewFilesystemFingerprint: evidence.filesystem.fingerprint });
+  await assertRepositoryLinks(state.repositoryRoot, evidence.filesystem);
+  if (evidence.filesystem.fingerprint === state.reviewFilesystemFingerprint) {
+    throw new DelegationError("stale_review_required", "The review is unchanged; use ordinary abandonment without stale retirement.");
+  }
+  return {
+    reason: "filesystem_changed_after_review",
+    reviewedFilesystemFingerprint: state.reviewFilesystemFingerprint,
+    observedFilesystemFingerprint: evidence.filesystem.fingerprint,
+    originalReview: review
+  };
+}
+
+async function assertTerminalReviewBasis(state, review) {
+  return assertReviewBasis(review.staleReviewRetirement ? {
+    ...state, reviewFilesystemFingerprint: review.staleReviewRetirement.observedFilesystemFingerprint
+  } : state);
+}
+
 async function transition(statePath, expected, next, updates = {}) {
   return store(statePath).withLock(async ({ read, persist }) => {
     const state = await read();
@@ -599,7 +625,7 @@ async function finishCleanup(prepared, record, options = {}) {
     }
     // A signed authorization records the successful post-commit basis check.
     // Older/incomplete decisions must still prove their mutable review basis.
-    if (record.outcome.review && !authorized) await assertReviewBasis(state);
+    if (record.outcome.review && !authorized) await assertTerminalReviewBasis(state, document);
     record = await writeCleanupRecord(prepared.statePath, { ...record, phase: "ready" });
   }
   const info = await lstat(prepared.taskRoot).catch(error => { if (error.code === "ENOENT") return null; throw error; });
@@ -753,17 +779,18 @@ function directTerminalDecision(action, actor) {
   return decision;
 }
 
-function bindDirectTerminalReview(review, terminal, decision, actor) {
+function bindDirectTerminalReview(review, terminal, decision, actor, retirement) {
   const executionResult = {
     ...review.executionResult,
     hostAcceptance: {
       status: decision.acceptance,
-      eligible: review.executionResult.hostAcceptance.eligible,
+      eligible: retirement ? false : review.executionResult.hostAcceptance.eligible,
       decidedBy: actor
     }
   };
   const unsigned = {
     ...reviewIdentityInput(review),
+    ...(retirement ? { staleReviewRetirement: retirement } : {}),
     lifecycleState: terminal.lifecycleState,
     executionResult
   };
@@ -869,6 +896,9 @@ export async function abandonAndCleanupInterruptedDirectTask(prepared, actor, ar
 
 export async function finalizeDirectTerminalDecision(prepared, action, actor, archiveRootInput, options = {}) {
   const decision = directTerminalDecision(action, actor);
+  if (options.retireStaleReview && action !== "abandon") {
+    throw new DelegationError("invalid_host_action", "Stale review retirement is only available for explicit abandonment.");
+  }
   const archiveRoot = await validateDirectArchiveRoot(prepared, archiveRootInput);
   return store(prepared.statePath).withLock(async ({ read, persist }) => {
     const state = await read();
@@ -876,7 +906,8 @@ export async function finalizeDirectTerminalDecision(prepared, action, actor, ar
       throw new DelegationError("invalid_lifecycle_transition", `Cannot finalize direct delegation while it is ${state.lifecycleState}.`);
     }
     const review = validateReview(await readJson(reviewPath(prepared.taskRoot, state.correctionSequence)), state);
-    await assertReviewBasis(state);
+    const retirement = options.retireStaleReview ? await staleReviewRetirement(state, review) : null;
+    if (!retirement) await assertReviewBasis(state);
     if (action === "accept" && review.executionResult.hostAcceptance.eligible !== true) {
       throw new DelegationError("acceptance_ineligible", "Host acceptance is refused because current evidence is not eligible.");
     }
@@ -892,7 +923,7 @@ export async function finalizeDirectTerminalDecision(prepared, action, actor, ar
       lifecycleState: decision.lifecycleState,
       stateRevision: state.stateRevision + 1
     };
-    const terminalReview = bindDirectTerminalReview(review, terminalCandidate, decision, actor);
+    const terminalReview = bindDirectTerminalReview(review, terminalCandidate, decision, actor, retirement);
     const archivePath = path.join(archiveRoot, `review-${randomUUID()}`);
     const reviewFile = path.join(archivePath, "host-review.json");
     let terminal;
@@ -908,13 +939,13 @@ export async function finalizeDirectTerminalDecision(prepared, action, actor, ar
         throw new DelegationError("archive_verification_failed", "Archived direct-worktree review changed before terminal decision.");
       }
       await options.beforeFinalBasisCheck?.();
-      await assertReviewBasis(state);
+      await assertTerminalReviewBasis(state, terminalReview);
       recovery = cleanupRecord(prepared, terminalCandidate, action, actor, archiveRoot,
         { review: terminalReview, archive: { archivePath, reviewPath: reviewFile } });
       await writeCleanupRecord(prepared.statePath, recovery);
       terminal = await persist(terminalCandidate, { expectedRevision: state.stateRevision });
       await options.afterTerminalStateCommit?.();
-      await assertReviewBasis(state);
+      await assertTerminalReviewBasis(state, terminalReview);
       terminal = await persist({
         ...terminal,
         cleanupAuthorization: recovery.documentFingerprint,

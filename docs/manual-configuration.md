@@ -546,6 +546,31 @@ A retry can then finish cleanup after later repository edits, without repeating
 acceptance. A prepared receipt without that proof still requires a current
 review-basis check.
 
+If a settled `awaiting_review` task becomes stale after Host/user file edits,
+ordinary `accept`, `reject`, `abandon`, and correction still refuse the old
+basis. To retire it without judging or accepting the changed workspace, use:
+
+```bash
+node ./bin/relaypact.mjs decide-cursor \
+  --task-root /absolute/private/relaypact-cursor-state/task-... \
+  --action abandon --retire-stale-review \
+  --actor coordinating-codex-instance \
+  --archive-root /absolute/private/relaypact-cursor-archive
+```
+
+This opt-in permits filesystem drift only; HEAD, branch, Git controls and index
+must still match the signed review. It requires signed execution completion,
+preserves the original verified review and old/observed filesystem fingerprints
+under `staleReviewRetirement`, and records `abandoned` with `eligible: false`.
+It does not attribute external edits to the executor or certify them as
+authorized. Normal `reject` remains a judgment against fresh review evidence;
+stale retirement is abandonment without a fresh acceptance decision.
+Further drift during archival is refused and leaves the review retryable.
+The same archive/actor/task-identity checks and partial-cleanup recovery apply.
+Source files and Git state are preserved; no rollback, model call or correction
+occurs. Old tasks with missing settlement proof and tasks with Git drift remain
+blocked. Preserve them for separate recovery rather than editing signed state.
+
 Local execution refuses repository symlinks that resolve outside the repository,
 are dangling, cyclic, or change during the check. It also refuses regular files
 with multiple hard links, including internal aliases, because another name for
