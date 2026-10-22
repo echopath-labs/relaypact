@@ -17,6 +17,7 @@ import {
   resolveRepository,
   snapshotGitIndex
 } from "./git.mjs";
+import { checkpointObservationFingerprint, persistCheckpointBaseline, verifyCheckpointEvidence } from "./checkpoint-evidence.mjs";
 import { canonicalize, createSignedStateStore, keyedFingerprint } from "./signed-state.mjs";
 
 const STATES = new Set([
@@ -230,33 +231,44 @@ function validateReview(review, state) {
   return review;
 }
 
-async function currentEvidence(repositoryRoot, maxBytes = DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES) {
+async function currentEvidence(repositoryRoot, maxBytes = DEFAULT_FILESYSTEM_EVIDENCE_MAX_BYTES, includeDirectories = false) {
   const [git, filesystem, gitControl, gitIndex] = await Promise.all([
     collectGitState(repositoryRoot),
     snapshotFilesystem(repositoryRoot, { exclude: [".git"], maxBytes }),
-    snapshotGitControls(repositoryRoot, { excludeIndexes: true }),
+    snapshotGitControls(repositoryRoot, { excludeIndexes: true, includeDirectories }),
     snapshotGitIndex(repositoryRoot)
   ]);
   return { git, filesystem, gitControl, gitIndex };
 }
 
-async function assertReviewBasis(state) {
-  const evidence = await currentEvidence(state.repositoryRoot, state.filesystemEvidenceMaxBytes);
+async function assertReviewBasis(state, checkpoint) {
+  const evidence = await currentEvidence(state.repositoryRoot, state.filesystemEvidenceMaxBytes, Boolean(checkpoint));
   const mismatches = [];
   if (evidence.git.head !== state.head) mismatches.push("HEAD");
   if (evidence.git.branch !== state.branch) mismatches.push("branch");
   if (evidence.filesystem.fingerprint !== state.reviewFilesystemFingerprint) mismatches.push("filesystem");
   if (evidence.gitControl.fingerprint !== state.reviewGitControlFingerprint) mismatches.push("git-control");
   if (evidence.gitIndex.fingerprint !== state.reviewGitIndexFingerprint) mismatches.push("git-index");
+  if (checkpoint && checkpointObservationFingerprint(evidence.gitControl) !== checkpoint.approval.observationFingerprint) mismatches.push("checkpoint-controls");
   if (mismatches.length > 0) {
     throw new DelegationError("stale_review", `Candidate evidence changed after review: ${mismatches.join(", ")}.`);
   }
   return evidence;
 }
 
-async function staleReviewRetirement(state, review) {
+async function staleReviewRetirement(state, review, prepared, actor, checkpointEvidence) {
   if (state.executionSettled !== true) {
     throw new DelegationError("execution_stop_unverified", "Stale review retirement requires signed execution-completion evidence.");
+  }
+  if (checkpointEvidence !== undefined) {
+    const checkpoint = await verifyCheckpointEvidence(prepared, state, actor, checkpointEvidence);
+    const evidence = await assertReviewBasis({ ...state,
+      reviewFilesystemFingerprint: checkpoint.approval.filesystemFingerprint,
+      reviewGitControlFingerprint: checkpoint.observedControls.fingerprint
+    }, checkpoint);
+    await assertRepositoryLinks(state.repositoryRoot, evidence.filesystem);
+    return { reason: "checkpoint_added_after_review", reviewedFilesystemFingerprint: state.reviewFilesystemFingerprint,
+      observedFilesystemFingerprint: evidence.filesystem.fingerprint, originalReview: review, checkpoint };
   }
   const evidence = await currentEvidence(state.repositoryRoot, state.filesystemEvidenceMaxBytes);
   // Only filesystem drift may be retired. Git identity/controls remain bound
@@ -276,8 +288,9 @@ async function staleReviewRetirement(state, review) {
 
 async function assertTerminalReviewBasis(state, review) {
   return assertReviewBasis(review.staleReviewRetirement ? {
-    ...state, reviewFilesystemFingerprint: review.staleReviewRetirement.observedFilesystemFingerprint
-  } : state);
+    ...state, reviewFilesystemFingerprint: review.staleReviewRetirement.observedFilesystemFingerprint,
+    ...(review.staleReviewRetirement.checkpoint ? { reviewGitControlFingerprint: review.staleReviewRetirement.checkpoint.observedControls.fingerprint } : {})
+  } : state, review.staleReviewRetirement?.checkpoint);
 }
 
 async function transition(statePath, expected, next, updates = {}) {
@@ -425,7 +438,7 @@ async function recordDirectDelegationResultLocked(prepared, executionResult, ses
   ) {
     throw new DelegationError("executor_session_mismatch", "Protected executor session, executable, and digest evidence are inconsistent.");
   }
-  const basis = await currentEvidence(prepared.repository.gitRoot, filesystemEvidenceMaxBytes(prepared.envelope));
+  const basis = await currentEvidence(prepared.repository.gitRoot, filesystemEvidenceMaxBytes(prepared.envelope), true);
   const cumulativePaths = directChangedPaths(prepared, basis);
   const retainedPaths = [...new Set(executionResult.changedPaths ?? [])].sort();
   const cumulativeBreaches = evaluatePathScope(retainedPaths, prepared.envelope.scope);
@@ -477,6 +490,8 @@ async function recordDirectDelegationResultLocked(prepared, executionResult, ses
   };
   const candidateReview = bindReview(unsignedState, normalizedResult);
   await writeReviewJson(evidencePath, candidateReview);
+  await persistCheckpointBaseline(prepared,
+    { ...unsignedState, reviewFingerprint: candidateReview.reviewIdentity.fingerprint }, basis.gitControl);
   const state = await persist({
     ...unsignedState,
     reviewFingerprint: candidateReview.reviewIdentity.fingerprint
@@ -896,6 +911,7 @@ export async function abandonAndCleanupInterruptedDirectTask(prepared, actor, ar
 
 export async function finalizeDirectTerminalDecision(prepared, action, actor, archiveRootInput, options = {}) {
   const decision = directTerminalDecision(action, actor);
+  if (options.checkpointEvidence !== undefined && (!options.retireStaleReview || action !== "abandon")) throw new DelegationError("invalid_host_action", "Checkpoint evidence requires explicit stale abandonment.");
   if (options.retireStaleReview && action !== "abandon") {
     throw new DelegationError("invalid_host_action", "Stale review retirement is only available for explicit abandonment.");
   }
@@ -906,7 +922,7 @@ export async function finalizeDirectTerminalDecision(prepared, action, actor, ar
       throw new DelegationError("invalid_lifecycle_transition", `Cannot finalize direct delegation while it is ${state.lifecycleState}.`);
     }
     const review = validateReview(await readJson(reviewPath(prepared.taskRoot, state.correctionSequence)), state);
-    const retirement = options.retireStaleReview ? await staleReviewRetirement(state, review) : null;
+    const retirement = options.retireStaleReview ? await staleReviewRetirement(state, review, prepared, actor, options.checkpointEvidence) : null;
     if (!retirement) await assertReviewBasis(state);
     if (action === "accept" && review.executionResult.hostAcceptance.eligible !== true) {
       throw new DelegationError("acceptance_ineligible", "Host acceptance is refused because current evidence is not eligible.");

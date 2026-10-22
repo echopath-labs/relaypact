@@ -38,6 +38,7 @@ import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mj
 import { createSignedStateStore } from "../packages/core/src/signed-state.mjs";
 import { assertRepositoryLinks, snapshotFilesystem, snapshotGitControls } from "../packages/core/src/filesystem-evidence.mjs";
 import { snapshotGitIndex } from "../packages/core/src/git.mjs";
+import { assertPackedRefsUnshadowed, checkpointObservationFingerprint } from "../packages/core/src/checkpoint-evidence.mjs";
 
 const fakeCursorLauncherSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.sh", import.meta.url));
 const fakeCursorImplementationSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.mjs", import.meta.url));
@@ -1145,9 +1146,10 @@ test("Cursor terminal decision refuses candidate drift after persistent review",
   }
 });
 
-async function staleRetirementFixture(t, correction = false) {
+async function staleRetirementFixture(t, correction = false, seed) {
   const root = await createGitRepository(), stateRoot = await createDirectory(), archiveRoot = await createDirectory();
   t.after(async () => { for (const directory of [root, stateRoot, archiveRoot]) await rm(directory, { recursive: true, force: true }); });
+  await seed?.(root);
   const first = await runDelegation(makeEnvelope(root, { taskId: "cursor-read-only", scope: { allowedPaths: [] }, validation: [] }), {
     executorCommand: fakeCursor, stateRoot, hostInstanceId: "host"
   });
@@ -2484,5 +2486,222 @@ for (const [name, stderr, recognized, overrides] of [
       assert.equal(serialized.includes(secret), false, secret);
     }
     assert.ok(result.executor.summary.length < 300);
+  });
+}
+
+async function checkpointFixture(t, existingRef = false, directRef = false) {
+  const f = await staleRetirementFixture(t, true, typeof existingRef === "function" ? existingRef : existingRef ? root => execFileSync("git", ["update-ref", "refs/aux-checkpoints/existing/1", execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim()], { cwd: root }) : undefined);
+  const git = (args, input) => execFileSync("git", args, { cwd: f.root, input, encoding: "utf8" }).trim();
+  const ref = "refs/aux-checkpoints/practice/1";
+  const saved = JSON.parse(await readFile(path.join(f.first.taskRoot, "evidence", "git-controls-1.json")));
+  const blob = git(["hash-object", "-w", "--stdin"], "synthetic checkpoint\n");
+  const tree = git(["mktree"], `100644 blob ${blob}\tcheckpoint.txt\n`);
+  const commit = git(["commit-tree", tree, "-p", git(["rev-parse", "HEAD"]), "-m", "synthetic checkpoint"]);
+  if (directRef) { await mkdir(path.dirname(path.join(f.root, ".git", ref)), { recursive: true }); await writeFile(path.join(f.root, ".git", ref), `${commit}\n`); }
+  else git(["update-ref", ref, commit]);
+  async function proof(refs = [ref]) {
+    const controls = await snapshotGitControls(f.root, { excludeIndexes: true, includeDirectories: true });
+    const old = new Set([...saved.controls.entries, ...saved.controls.directories].map(entry => entry.path));
+    return { schemaVersion: "1.0.0", stateIntegrity: f.prepared.state.integrity, actor: "host", reason: "Approve synthetic checkpoint additions only",
+      filesystemFingerprint: (await snapshotFilesystem(f.root, { exclude: [".git"] })).fingerprint,
+      observationFingerprint: checkpointObservationFingerprint(controls), checkpointRefs: refs,
+      addedPaths: [...controls.entries, ...controls.directories].filter(entry => !old.has(entry.path)).map(entry => entry.path.replace(/^store-[a-f0-9]+\//u, "")) };
+  }
+  return { ...f, git, ref, blob, tree, commit, saved, proof };
+}
+
+async function checkpointCurrent(f) {
+  return { state: await readFile(f.first.statePath), review: await readFile(f.first.evidence.reviewPath),
+    controls: checkpointObservationFingerprint(await snapshotGitControls(f.root, { excludeIndexes: true, includeDirectories: true })),
+    filesystem: (await snapshotFilesystem(f.root, { exclude: [".git"] })).fingerprint, index: (await snapshotGitIndex(f.root)).fingerprint };
+}
+
+test("checkpoint retirement CLI preserves approved corrected review and all repository data", async t => {
+  const f = await checkpointFixture(t), proof = await f.proof(), before = await checkpointCurrent(f);
+  for (const action of ["accept", "reject", "abandon"]) await assert.rejects(decideDelegation(f.first.taskRoot, action, "host", f.archiveRoot), { code: "stale_review" });
+  await assert.rejects(decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, { retireStaleReview: true }), { code: "stale_review" });
+  const file = path.join(f.stateRoot, "checkpoint.json"); await writeFile(file, JSON.stringify(proof), { mode: 0o600 });
+  const args = [cli, "decide-cursor", "--task-root", f.first.taskRoot, "--action", "abandon", "--actor", "host", "--archive-root", f.archiveRoot, "--retire-stale-review", "--checkpoint-evidence", file];
+  const result = JSON.parse((await execFileAsync(process.execPath, args)).stdout);
+  assert.equal(result.lifecycleState, "abandoned"); assert.equal(result.acceptance.eligible, false);
+  const archive = JSON.parse(await readFile(result.archive.reviewPath));
+  assert.deepEqual(archive.staleReviewRetirement.originalReview, f.originalReview);
+  assert.deepEqual(archive.staleReviewRetirement.checkpoint.originalControls, f.saved.controls);
+  assert.equal(archive.staleReviewRetirement.checkpoint.approval.observationFingerprint, before.controls);
+  assert.equal(checkpointObservationFingerprint(await snapshotGitControls(f.root, { excludeIndexes: true, includeDirectories: true })), before.controls);
+  assert.equal((await snapshotFilesystem(f.root, { exclude: [".git"] })).fingerprint, before.filesystem);
+  assert.equal((await snapshotGitIndex(f.root)).fingerprint, before.index);
+  assert.equal(f.git(["rev-parse", f.ref]), f.commit);
+  assert.deepEqual(JSON.parse((await execFileAsync(process.execPath, args)).stdout), result);
+});
+
+for (const hazard of ["state", "actor", "reason", "paths", "observation", "filesystem", "legacy", "baseline", "unreferenced", "config", "index", "HEAD", "branch", "ref-rewrite", "empty-directory", "directory-replacement", "reserved-ref", "malformed-object", "signature", "unsettled", "live-lock", "proof-symlink", "proof-size", "too-many-refs", "object-hardlink", "commondir", "OID", "proof-permissions"]) {
+  test(`checkpoint retirement refuses ${hazard} and preserves current evidence`, async t => {
+    const f = await checkpointFixture(t, hazard === "ref-rewrite"); let proof = await f.proof();
+    if (hazard === "state") proof.stateIntegrity = "forged";
+    if (hazard === "actor") proof.actor = "other";
+    if (hazard === "reason") proof.reason = "";
+    if (hazard === "paths") proof.addedPaths.pop();
+    if (hazard === "observation") proof.observationFingerprint = "0".repeat(64);
+    if (hazard === "filesystem") proof.filesystemFingerprint = "0".repeat(64);
+    const baseline = path.join(f.first.taskRoot, "evidence", "git-controls-1.json");
+    if (hazard === "legacy") await rm(baseline);
+    if (hazard === "baseline") await writeFile(baseline, JSON.stringify({ ...f.saved, integrity: "forged" }));
+    if (hazard === "unreferenced") f.git(["hash-object", "-w", "--stdin"], "unreferenced blob\n");
+    if (hazard === "config") f.git(["config", "test.checkpoint", "changed"]);
+    if (hazard === "index") { const [mode, oid] = f.git(["ls-files", "-s"]).split("\n")[0].split(/\s+/u); f.git(["update-index", "--add", "--cacheinfo", `${mode},${oid},index-alias.txt`]); }
+    if (hazard === "HEAD") f.git(["commit", "--allow-empty", "-m", "later development"]);
+    if (hazard === "branch") f.git(["switch", "-c", "later-development"]);
+    if (hazard === "ref-rewrite") f.git(["update-ref", "refs/aux-checkpoints/existing/1", f.commit]);
+    if (hazard === "empty-directory") await mkdir(path.join(f.root, ".git", "unapproved-empty"));
+    if (hazard === "directory-replacement") { const fingerprint = (await snapshotGitControls(f.root, { excludeIndexes: true })).fingerprint; await rename(path.join(f.root, ".git/refs/tags"), path.join(f.stateRoot, "original-tags")); await mkdir(path.join(f.root, ".git/refs/tags")); assert.equal((await snapshotGitControls(f.root, { excludeIndexes: true })).fingerprint, fingerprint); }
+    if (hazard === "reserved-ref") { await writeFile(path.join(f.root, ".git/refs/heads/checkpoint"), `${f.commit}\n`); proof = await f.proof([f.ref, "refs/heads/checkpoint"]); }
+    if (hazard === "malformed-object") { const object = path.join(f.root, ".git/objects", f.blob.slice(0, 2), f.blob.slice(2)); await chmod(object, 0o600); await writeFile(object, "malformed"); }
+    if (hazard === "object-hardlink") await link(path.join(f.root, ".git/objects", f.blob.slice(0, 2), f.blob.slice(2)), path.join(f.stateRoot, "shared-object"));
+    if (hazard === "commondir") await writeFile(path.join(f.root, ".git/commondir"), ".\n");
+    if (hazard === "OID") { const old = path.join(f.root, ".git/objects", f.blob.slice(0, 2), f.blob.slice(2)); await chmod(old, 0o600); const { deflateSync } = await import("node:zlib"); await writeFile(old, deflateSync(Buffer.from("blob 1\0x"))); }
+    if (hazard === "proof-permissions") { const file = path.join(f.stateRoot, "proof.json"); await writeFile(file, JSON.stringify(proof)); await chmod(file, 0o644); proof = file; }
+    if (hazard === "signature") await writeFile(f.first.statePath, JSON.stringify({ ...f.prepared.state, hostInstanceId: "forged" }));
+    if (hazard === "unsettled") await createSignedStateStore(f.first.statePath, () => {}).persist({ ...f.prepared.state, executionSettled: false });
+    if (["unreferenced", "config", "index", "HEAD", "branch", "ref-rewrite", "empty-directory", "directory-replacement", "malformed-object", "OID", "commondir"].includes(hazard)) proof = await f.proof();
+    if (hazard === "too-many-refs") { const refs = [f.ref, ...Array.from({ length: 16 }, (_, n) => `refs/aux/r${n}`)]; for (const ref of refs.slice(1)) f.git(["update-ref", ref, f.commit]); proof = await f.proof(refs); }
+    if (hazard === "proof-symlink" || hazard === "proof-size") {
+      const file = path.join(f.stateRoot, "proof.json"); await writeFile(file, hazard === "proof-size" ? JSON.stringify(proof) + " ".repeat(256 * 1024) : JSON.stringify(proof), { mode: 0o600 });
+      if (hazard === "proof-symlink") { await symlink(file, file + ".link"); proof = file + ".link"; } else proof = file;
+    }
+    const before = await checkpointCurrent(f), decide = () => decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, { retireStaleReview: true, checkpointEvidence: proof });
+    if (hazard === "live-lock") await createSignedStateStore(f.first.statePath, () => {}).withLock(async () => assert.rejects(decide(), { code: "task_state_busy" }));
+    else await assert.rejects(decide());
+    assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []);
+  });
+}
+
+for (const phase of ["beforeFinalBasisCheck", "afterTerminalStateCommit"]) {
+  test(`checkpoint retirement refuses full control drift at ${phase}`, async t => {
+    const f = await checkpointFixture(t), proof = await f.proof();
+    await assert.rejects(finalizeDirectTerminalDecision(f.prepared, "abandon", "host", f.archiveRoot, {
+      retireStaleReview: true, checkpointEvidence: proof,
+      [phase]: async () => { await rename(path.join(f.root, ".git/refs/tags"), path.join(f.stateRoot, "original-tags")); await mkdir(path.join(f.root, ".git/refs/tags")); }
+    }), { code: "stale_review" });
+    assert.equal((await loadDirectDelegation(f.first.taskRoot)).state.lifecycleState, "awaiting_review");
+    assert.deepEqual(await readdir(f.archiveRoot), []);
+  });
+}
+
+test("checkpoint retirement partial cleanup keeps signed proof and original retry authority", async t => {
+  const f = await checkpointFixture(t), proof = await f.proof();
+  await assert.rejects(finalizeDirectTerminalDecision(f.prepared, "abandon", "host", f.archiveRoot, {
+    retireStaleReview: true, checkpointEvidence: proof, async removeTask(root) { await rm(path.join(root, "state.json")); throw new Error("partial cleanup"); }
+  }), /partial cleanup/u);
+  f.git(["hash-object", "-w", "--stdin"], "later independent work\n");
+  await assert.rejects(decideDelegation(f.first.taskRoot, "abandon", "other", f.archiveRoot), { code: "cleanup_refused" });
+  const result = await decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot);
+  assert.equal(result.acceptance.eligible, false); assert.equal(f.git(["rev-parse", f.ref]), f.commit);
+});
+
+for (const action of ["accept", "reject", "abandon-without-opt-in"]) {
+  test(`checkpoint retirement option refuses ${action}`, async t => {
+    const f = await checkpointFixture(t);
+    await assert.rejects(decideDelegation(f.first.taskRoot, action.startsWith("abandon") ? "abandon" : action, "host", f.archiveRoot, {
+      retireStaleReview: action !== "abandon-without-opt-in", checkpointEvidence: await f.proof()
+    }), { code: "invalid_host_action" });
+  });
+}
+
+for (const budget of ["object-size", "total-inflated", "graph-depth"]) {
+  test(`checkpoint retirement refuses ${budget} overflow`, async t => {
+    const f = await checkpointFixture(t), { createHash } = await import("node:crypto"), { deflateSync } = await import("node:zlib");
+    let parent = f.commit;
+    for (let n = 0; n < (budget === "graph-depth" ? 257 : budget === "total-inflated" ? 6 : 1); n += 1) {
+      const body = Buffer.from(`tree ${f.tree}\nparent ${parent}\nauthor Fixture <fixture@example.invalid> 1 +0000\ncommitter Fixture <fixture@example.invalid> 1 +0000\n\n` + "x".repeat(budget === "object-size" ? 17 * 1024 * 1024 : budget === "total-inflated" ? 12 * 1024 * 1024 : 1));
+      const object = Buffer.concat([Buffer.from(`commit ${body.length}\0`), body]);
+      parent = createHash("sha1").update(object).digest("hex");
+      const dir = path.join(f.root, ".git/objects", parent.slice(0, 2)); await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, parent.slice(2)), deflateSync(object));
+    }
+    f.git(["update-ref", f.ref, parent]);
+    const before = await checkpointCurrent(f);
+    await assert.rejects(decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, { retireStaleReview: true, checkpointEvidence: await f.proof() }), { code: "checkpoint_evidence_invalid" });
+    assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []);
+  });
+}
+
+test("checkpoint retirement serializes concurrent valid decisions", async t => {
+  const f = await checkpointFixture(t), proof = await f.proof();
+  const results = await Promise.allSettled([1, 2].map(() => decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, { retireStaleReview: true, checkpointEvidence: proof })));
+  assert.equal(results.filter(r => r.status === "fulfilled").length, 1); assert.equal((await readdir(f.archiveRoot)).length, 1);
+});
+
+for (const packedRef of ["refs/aux-checkpoints/practice/1", "refs/aux-checkpoints/practice", "refs/aux-checkpoints/practice/1/child", "refs/aux-checkpoints/PRACTICE/1", "refs/aux-checkpoints/PRACTICE", "refs/aux-checkpoints/PRACTICE/1/CHILD", "refs/aux-checkpoints/unrelated"]) {
+  test(`checkpoint retirement checks packed ref collision ${packedRef}`, async t => {
+    const f = await checkpointFixture(t, root => {
+      execFileSync("git", ["update-ref", packedRef, "HEAD"], { cwd: root });
+      execFileSync("git", ["pack-refs", "--all", "--prune"], { cwd: root });
+    }, true);
+    const before = await checkpointCurrent(f), proof = await f.proof();
+    const decide = () => decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, { retireStaleReview: true, checkpointEvidence: proof });
+    if (packedRef.endsWith("unrelated")) assert.equal((await decide()).acceptance.eligible, false);
+    else { await assert.rejects(decide(), { code: "checkpoint_evidence_invalid" }); assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []); }
+  });
+}
+
+test("checkpoint retirement refuses trailing compressed bytes", async t => {
+  const f = await checkpointFixture(t), file = path.join(f.root, ".git/objects", f.blob.slice(0, 2), f.blob.slice(2));
+  await chmod(file, 0o600); await writeFile(file, Buffer.concat([await readFile(file), Buffer.from("trailing garbage")]));
+  const before = await checkpointCurrent(f);
+  await assert.rejects(decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, { retireStaleReview: true, checkpointEvidence: await f.proof() }), { code: "checkpoint_evidence_invalid" });
+  assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []);
+});
+
+for (const lateParent of [false, true]) {
+  test(`checkpoint retirement follows Git parent ordering (late=${lateParent})`, async t => {
+    const f = await checkpointFixture(t), who = "Fixture <fixture@example.invalid> 1 +0000";
+    const hidden = f.git(["commit-tree", f.tree, "-m", "otherwise unreachable"]);
+    const headers = `author ${who}\ncommitter ${who}\n`;
+    const body = `tree ${f.tree}\nparent ${f.commit}\n${lateParent ? headers : ""}parent ${hidden}\n${lateParent ? "" : headers}\ntip\n`;
+    const tip = f.git(["hash-object", "-t", "commit", "-w", "--stdin"], body);
+    f.git(["update-ref", f.ref, tip]);
+    assert.equal(f.git(["rev-list", f.ref]).split("\n").includes(hidden), !lateParent);
+    const before = await checkpointCurrent(f), proof = await f.proof();
+    const decide = () => decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, { retireStaleReview: true, checkpointEvidence: proof });
+    if (!lateParent) assert.equal((await decide()).acceptance.eligible, false);
+    else { await assert.rejects(decide(), { code: "checkpoint_evidence_invalid" }); assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []); }
+  });
+}
+
+test("checkpoint retirement accepts sixteen real auxiliary refs", async t => {
+  const f = await checkpointFixture(t), refs = [f.ref, ...Array.from({ length: 15 }, (_, n) => `refs/aux/r${n}`)];
+  for (const ref of refs.slice(1)) f.git(["update-ref", ref, f.commit]);
+  const result = await decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, { retireStaleReview: true, checkpointEvidence: await f.proof(refs) });
+  assert.equal(result.lifecycleState, "abandoned"); assert.equal(result.acceptance.eligible, false);
+});
+
+
+test("checkpoint retirement accepts an unrelated packed UTF-8 ref containing byte A0", async t => {
+  const ref = "refs/aux-other/cafà";
+  const f = await checkpointFixture(t, root => {
+    execFileSync("git", ["update-ref", ref, "HEAD"], { cwd: root });
+    execFileSync("git", ["pack-refs", "--all", "--prune"], { cwd: root });
+  }, true);
+  assert.ok((await readFile(path.join(f.root, ".git/packed-refs"))).includes(0xa0));
+  const result = await decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, { retireStaleReview: true, checkpointEvidence: await f.proof() });
+  assert.equal(result.lifecycleState, "abandoned"); assert.equal(result.acceptance.eligible, false);
+  assert.equal(f.git(["rev-parse", ref]), f.git(["rev-parse", "HEAD"]));
+});
+
+for (const hazard of ["valid", "malformed", "hash", "size"]) {
+  test(`checkpoint retirement packed reader independently checks ${hazard}`, async t => {
+    const { createHash } = await import("node:crypto");
+    const root = await createDirectory(); t.after(() => rm(root, { recursive: true, force: true }));
+    const file = path.join(root, "packed-refs"), oid = "a".repeat(40);
+    const bytes = Buffer.from(hazard === "malformed" ? "garbage line\n" : `${oid} refs/aux-other/cafà\n`);
+    await writeFile(file, bytes);
+    const entry = { bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+    if (hazard === "hash") entry.sha256 = "0".repeat(64);
+    if (hazard === "size") entry.bytes += 1;
+    const check = () => assertPackedRefsUnshadowed(file, entry, ["refs/aux-checkpoints/new"], () => {});
+    if (hazard === "valid") await check();
+    else await assert.rejects(check(), { code: "checkpoint_evidence_invalid" });
+    assert.deepEqual(await readFile(file), bytes);
   });
 }

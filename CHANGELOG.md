@@ -4,6 +4,14 @@ All notable public changes to RelayPact are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Add optional checkpoint evidence to explicit Cursor stale abandonment. Complete
+  signed control baselines prove exact auxiliary-ref and reachable loose-object
+  additions while preserving files, Git state and original evidence. Legacy
+  tasks lacking this baseline remain blocked; default stale decisions and
+  filesystem-only retirement keep their existing safety gates.
+
 ## [0.3.7] - 2026-10-10 - Release
 
 ### Fixed

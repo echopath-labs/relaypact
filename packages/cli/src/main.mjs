@@ -22,7 +22,7 @@ function usage() {
     "  relaypact run-pi --envelope <file> [--executor <pi-path>]  # experimental",
     "  relaypact run-cursor --envelope <file> [--executor <cursor-path>] [--read-only] [--state-root <dir> --host-instance <id>]  # experimental",
     "  relaypact correct-cursor --task-root <dir> --prompt <file> [--executor <cursor-path>]  # experimental",
-    "  relaypact decide-cursor --task-root <dir> --action <accept|reject|abandon> --actor <id> --archive-root <dir> [--retire-stale-review]  # experimental; retirement requires abandon"
+    "  relaypact decide-cursor --task-root <dir> --action <accept|reject|abandon> --actor <id> --archive-root <dir> [--retire-stale-review [--checkpoint-evidence <private-json>]]  # experimental; retirement requires abandon"
   ].join("\n");
 }
 
@@ -58,10 +58,12 @@ function parseArgs(argv) {
     else if (key === "--action" && value) options.action = value;
     else if (key === "--actor" && value) options.actor = value;
     else if (key === "--archive-root" && value) options.archiveRoot = value;
+    else if (key === "--checkpoint-evidence" && value && !options.checkpointEvidence) options.checkpointEvidence = resolve(value);
     else throw new Error(`Unknown or incomplete argument: ${key}. ${usage()}`);
     index += 1;
   }
   if (command === "support" && argv.length !== 1) throw new Error(usage());
+  if (options.checkpointEvidence && (command !== "decide-cursor" || options.action !== "abandon" || !options.retireStaleReview)) throw new Error("--checkpoint-evidence requires decide-cursor --action abandon --retire-stale-review.");
   if (options.retireStaleReview && (command !== "decide-cursor" || options.action !== "abandon")) {
     throw new Error("--retire-stale-review requires decide-cursor --action abandon.");
   }
@@ -224,7 +226,7 @@ async function decideCursor(options) {
     options.action,
     options.actor,
     resolve(options.archiveRoot),
-    { retireStaleReview: options.retireStaleReview === true }
+    { retireStaleReview: options.retireStaleReview === true, checkpointEvidence: options.checkpointEvidence }
   );
 }
 

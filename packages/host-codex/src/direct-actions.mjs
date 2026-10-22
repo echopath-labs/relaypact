@@ -8,6 +8,7 @@ import {
 } from "../../core/src/direct-lifecycle.mjs";
 
 export async function decideDirectDelegation(prepared, action, actor, archiveRoot, options = {}) {
+  if (options.checkpointEvidence !== undefined && (!options.retireStaleReview || action !== "abandon")) throw new DelegationError("invalid_host_action", "Checkpoint evidence requires explicit stale abandonment.");
   if (options.retireStaleReview && action !== "abandon") {
     throw new DelegationError("invalid_host_action", "Stale review retirement is only available for explicit abandonment.");
   }
@@ -38,7 +39,8 @@ export async function decideDirectDelegation(prepared, action, actor, archiveRoo
     };
   }
   const finalized = await finalizeDirectTerminalDecision(prepared, action, actor, archiveRoot, {
-    retireStaleReview: options.retireStaleReview === true
+    retireStaleReview: options.retireStaleReview === true,
+    checkpointEvidence: options.checkpointEvidence
   });
   return {
     action,
