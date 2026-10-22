@@ -65,6 +65,7 @@
     "packages/contracts/src/path-policy.mjs",
     "packages/core/README.md",
     "packages/core/package.json",
+    "packages/core/src/checkpoint-evidence.mjs",
     "packages/core/src/context/analyzer.mjs",
     "packages/core/src/context/node-esm.mjs",
     "packages/core/src/context/planner.mjs",

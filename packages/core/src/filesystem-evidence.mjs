@@ -18,10 +18,10 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-async function hashFile(absolute) {
+async function hashFile(absolute, signal) {
   const hash = createHash("sha256");
   await new Promise((resolve, reject) => {
-    const stream = createReadStream(absolute);
+    const stream = createReadStream(absolute, { signal });
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("error", reject);
     stream.on("end", resolve);
@@ -45,6 +45,7 @@ export function assertFilesystemSnapshot(snapshot) {
 
 async function collect(root, options = {}) {
   const entries = [];
+  const directories = [];
   const maximumFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
   const maximumBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const maximumDirectories = options.maxDirectories ?? maximumFiles;
@@ -54,6 +55,7 @@ async function collect(root, options = {}) {
   let totalDirectories = 0;
 
   async function add(relative, absolute, depth = 0) {
+    options.signal?.throwIfAborted();
     if (excluded.has(relative) || [...excluded].some((prefix) => relative.startsWith(`${prefix}/`))) return;
     if (depth > maximumDepth) {
       throw new DelegationError("filesystem_evidence_exceeded", "Filesystem evidence exceeded its directory-depth bound.");
@@ -66,6 +68,7 @@ async function collect(root, options = {}) {
       throw new DelegationError("filesystem_evidence_unavailable", `Filesystem evidence cannot inspect: ${relative || "."}.`);
     }
     if (info.isDirectory()) {
+      if (options.includeDirectories) directories.push({ path: relative, mode: info.mode & 0o7777, dev: info.dev, ino: info.ino });
       totalDirectories += 1;
       if (totalDirectories > maximumDirectories) {
         throw new DelegationError("filesystem_evidence_exceeded", "Filesystem evidence exceeded its directory-count bound.");
@@ -91,7 +94,7 @@ async function collect(root, options = {}) {
       const before = { dev: info.dev, ino: info.ino, size: info.size, mtimeMs: info.mtimeMs };
       record.type = "file";
       record.bytes = info.size;
-      record.sha256 = await hashFile(absolute);
+      record.sha256 = await hashFile(absolute, options.signal);
       const after = await lstat(absolute);
       if (!after.isFile() || after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
         throw new DelegationError("filesystem_evidence_unstable", `Filesystem changed while evidence was collected: ${relative}.`);
@@ -119,6 +122,7 @@ async function collect(root, options = {}) {
     fingerprint: ""
   };
   snapshot.fingerprint = snapshotFingerprint(snapshot);
+  if (options.includeDirectories) snapshot.directories = directories.sort((a, b) => a.path.localeCompare(b.path));
   return snapshot;
 }
 
@@ -292,6 +296,7 @@ export async function snapshotGitControls(repositoryRoot, options = {}) {
   }
   const orderedRoots = [...roots].sort();
   const entries = [];
+  const directories = [];
   let totalFiles = 0;
   let totalDirectories = 0;
   let totalBytes = 0;
@@ -305,12 +310,15 @@ export async function snapshotGitControls(repositoryRoot, options = {}) {
         ...GIT_CONTROL_EXCLUDES,
         ...(options.excludeIndexes === true && relativeIndex ? [relativeIndex] : [])
       ],
+      includeDirectories: options.includeDirectories,
+      signal: options.signal,
       maxFiles: DEFAULT_MAX_FILES - totalFiles,
       maxDirectories: DEFAULT_MAX_FILES - totalDirectories,
       maxBytes: DEFAULT_MAX_BYTES - totalBytes
     });
     const namespace = `store-${sha256(root).slice(0, 16)}`;
     entries.push(...snapshot.entries.map((entry) => ({ ...entry, path: `${namespace}/${entry.path}` })));
+    if (options.includeDirectories) directories.push(...snapshot.directories.map(entry => ({ ...entry, path: `${namespace}/${entry.path}` })));
     totalFiles += snapshot.totals.files;
     totalDirectories += snapshot.totals.directories;
     totalBytes += snapshot.totals.bytes;
@@ -323,6 +331,7 @@ export async function snapshotGitControls(repositoryRoot, options = {}) {
     fingerprint: ""
   };
   snapshot.fingerprint = snapshotFingerprint(snapshot);
+  if (options.includeDirectories) snapshot.directories = directories.sort((a, b) => a.path.localeCompare(b.path));
   return snapshot;
 }
 
