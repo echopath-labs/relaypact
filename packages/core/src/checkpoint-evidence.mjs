@@ -94,7 +94,7 @@ async function verify(prepared, state, actor, input) {
       !Array.isArray(proof.addedPaths) || proof.addedPaths.length > 8192 || !Array.isArray(proof.checkpointRefs) ||
       proof.checkpointRefs.length < 1 || proof.checkpointRefs.length > 16) fail();
   const safeRef = ref => typeof ref === "string" && ref.length <= 1024 && /^refs\/[A-Za-z0-9_-]+\/[A-Za-z0-9_./-]+$/u.test(ref) &&
-    !/^(?:refs\/(?:heads|tags|remotes|replace|bisect|notes|rewritten|worktree|prefetch|stash)\/)/u.test(ref) &&
+    !/^(?:refs\/(?:heads|tags|remotes|replace|bisect|notes|rewritten|worktree|prefetch|stash)\/)/u.test(ref.toLowerCase()) &&
     ref.split("/").every(part => part && !part.startsWith(".") && !part.endsWith(".") && !part.endsWith(".lock")) && !ref.includes("..");
   if (!proof.checkpointRefs.every(safeRef) || new Set(proof.checkpointRefs).size !== proof.checkpointRefs.length) fail();
   const gitDirectory = path.join(state.repositoryRoot, ".git"), gitInfo = await lstat(gitDirectory);
@@ -199,13 +199,16 @@ async function verify(prepared, state, actor, input) {
         enqueue([line.slice(7), "commit", depth + 1]);
       }
     } else if (expected === "tree") {
-      let offset = 0; const names = new Set();
+      let offset = 0, previousName; const names = new Set();
       while (offset < object.body.length) {
         const space = object.body.indexOf(32, offset), end = object.body.indexOf(0, space + 1);
         if (space < offset || end < space || end + 1 + length / 2 > object.body.length) fail();
         const mode = object.body.subarray(offset, space).toString("utf8"), name = object.body.subarray(space + 1, end);
         if (!name.length || name.includes(47) || [".", ".."].includes(name.toString()) || names.has(name.toString("hex"))) fail();
         names.add(name.toString("hex"));
+        const orderedName = mode === "40000" ? Buffer.concat([name, Buffer.from("/")]) : name;
+        if (previousName && Buffer.compare(previousName, orderedName) >= 0) fail();
+        previousName = orderedName;
         const target = object.body.subarray(end + 1, end + 1 + length / 2).toString("hex");
         if (!["40000", "100644", "100755", "120000", "160000"].includes(mode)) fail();
         if (mode !== "160000") enqueue([target, mode === "40000" ? "tree" : "blob", depth + 1]);
