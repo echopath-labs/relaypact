@@ -606,7 +606,10 @@ ASCII case folding on every filesystem, including case-sensitive systems. This
 is a conservative refusal policy, not a general Unicode normalization guarantee.
 Packed refs are streamed; an unfinished line carried between reads may not exceed
 64 KiB. Non-ASCII bytes in unrelated packed names remain byte-preserved;
-object zlib input must be consumed completely. The full original
+Reserved operational ref namespaces also refuse ASCII case variants. New tree
+entries must follow Git raw-byte ordering (directories compare with a trailing
+slash); unsorted trees refuse even when their content OIDs match. Object zlib
+input must be consumed completely. The full original
 and observed controls and approved additions are retained privately in the
 non-accepting archive; only the original private task is cleaned.
 

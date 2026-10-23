@@ -2705,3 +2705,48 @@ for (const hazard of ["valid", "malformed", "hash", "size"]) {
     assert.deepEqual(await readFile(file), bytes);
   });
 }
+
+for (const namespace of ["REMOTES", "NoTeS"]) {
+  test(`checkpoint retirement P2 refuses reserved namespace ${namespace}`, async t => {
+    const f = await checkpointFixture(t), ref = `refs/${namespace}/checkpoint/1`;
+    await mkdir(path.dirname(path.join(f.root, ".git", ref)), { recursive: true });
+    await writeFile(path.join(f.root, ".git", ref), `${f.commit}\n`);
+    const proof = await f.proof([f.ref, ref]), before = await checkpointCurrent(f);
+    await assert.rejects(decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot,
+      { retireStaleReview: true, checkpointEvidence: proof }), { code: "checkpoint_evidence_invalid" });
+    assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []);
+  });
+}
+
+for (const [label, entries, valid] of [
+  ["unsorted-files", [["100644", "b"], ["100644", "a"]], false],
+  ["unsorted-directory-prefix", [["40000", "a"], ["100644", "a.c"]], false],
+  ["sorted-directory-prefix", [["100644", "a.c"], ["40000", "a"], ["100644", "a0"]], true],
+  ["sorted-file-prefix", [["100644", "a"], ["100644", "a.c"]], true],
+  ["sorted-raw-bytes", [["100644", "z"], ["100644", "é"]], true]
+]) {
+  test(`checkpoint retirement P2 tree ordering ${label}`, async t => {
+    const f = await checkpointFixture(t);
+    const body = Buffer.concat(entries.map(([mode, name]) => Buffer.concat([
+      Buffer.from(`${mode} ${name}\0`), Buffer.from(mode === "40000" ? f.tree : f.blob, "hex")
+    ])));
+    const tree = f.git(["hash-object", "--literally", "-t", "tree", "-w", "--stdin"], body);
+    const commit = f.git(["commit-tree", tree, "-p", f.commit, "-m", "synthetic ordering"]);
+    f.git(["update-ref", f.ref, commit]);
+    let fsckError;
+    try { f.git(["fsck", "--no-reflogs"]); } catch (error) { fsckError = error; }
+    if (valid) assert.equal(fsckError, undefined);
+    else { assert.equal(fsckError?.status, 1); assert.match(String(fsckError.stderr), /treeNotSorted/u); }
+    const proof = await f.proof(), before = await checkpointCurrent(f);
+    if (valid) {
+      const result = await decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot,
+        { retireStaleReview: true, checkpointEvidence: proof });
+      assert.equal(result.lifecycleState, "abandoned"); assert.equal(result.acceptance.eligible, false);
+      assert.equal(checkpointObservationFingerprint(await snapshotGitControls(f.root, { excludeIndexes: true, includeDirectories: true })), before.controls);
+    } else {
+      await assert.rejects(decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot,
+        { retireStaleReview: true, checkpointEvidence: proof }), { code: "checkpoint_evidence_invalid" });
+      assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []);
+    }
+  });
+}
