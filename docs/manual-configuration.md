@@ -609,7 +609,9 @@ Packed refs are streamed; an unfinished line carried between reads may not excee
 Reserved operational ref namespaces also refuse ASCII case variants. New tree
 entries must follow Git raw-byte ordering (directories compare with a trailing
 slash); unsorted trees refuse even when their content OIDs match. Object zlib
-input must be consumed completely. The full original
+input must be consumed completely. Commit headers must include ordered author and
+committer identities after tree/parents; existing object types are read without
+replacement refs, so replacements cannot disguise a wrong stored object type. The full original
 and observed controls and approved additions are retained privately in the
 non-accepting archive; only the original private task is cleaned.
 

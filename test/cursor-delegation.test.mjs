@@ -2750,3 +2750,46 @@ for (const [label, entries, valid] of [
     }
   });
 }
+
+for (const variant of ["missing-author", "missing-committer", "reversed", "valid-extended"]) {
+  test(`checkpoint retirement R3 commit headers ${variant}`, async t => {
+    const f = await checkpointFixture(t), ident = "Fixture <fixture@example.invalid> 1 +0000";
+    const author = `author ${ident}\n`, committer = `committer ${ident}\n`;
+    const headers = variant === "missing-author" ? committer : variant === "missing-committer" ? author :
+      variant === "reversed" ? committer + author : author + committer + "encoding UTF-8\ngpgsig synthetic\n continuation\n";
+    const body = `tree ${f.tree}\nparent ${f.commit}\n${headers}\nsynthetic\n`;
+    const oid = f.git(["hash-object", "--literally", "-t", "commit", "-w", "--stdin"], body);
+    f.git(["update-ref", f.ref, oid]);
+    let fsckError; try { f.git(["fsck", "--no-reflogs"]); } catch (error) { fsckError = error; }
+    if (variant === "valid-extended") assert.equal(fsckError, undefined);
+    else { assert.equal(fsckError?.status, 1); assert.match(String(fsckError.stderr), /missingAuthor|missingCommitter/u); }
+    const before = await checkpointCurrent(f), options = { retireStaleReview: true, checkpointEvidence: await f.proof() };
+    if (variant === "valid-extended") assert.equal((await decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, options)).lifecycleState, "abandoned");
+    else {
+      await assert.rejects(decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, options), { code: "checkpoint_evidence_invalid" });
+      assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []);
+    }
+  });
+}
+
+for (const valid of [false, true]) {
+  test(`checkpoint retirement R3 existing replacement type valid=${valid}`, async t => {
+    let blob, tree;
+    const f = await checkpointFixture(t, root => {
+      const git = (args, input) => execFileSync("git", args, { cwd: root, input, encoding: "utf8" }).trim();
+      blob = git(["hash-object", "-w", "--stdin"], "baseline replacement blob\n");
+      tree = git(["mktree"], ""); git(["replace", "-f", blob, tree]); git(["fsck", "--no-reflogs"]);
+    });
+    assert.equal(f.git(["cat-file", "-t", blob]), "tree");
+    assert.equal(f.git(["--no-replace-objects", "cat-file", "-t", blob]), "blob");
+    const body = `tree ${valid ? tree : blob}\nparent ${f.commit}\nauthor Fixture <fixture@example.invalid> 1 +0000\ncommitter Fixture <fixture@example.invalid> 1 +0000\n\nreplacement fixture\n`;
+    const oid = f.git(["hash-object", "--literally", "-t", "commit", "-w", "--stdin"], body);
+    f.git(["update-ref", f.ref, oid]);
+    const before = await checkpointCurrent(f), options = { retireStaleReview: true, checkpointEvidence: await f.proof() };
+    if (valid) assert.equal((await decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, options)).lifecycleState, "abandoned");
+    else {
+      await assert.rejects(decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot, options), { code: "checkpoint_evidence_invalid" });
+      assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []);
+    }
+  });
+}
