@@ -571,6 +571,50 @@ Source files and Git state are preserved; no rollback, model call or correction
 occurs. Old tasks with missing settlement proof and tasks with Git drift remain
 blocked. Preserve them for separate recovery rather than editing signed state.
 
+### Checkpoint evidence (development)
+
+Version availability for this option follows its CHANGELOG entry.
+
+An additional explicit `--checkpoint-evidence <private-json>` attachment may
+prove only newly appended auxiliary refs and reachable valid loose objects in
+an ordinary single-store repository. It requires a complete control baseline
+captured by this implementation and bound with the existing integrity key;
+legacy tasks without that evidence stay blocked. No installed state is migrated.
+Default actions and the filesystem-only option keep their original refusal rules.
+
+The Host prepares a mode-0600 private JSON record with `schemaVersion: "1.0.0"`,
+`stateIntegrity` (the current state integrity value), `actor`, `reason`, exact
+`checkpointRefs` and `addedPaths` relative to the Git directory, plus
+`filesystemFingerprint` and `observationFingerprint`. Compute the latter from
+`await snapshotGitControls(root, {excludeIndexes: true, includeDirectories: true})`
+using `checkpointObservationFingerprint` from the source checkout's
+`packages/core/src/checkpoint-evidence.mjs` (an internal source module, not a
+package export). Compute `filesystemFingerprint` using
+`(await snapshotFilesystem(root, { exclude: [".git"],
+maxBytes: state.filesystemEvidenceMaxBytes })).fingerprint` from
+`packages/core/src/filesystem-evidence.mjs`, with `state` loaded from the current
+verified task. Keep its Host-approved byte budget rather than substituting a
+default for a task with an explicit budget. Independently review this exact
+observation before selecting the option; an unsigned attachment grants no authority.
+Never include keys/session handles, infer directory provenance from timestamps,
+or edit the original basis. All original files/directories, HEAD/branch/index,
+identity, settlement and archive gates must still pass. Pack or pointer changes,
+unreferenced objects, unsafe links and stale approval refuse. This includes
+reflog additions, packed-ref rewrites or shadowing, commit-graph maintenance,
+and FETCH_HEAD/ORIG_HEAD updates. Packed-ref equality and prefix conflicts use
+ASCII case folding on every filesystem, including case-sensitive systems. This
+is a conservative refusal policy, not a general Unicode normalization guarantee.
+Packed refs are streamed; an unfinished line carried between reads may not exceed
+64 KiB. Non-ASCII bytes in unrelated packed names remain byte-preserved;
+Reserved operational ref namespaces also refuse ASCII case variants. New tree
+entries must follow Git raw-byte ordering (directories compare with a trailing
+slash); unsorted trees refuse even when their content OIDs match. Object zlib
+input must be consumed completely. Commit headers must include ordered author and
+committer identities after tree/parents; existing object types are read without
+replacement refs, so replacements cannot disguise a wrong stored object type. The full original
+and observed controls and approved additions are retained privately in the
+non-accepting archive; only the original private task is cleaned.
+
 Local execution refuses repository symlinks that resolve outside the repository,
 are dangling, cyclic, or change during the check. It also refuses regular files
 with multiple hard links, including internal aliases, because another name for
