@@ -18,19 +18,20 @@ function controlledArgs(args, gitControl) {
   ];
 }
 
-async function runGit(args, cwd, { allowFailure = false, gitControl = undefined, outputEncoding = "utf8" } = {}) {
+async function runGit(args, cwd, { allowFailure = false, gitControl = undefined, outputEncoding = "utf8", timeoutMs = 30_000, objectLookup = false } = {}) {
   const env = minimalEnvironment(process.env, {
     grants: {
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: os.devNull,
       GIT_TERMINAL_PROMPT: "0",
-      GIT_OPTIONAL_LOCKS: "0"
+      GIT_OPTIONAL_LOCKS: "0",
+      ...(objectLookup ? { GIT_NO_LAZY_FETCH: "1" } : {})
     }
   });
   const result = await runProcess("git", controlledArgs(args, gitControl), {
     cwd,
     env,
-    timeoutMs: 30_000,
+    timeoutMs,
     outputEncoding,
     maxStdoutCaptureBytes: MAX_GIT_STDOUT_BYTES
   });
@@ -312,4 +313,12 @@ export function enforceDirtyTreePolicy(state, dirtyTree) {
       paths: missing
     });
   }
+}
+
+// Only used after an authenticated control-baseline check; never fetch missing objects.
+export async function existingGitObjectType(root, oid, timeoutMs) {
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(oid)) throw new DelegationError("checkpoint_evidence_invalid", "Invalid object identity.");
+  return (await runGit(["--no-replace-objects", "cat-file", "-t", oid], root, {
+    gitControl: { gitDir: path.join(root, ".git"), workTree: root }, timeoutMs, objectLookup: true
+  })).stdout.trim();
 }
