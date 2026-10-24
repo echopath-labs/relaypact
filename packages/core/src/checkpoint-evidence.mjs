@@ -194,10 +194,12 @@ async function verify(prepared, state, actor, input) {
       const text = object.body.toString("utf8").split("\n\n")[0], lines = text.split("\n");
       if (!lines[0].startsWith("tree ")) fail();
       enqueue([lines[0].slice(5), "tree", depth + 1]);
-      for (const line of lines.slice(1)) {
-        if (!line.startsWith("parent ")) break;
-        enqueue([line.slice(7), "commit", depth + 1]);
-      }
+      let header = 1;
+      while (lines[header]?.startsWith("parent ")) enqueue([lines[header++].slice(7), "commit", depth + 1]);
+      const identity = "[^<>\\x00-\\x1f]* <[^<>\\x00-\\x1f]*> [0-9]+ [+-][0-9]{4}";
+      if (!object.body.includes(Buffer.from("\n\n")) ||
+          !new RegExp(`^author ${identity}$`, "u").test(lines[header] ?? "") ||
+          !new RegExp(`^committer ${identity}$`, "u").test(lines[header + 1] ?? "")) fail();
     } else if (expected === "tree") {
       let offset = 0, previousName; const names = new Set();
       while (offset < object.body.length) {

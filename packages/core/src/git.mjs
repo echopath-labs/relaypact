@@ -318,7 +318,7 @@ export function enforceDirtyTreePolicy(state, dirtyTree) {
 // Only used after an authenticated control-baseline check; never fetch missing objects.
 export async function existingGitObjectType(root, oid, timeoutMs) {
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(oid)) throw new DelegationError("checkpoint_evidence_invalid", "Invalid object identity.");
-  return (await runGit(["cat-file", "-t", oid], root, {
+  return (await runGit(["--no-replace-objects", "cat-file", "-t", oid], root, {
     gitControl: { gitDir: path.join(root, ".git"), workTree: root }, timeoutMs, objectLookup: true
   })).stdout.trim();
 }
