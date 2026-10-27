@@ -4,6 +4,8 @@ All notable public changes to RelayPact are recorded here.
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-10-27 - Release
+
 ### Fixed
 
 - Add optional checkpoint evidence to explicit Cursor stale abandonment. Complete
@@ -351,3 +353,5 @@ All notable public changes to RelayPact are recorded here.
 [0.3.6]: https://github.com/echopath-labs/relaypact/compare/v0.3.5...v0.3.6
 
 [0.3.7]: https://github.com/echopath-labs/relaypact/compare/v0.3.6...v0.3.7
+
+[0.3.8]: https://github.com/echopath-labs/relaypact/compare/v0.3.7...v0.3.8

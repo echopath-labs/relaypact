@@ -144,20 +144,20 @@ test("public package rejects published-install tag verification and metric guida
     await writeFile(
       target,
       (await readFile(target, "utf8"))
-        .replaceAll("git clone --branch v0.3.7", "git clone --branch release")
-        .replaceAll("v0.3.7^{}", "v0.3.7")
+        .replaceAll("git clone --branch v0.3.8", "git clone --branch release")
+        .replaceAll("v0.3.8^{}", "v0.3.8")
         .replaceAll("relaypactDeclaredInputBytes", "declared bytes")
     );
   }
   const readme = path.join(root, "README.md");
   await writeFile(
     readme,
-    (await readFile(readme, "utf8")).replace("Release target: **v0.3.7**", "Latest published release: **v0.1.1**")
+    (await readFile(readme, "utf8")).replace("Release target: **v0.3.8**", "Latest published release: **v0.1.1**")
   );
   const errors = await validatePackage(root);
-  assert(errors.some((item) => item.includes("README.md must include \"git clone --branch v0.3.7\"")));
-  assert(errors.some((item) => item.startsWith("README.md must include") && item.includes("git -C relaypact-v0.3.7 rev-parse") && item.includes("v0.3.7^{}")));
-  assert(errors.some((item) => item.includes("README.md must include \"Release target: **v0.3.7**\"")));
+  assert(errors.some((item) => item.includes("README.md must include \"git clone --branch v0.3.8\"")));
+  assert(errors.some((item) => item.startsWith("README.md must include") && item.includes("git -C relaypact-v0.3.8 rev-parse") && item.includes("v0.3.8^{}")));
+  assert(errors.some((item) => item.includes("README.md must include \"Release target: **v0.3.8**\"")));
   assert(errors.some((item) => item.includes("README.zh-CN.md must include \"relaypactDeclaredInputBytes\"")));
   assert(errors.some((item) => item.includes("docs/manual-configuration.md must include \"relaypactDeclaredInputBytes\"")));
   await rm(root, { recursive: true });
@@ -172,13 +172,13 @@ async function copyCandidatePackage(t) {
   for (const file of ["README.md", "README.zh-CN.md", "docs/agent-quickstart.md", "docs/agent-quickstart.zh-CN.md", "docs/manual-configuration.md"]) {
     const target = path.join(root, file);
     const text = (await readFile(target, "utf8"))
-      .replaceAll("0.3.7", "0.3.6")
-      .replace("Release target: **v0.3.6**", "Latest published release: **v0.3.6**")
-      .replace("安装目标版本：**v0.3.6**", "最新已发布版本：**v0.3.6**");
-    await writeFile(target, text + '\n0.3.7 Release source candidate\n`v0.3.7` is not released\n`v0.3.7` 尚未发布\n');
+      .replaceAll("0.3.8", "0.3.7")
+      .replace("Release target: **v0.3.7**", "Latest published release: **v0.3.7**")
+      .replace("安装目标版本：**v0.3.7**", "最新已发布版本：**v0.3.7**");
+    await writeFile(target, text + '\n0.3.8 Release source candidate\n`v0.3.8` is not released\n`v0.3.8` 尚未发布\n');
   }
   const changelog = path.join(root, "CHANGELOG.md");
-  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.3.7] - 2026-10-10 - Release", "## [0.3.7] - Unreleased - Release"));
+  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.3.8] - 2026-10-27 - Release", "## [0.3.8] - Unreleased - Release"));
   const { validatePackage: validateCandidate } = await import(pathToFileURL(validator).href);
   assert.deepEqual(await validateCandidate(root), []);
   return { root, validateCandidate };
@@ -187,15 +187,15 @@ async function copyCandidatePackage(t) {
 test("candidate rejects premature release claims and installation in either language", async (t) => {
   const { root, validateCandidate } = await copyCandidatePackage(t);
   for (const [file, claim] of [
-    ["README.md", "Latest published release: **v0.3.7**"],
-    ["README.zh-CN.md", "最新已发布版本：**v0.3.7**"]
+    ["README.md", "Latest published release: **v0.3.8**"],
+    ["README.zh-CN.md", "最新已发布版本：**v0.3.8**"]
   ]) {
     const target = path.join(root, file);
-    await writeFile(target, `${await readFile(target, "utf8")}\n${claim}\ngit clone --branch v0.3.7\n`);
+    await writeFile(target, `${await readFile(target, "utf8")}\n${claim}\ngit clone --branch v0.3.8\n`);
   }
   const errors = await validateCandidate(root);
   for (const file of ["README.md", "README.zh-CN.md"]) {
-    assert(errors.some((item) => item.startsWith(`${file} must not include`) && item.includes("v0.3.7")));
+    assert(errors.some((item) => item.startsWith(`${file} must not include`) && item.includes("v0.3.8")));
     assert(errors.some((item) => item.startsWith(`${file} must not include`) && item.includes("git clone --branch")));
   }
 });
@@ -203,25 +203,25 @@ test("candidate rejects premature release claims and installation in either lang
 test("candidate rejects stale versioned status and missing unreleased changelog", async (t) => {
   const { root, validateCandidate } = await copyCandidatePackage(t);
   const guide = path.join(root, "docs/agent-quickstart.zh-CN.md");
-  await writeFile(guide, (await readFile(guide, "utf8")).replace("0.3.7 Release source candidate", "0.3.6 Release source candidate"));
+  await writeFile(guide, (await readFile(guide, "utf8")).replace("0.3.8 Release source candidate", "0.3.7 Release source candidate"));
   const changelog = path.join(root, "CHANGELOG.md");
-  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.3.7] - Unreleased - Release", "## [0.3.7] - 2026-01-01 - Release"));
+  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.3.8] - Unreleased - Release", "## [0.3.8] - 2026-01-01 - Release"));
   const errors = await validateCandidate(root);
-  assert(errors.some((item) => item.startsWith("docs/agent-quickstart.zh-CN.md must include") && item.includes("0.3.7 Release source candidate")));
+  assert(errors.some((item) => item.startsWith("docs/agent-quickstart.zh-CN.md must include") && item.includes("0.3.8 Release source candidate")));
   assert(errors.some((item) => item.startsWith("CHANGELOG.md must include") && item.includes("Unreleased")));
 });
 
 test("versioned documentation requires complete install identity without publication claims", async (t) => {
   const root = await copyCurrentPublicPackage();
   t.after(() => rm(root, { recursive: true, force: true }));
-  const comparisonLink = "[0.3.7]: https://github.com/echopath-labs/relaypact/compare/v0.3.6...v0.3.7";
+  const comparisonLink = "[0.3.8]: https://github.com/echopath-labs/relaypact/compare/v0.3.7...v0.3.8";
   const linkChangelog = path.join(root, "CHANGELOG.md");
   const datedChangelog = (await readFile(linkChangelog, "utf8")).replace(comparisonLink, "");
   await writeFile(linkChangelog, `${datedChangelog}\n${comparisonLink}\n`);
   assert.deepEqual(await validatePackage(root), []);
-  for (const invalidLink of ["", comparisonLink.replace("v0.3.6...", "v0.1.1...")]) {
+  for (const invalidLink of ["", comparisonLink.replace("v0.3.7...", "v0.1.1...")]) {
     await writeFile(linkChangelog, `${datedChangelog}\n${invalidLink}\n`);
-    assert((await validatePackage(root)).some((item) => item.startsWith("CHANGELOG.md must include") && item.includes("compare/v0.3.6...v0.3.7")));
+    assert((await validatePackage(root)).some((item) => item.startsWith("CHANGELOG.md must include") && item.includes("compare/v0.3.7...v0.3.8")));
   }
   await writeFile(linkChangelog, `${datedChangelog}\n${comparisonLink}\n`);
   for (const [file, claim] of [
@@ -238,10 +238,10 @@ test("versioned documentation requires complete install identity without publica
   for (const file of ["README.md", "README.zh-CN.md", "docs/agent-quickstart.md", "docs/agent-quickstart.zh-CN.md", "docs/manual-configuration.md"]) {
     const target = path.join(root, file);
     const valid = await readFile(target, "utf8");
-    const releaseUrl = "https://github.com/echopath-labs/relaypact/releases/tag/v0.3.7";
+    const releaseUrl = "https://github.com/echopath-labs/relaypact/releases/tag/v0.3.8";
     const sections = valid.split(/(?=^#{1,6} )/mu);
     for (let index = 0; index < sections.length; index += 1) {
-      if (!sections[index].includes("git clone --branch v0.3.7")) continue;
+      if (!sections[index].includes("git clone --branch v0.3.8")) continue;
       const altered = [...sections];
       altered[index] = altered[index].replaceAll(releaseUrl, "(release link moved)") + `\nCheck ${releaseUrl} before installation.\n`;
       await writeFile(target, altered.join(""));
@@ -252,8 +252,8 @@ test("versioned documentation requires complete install identity without publica
     await writeFile(target, valid);
   }
   for (const [file, from, to, expected] of [
-    ["CHANGELOG.md", "## [0.3.7] - 2026-10-10 - Release", "## [0.3.7] - 2026-10-10 - Release\n\nThis is an unreleased source candidate.", "CHANGELOG.md must not retain candidate-only status"],
-    ["RELEASING.md", "The checked-in metadata describes 0.3.7 Release, dated 2026-10-10.", "The checked-in state is a 0.3.7 source candidate. The release date is intentionally unset.", "RELEASING.md must describe the dated versioned current state."]
+    ["CHANGELOG.md", "## [0.3.8] - 2026-10-27 - Release", "## [0.3.8] - 2026-10-27 - Release\n\nThis is an unreleased source candidate.", "CHANGELOG.md must not retain candidate-only status"],
+    ["RELEASING.md", "The checked-in metadata describes 0.3.8 Release, dated 2026-10-27.", "The checked-in state is a 0.3.8 source candidate. The release date is intentionally unset.", "RELEASING.md must describe the dated versioned current state."]
   ]) {
     const target = path.join(root, file);
     const valid = await readFile(target, "utf8");
@@ -263,7 +263,7 @@ test("versioned documentation requires complete install identity without publica
   }
   const checklist = path.join(root, "RELEASING.md");
   const validChecklist = await readFile(checklist, "utf8");
-  await writeFile(checklist, validChecklist.replace("dated 2026-10-10.", "dated 2026-09-15."));
+  await writeFile(checklist, validChecklist.replace("dated 2026-10-27.", "dated 2026-09-15."));
   assert((await validatePackage(root)).includes("RELEASING.md and CHANGELOG.md release dates must agree."));
   await writeFile(checklist, validChecklist);
   const security = path.join(root, "SECURITY.md");
@@ -279,9 +279,9 @@ test("versioned documentation requires complete install identity without publica
   const manual = path.join(root, "docs/manual-configuration.md");
   const validManual = await readFile(manual, "utf8");
   for (const [from, to, expected] of [
-    ['p.version!=="0.3.7"', 'p.version!=="0.3.6"', 'if(p.version'],
-    ['cd relaypact-v0.3.7', 'cd relaypact-v0.3.6', 'cd relaypact-v0.3.7'],
-    ["git -C relaypact-v0.3.7 rev-parse 'v0.3.7^{}'", "git -C relaypact-v0.3.6 rev-parse 'v0.3.7^{}'", "git -C relaypact-v0.3.7 rev-parse 'v0.3.7^{}'"]
+    ['p.version!=="0.3.8"', 'p.version!=="0.3.7"', 'if(p.version'],
+    ['cd relaypact-v0.3.8', 'cd relaypact-v0.3.7', 'cd relaypact-v0.3.8'],
+    ["git -C relaypact-v0.3.8 rev-parse 'v0.3.8^{}'", "git -C relaypact-v0.3.7 rev-parse 'v0.3.8^{}'", "git -C relaypact-v0.3.8 rev-parse 'v0.3.8^{}'"]
   ]) {
     await writeFile(manual, validManual.replaceAll(from, to));
     const errors = await validatePackage(root);
@@ -289,12 +289,12 @@ test("versioned documentation requires complete install identity without publica
   }
   await writeFile(manual, validManual);
   const changelog = path.join(root, "CHANGELOG.md");
-  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.3.7] - 2026-10-10 - Release", "## [0.3.7] - Unreleased - Release"));
+  await writeFile(changelog, (await readFile(changelog, "utf8")).replace("## [0.3.8] - 2026-10-27 - Release", "## [0.3.8] - Unreleased - Release"));
   const chinese = path.join(root, "README.zh-CN.md");
-  await writeFile(chinese, (await readFile(chinese, "utf8")).replace("安装目标版本：**v0.3.7**", "最新已发布版本：**v0.3.7**"));
+  await writeFile(chinese, (await readFile(chinese, "utf8")).replace("安装目标版本：**v0.3.8**", "最新已发布版本：**v0.3.8**"));
   const errors = await validatePackage(root);
   assert(errors.some((item) => item.includes("dated Release heading")));
-  assert(errors.some((item) => item.startsWith("README.zh-CN.md must not include") && item.includes("v0.3.7")));
+  assert(errors.some((item) => item.startsWith("README.zh-CN.md must not include") && item.includes("v0.3.8")));
 });
 
 test("public package rejects Pi promotion into the Codex-only first path", async () => {
