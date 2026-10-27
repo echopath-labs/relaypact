@@ -1,7 +1,7 @@
 import { runLocalDelegation } from "../packages/core/src/local-delegation.mjs";
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { access, chmod, copyFile, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, truncate, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, stat, symlink, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { once } from "node:events";
 import path from "node:path";
@@ -38,7 +38,7 @@ import { createDirectory, createGitRepository, makeEnvelope } from "./helpers.mj
 import { createSignedStateStore } from "../packages/core/src/signed-state.mjs";
 import { assertRepositoryLinks, snapshotFilesystem, snapshotGitControls } from "../packages/core/src/filesystem-evidence.mjs";
 import { snapshotGitIndex } from "../packages/core/src/git.mjs";
-import { assertPackedRefsUnshadowed, checkpointObservationFingerprint } from "../packages/core/src/checkpoint-evidence.mjs";
+import { assertPackedRefsUnshadowed, checkpointObservationFingerprint, verifyCheckpointEvidence } from "../packages/core/src/checkpoint-evidence.mjs";
 
 const fakeCursorLauncherSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.sh", import.meta.url));
 const fakeCursorImplementationSource = fileURLToPath(new URL("./fixtures/fake-cursor-agent.mjs", import.meta.url));
@@ -2793,3 +2793,102 @@ for (const valid of [false, true]) {
     }
   });
 }
+
+
+// Valid graphs exercise the real fixed budgets, without lowering runtime limits.
+async function checkpointBoundaryGraph(f, objectCount, queueEntries, parent = true) {
+  const { createHash } = await import("node:crypto"), { deflateSync } = await import("node:zlib");
+  for (const oid of [f.blob, f.tree, f.commit]) await rm(path.join(f.root, ".git/objects", oid.slice(0, 2), oid.slice(2)));
+  async function store(type, body) {
+    const bytes = Buffer.concat([Buffer.from(`${type} ${body.length}\0`), body]);
+    const oid = createHash("sha1").update(bytes).digest("hex"), file = path.join(f.root, ".git/objects", oid.slice(0, 2), oid.slice(2));
+    await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, deflateSync(bytes));
+    return oid;
+  }
+  const blobs = [];
+  for (let i = 0; i < objectCount - 2; i += 1) blobs.push(await store("blob", Buffer.from(`boundary-${i}`)));
+  const entries = [], overhead = parent ? 3 : 2;
+  // One root, one tree edge and one existing-parent edge also consume the queue.
+  for (let i = 0; i < queueEntries - overhead; i += 1) entries.push(Buffer.concat([
+    Buffer.from(`100644 file-${String(i).padStart(5, "0")}\0`), Buffer.from(blobs[i % blobs.length], "hex")
+  ]));
+  const tree = await store("tree", Buffer.concat(entries));
+  const who = "Fixture <fixture@example.invalid> 1 +0000";
+  const commit = await store("commit", Buffer.from(`tree ${tree}\n${parent ? `parent ${f.git(["rev-parse", "HEAD"])}\n` : ""}author ${who}\ncommitter ${who}\n\nboundary\n`));
+  await writeFile(path.join(f.root, ".git", f.ref), `${commit}\n`);
+  for (const dir of await readdir(path.join(f.root, ".git/objects"))) {
+    if (/^[a-f0-9]{2}$/u.test(dir) && !(await readdir(path.join(f.root, ".git/objects", dir))).length)
+      await rmdir(path.join(f.root, ".git/objects", dir));
+  }
+  // Fixture oracles: reachable graph and actual loose-object count, independent of verifier counters.
+  assert.equal(Number(f.git(["count-objects", "-v"]).match(/^count: (\d+)/u)[1]),
+    f.saved.controls.entries.filter(e => /\/objects\/[a-f0-9]{2}\/[a-f0-9]{38}$/u.test(e.path)).length + objectCount);
+  assert.equal(f.git(["ls-tree", tree]).split("\n").length + overhead, queueEntries);
+  f.git(["fsck", "--strict", "--no-reflogs", commit]);
+}
+
+for (const [objects, queue, allowed] of [[4096, 4097, true], [4097, 4098, false], [3, 8192, true], [3, 8193, false]]) {
+  test(`checkpoint retirement release boundary objects=${objects} queue=${queue}`, async t => {
+    const f = await checkpointFixture(t);
+    await checkpointBoundaryGraph(f, objects, queue);
+    const proof = await f.proof(), before = await checkpointCurrent(f);
+    assert.ok(Buffer.byteLength(JSON.stringify(proof)) < 256 * 1024, "attachment must not mask graph limit");
+    const decide = () => decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot,
+      { retireStaleReview: true, checkpointEvidence: proof });
+    if (allowed) {
+      const result = await decide();
+      assert.equal(result.lifecycleState, "abandoned"); assert.equal(result.acceptance.eligible, false);
+      assert.equal(checkpointObservationFingerprint(await snapshotGitControls(f.root, { excludeIndexes: true, includeDirectories: true })), before.controls);
+      assert.equal((await snapshotFilesystem(f.root, { exclude: [".git"] })).fingerprint, before.filesystem);
+      assert.equal((await snapshotGitIndex(f.root)).fingerprint, before.index);
+    } else {
+      await assert.rejects(decide(), { code: "checkpoint_evidence_invalid" });
+      assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []);
+    }
+  });
+}
+
+for (const elapsed of [29999, 30000]) {
+  test(`checkpoint retirement release boundary deadline=${elapsed}`, async t => {
+    const f = await checkpointFixture(t);
+    await checkpointBoundaryGraph(f, 3, 3, false);
+    const proof = await f.proof(), before = await checkpointCurrent(f);
+    const start = Date.now(); let calls = 0;
+    t.mock.method(Date, "now", () => start + (calls++ === 0 ? 0 : elapsed));
+    try {
+      const verify = () => verifyCheckpointEvidence(f.prepared, f.prepared.state, "host", proof);
+      if (elapsed < 30000) assert.equal((await verify()).kind, "checkpoint_additions");
+      else await assert.rejects(verify(), { code: "checkpoint_evidence_invalid" });
+    } finally { t.mock.restoreAll(); }
+    assert.ok(calls > 1); assert.deepEqual(await checkpointCurrent(f), before);
+    assert.deepEqual(await readdir(f.archiveRoot), []);
+  });
+}
+
+test("checkpoint retirement release boundary deadline kills stalled Git without retirement", { skip: process.platform === "win32" }, async t => {
+  const f = await checkpointFixture(t), proof = await f.proof(), before = await checkpointCurrent(f);
+  const bin = await mkdtemp(path.join(os.tmpdir(), "checkpoint-timeout-"));
+  t.after(() => rm(bin, { recursive: true, force: true }));
+  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim(), pidFile = path.join(bin, "pid");
+  await writeFile(path.join(bin, "git"), `#!${process.execPath}
+const {spawnSync} = require("node:child_process"), fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args.includes("cat-file") && args.includes("-t")) {
+  fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+  process.on("SIGTERM", () => {});
+  setInterval(() => {}, 1000);
+} else {
+  const r = spawnSync(${JSON.stringify(realGit)}, args, {stdio:"inherit"}); process.exit(r.status ?? 1);
+}
+`, { mode: 0o700 });
+  const oldPath = process.env.PATH, start = performance.now();
+  process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
+  try {
+    await assert.rejects(decideDelegation(f.first.taskRoot, "abandon", "host", f.archiveRoot,
+      { retireStaleReview: true, checkpointEvidence: proof }), { code: "checkpoint_evidence_invalid" });
+  } finally { process.env.PATH = oldPath; }
+  assert.ok(performance.now() - start < 45000, "proof and termination grace must remain bounded");
+  const pid = Number(await readFile(pidFile, "utf8"));
+  assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  assert.deepEqual(await checkpointCurrent(f), before); assert.deepEqual(await readdir(f.archiveRoot), []);
+});

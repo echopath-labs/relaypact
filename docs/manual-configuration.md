@@ -615,6 +615,20 @@ replacement refs, so replacements cannot disguise a wrong stored object type. Th
 and observed controls and approved additions are retained privately in the
 non-accepting archive; only the original private task is cleaned.
 
+Checkpoint proof limits are fixed: a 256 KiB attachment, 16 approved refs,
+4096 added loose objects, 16 MiB per inflated object, 64 MiB total inflated
+content, depth 256, and 8192 cumulative graph queue entries (including roots
+and repeated edges, not just unique objects). Exceeding a limit refuses the
+proof; a count within one limit does not waive the other checks.
+
+The proof uses a 30-second cooperative deadline. Control hashing observes its
+abort signal and existing-object Git probes receive the remaining time budget.
+Synchronous work and process termination grace mean this is not a hard
+30-second wall-clock guarantee for the entire decision. Expired proof refuses
+without granting cleanup authorization. Synthetic tests cover count thresholds,
+deadline refusal and termination of a stalled Git probe; they do not qualify
+real executor sessions or additional operating systems.
+
 Local execution refuses repository symlinks that resolve outside the repository,
 are dangling, cyclic, or change during the check. It also refuses regular files
 with multiple hard links, including internal aliases, because another name for
